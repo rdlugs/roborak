@@ -8,7 +8,7 @@ severity-graded, line-anchored findings with committable fix suggestions.
 
 ## Status
 
-**Phase 1 of 6 complete** — the local-diff review path works end to end. See
+**Phases 1 and 3 of 6 complete** — the local-diff review path and static analysis work end to end. See
 [Roadmap](#roadmap) for what is not built yet.
 
 ## Install
@@ -27,6 +27,7 @@ uv run roborak review --uncommitted         # staged and unstaged edits only
 uv run roborak review --committed --base main
 uv run roborak review --include-untracked
 uv run roborak review --no-llm              # static analysis only; no API key needed
+uv run roborak review --no-static           # model only, skip the linters
 uv run roborak review -m openai/gpt-5       # any LiteLLM model string
 uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
@@ -52,6 +53,11 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **The validator** drops findings that do not point at a changed line, snapping
   near misses onto the nearest one, then filters by confidence and severity and
   collapses duplicates. Most of roborak's usefulness is in what it refuses to say.
+- **The static pass** runs whichever of ruff, mypy, semgrep, eslint and phpstan
+  the repo actually has, using *the project's own config* — the rules a team
+  already agreed to. Findings on lines the change did not touch are dropped, so a
+  linted file's pre-existing debt never lands on the author. What survives is fed
+  to the model as evidence to confirm or explain, rather than reported raw.
 - **The compressor** degrades predictably when a diff will not fit the context
   window — ignored files, then deleted-file bodies, then surplus hunk context, then
   whole files — and always reports what it skipped.
@@ -98,7 +104,7 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 |---|---|---|
 | 1 | Local diff review, terminal output, config, LiteLLM | **done** |
 | 2 | AST context via tree-sitter, multi-chunk merge for large diffs | todo |
-| 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | todo |
+| 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
 | 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | todo |
 | 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | todo |
 | 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | todo |
@@ -106,7 +112,7 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 ## Development
 
 ```bash
-uv run pytest              # 104 tests
+uv run pytest              # 154 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak

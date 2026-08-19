@@ -11,11 +11,13 @@ from rich.console import Console
 
 from roborak.analysis.reviewer import Reviewer
 from roborak.core.config import load_config
+from roborak.core.models import Finding
 from roborak.core.severity import Severity
 from roborak.llm.client import LLMClient, missing_credentials
 from roborak.render import terminal
 from roborak.sources.base import SourceError
 from roborak.sources.local_git import LocalGitSource, Scope
+from roborak.static.runner import StaticRunner
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +49,9 @@ def review(
     no_llm: Annotated[
         bool,
         typer.Option("--no-llm", help="Static analysis only; makes no model calls."),
+    ] = False,
+    no_static: Annotated[
+        bool, typer.Option("--no-static", help="Skip static analysis; model only.")
     ] = False,
     model: Annotated[
         str | None, typer.Option("--model", "-m", help="Override the configured model.")
@@ -108,19 +113,29 @@ def review(
         console.print(f"[bold red]error[/] {exc}")
         raise typer.Exit(EXIT_ERROR) from exc
 
-    llm = None
-    if not no_llm:
-        if missing := missing_credentials(config.model):
-            console.print(
-                f"[bold red]error[/] {config.model} needs [bold]{missing}[/] to be set.\n"
-                "[dim]Set it, pick another model with --model, or run --no-llm.[/]"
-            )
-            raise typer.Exit(EXIT_ERROR)
-        with console.status(f"[dim]reviewing with {config.model}…[/]", spinner="dots"):
-            llm = LLMClient(config.llm)
-            result = Reviewer(config=config, repo=repo, llm=llm).review(changeset)
-    else:
-        result = Reviewer(config=config, repo=repo, llm=None).review(changeset)
+    if no_static:
+        config.static.enabled = False
+
+    # Credentials are checked before any work so a missing key fails in a second
+    # rather than after a static pass the user then has to wait through.
+    if not no_llm and (missing := missing_credentials(config.model)):
+        console.print(
+            f"[bold red]error[/] {config.model} needs [bold]{missing}[/] to be set.\n"
+            "[dim]Set it, pick another model with --model, or run --no-llm.[/]"
+        )
+        raise typer.Exit(EXIT_ERROR)
+
+    static_findings: list[Finding] = []
+    if config.static.enabled:
+        with console.status("[dim]running static analysis…[/]", spinner="dots"):
+            static_findings = StaticRunner(repo=repo, config=config.static).run(changeset)
+
+    llm = None if no_llm else LLMClient(config.llm)
+    status = f"reviewing with {config.model}…" if llm else "collecting findings…"
+    with console.status(f"[dim]{status}[/]", spinner="dots"):
+        result = Reviewer(
+            config=config, repo=repo, llm=llm, static_findings=static_findings
+        ).review(changeset)
 
     terminal.render(result, console, repo)
 
