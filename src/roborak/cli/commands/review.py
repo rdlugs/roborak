@@ -10,33 +10,19 @@ import typer
 from rich.console import Console
 
 from roborak.analysis.reviewer import Reviewer
-from roborak.core.config import load_config
-from roborak.core.models import ChangeSet, Finding, ReviewResult
+from roborak.cli import shared
+from roborak.cli.shared import fail
+from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Severity
-from roborak.llm.client import LLMClient, missing_credentials
 from roborak.publish.base import PublishReport
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
-from roborak.render import terminal
 from roborak.sources.base import SourceError
-from roborak.sources.forge import Provider, Target, detect_host, get_token, parse_target
-from roborak.sources.github import GitHubSource
-from roborak.sources.gitlab import GitLabSource
-from roborak.sources.local_git import LocalGitSource, Scope
+from roborak.sources.forge import Target
 from roborak.state.store import StateStore, review_key
 from roborak.static.runner import StaticRunner
 
 log = logging.getLogger(__name__)
-
-# Exit codes, so CI can gate on them.
-EXIT_OK = 0
-EXIT_FINDINGS = 1
-EXIT_ERROR = 2
-
-TOKEN_HELP = {
-    "gitlab": "GITLAB_TOKEN (or ROBORAK_GITLAB_TOKEN)",
-    "github": "GITHUB_TOKEN, or sign in with `gh auth login`",
-}
 
 
 def review(
@@ -105,25 +91,41 @@ def review(
         Severity | None,
         typer.Option("--fail-on", help="Exit non-zero when a finding reaches this severity."),
     ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full result as JSON.")] = False,
+    agent: Annotated[
+        bool, typer.Option("--agent", help="Print JSON shaped for another agent to act on.")
+    ] = False,
+    prompt_only: Annotated[
+        bool,
+        typer.Option("--prompt-only", help="Print findings as instructions for a coding agent."),
+    ] = False,
+    markdown_out: Annotated[
+        Path | None,
+        typer.Option("--markdown", help="Also write a markdown report to this path."),
+    ] = None,
 ) -> None:
     """Review changes and report findings."""
-    console = Console()
-    repo = (repo or Path.cwd()).resolve()
+    console = Console(quiet=as_json or agent or prompt_only)
 
-    if mr and pr:
-        _fail(console, "--mr and --pr are mutually exclusive.")
-    if committed and uncommitted:
-        _fail(console, "--committed and --uncommitted are mutually exclusive.")
     if post and not (mr or pr):
-        _fail(console, "--post needs --mr or --pr; there is nowhere to post a local review.")
+        fail(console, "--post needs --mr or --pr; there is nowhere to post a local review.")
 
-    try:
-        config = load_config(repo, config_path)
-    except (OSError, ValueError) as exc:
-        _fail(console, f"config error: {exc}")
+    session = shared.start(
+        console,
+        repo=repo,
+        mr=mr,
+        pr=pr,
+        base=base,
+        committed=committed,
+        uncommitted=uncommitted,
+        include_untracked=include_untracked,
+        config_path=config_path,
+        model=model,
+        no_llm=no_llm,
+        quiet_status=as_json or agent or prompt_only,
+    )
 
-    if model:
-        config.llm.model = model
+    config = session.config
     if severity_floor:
         config.review.severity_floor = severity_floor
     if max_findings:
@@ -133,84 +135,48 @@ def review(
     if no_static:
         config.static.enabled = False
 
-    # Credentials first: a missing key should fail in a second, not after a diff
-    # has been fetched and a static pass sat through.
-    if not no_llm and (missing := missing_credentials(config.model)):
-        _fail(
-            console,
-            f"{config.model} needs [bold]{missing}[/] to be set.\n"
-            "[dim]Set it, pick another model with --model, or run --no-llm.[/]",
-        )
-
-    provider: Provider | None = "gitlab" if mr else "github" if pr else None
-    token: str | None = None
-    target: Target | None = None
-
-    if provider is not None:
-        token = get_token(provider)
-        if token is None:
-            _fail(console, f"No {provider} token found. Set {TOKEN_HELP[provider]}.")
-        try:
-            target = parse_target((mr or pr or "").strip(), provider, host=detect_host(provider))
-        except SourceError as exc:
-            _fail(console, str(exc))
-
-    try:
-        changeset = _load_changeset(
-            repo, provider, target, token, base, committed, uncommitted, include_untracked, console
-        )
-    except SourceError as exc:
-        _fail(console, str(exc))
-
     static_findings: list[Finding] = []
-    if config.static.enabled and changeset.origin == "local":
+    if config.static.enabled and session.changeset.origin == "local":
         # Static tools need the files on disk, which only the local source guarantees.
         with console.status("[dim]running static analysis…[/]", spinner="dots"):
-            static_findings = StaticRunner(repo=repo, config=config.static).run(changeset)
+            static_findings = StaticRunner(repo=session.repo, config=config.static).run(
+                session.changeset
+            )
     elif config.static.enabled:
-        log.debug("skipping static analysis: %s changes are not checked out", changeset.origin)
+        log.debug(
+            "skipping static analysis: %s changes are not checked out", session.changeset.origin
+        )
 
-    llm = None if no_llm else LLMClient(config.llm)
-    status = f"reviewing with {config.model}…" if llm else "collecting findings…"
+    status = f"reviewing with {config.model}…" if session.llm else "collecting findings…"
     with console.status(f"[dim]{status}[/]", spinner="dots"):
         result = Reviewer(
-            config=config, repo=repo, llm=llm, static_findings=static_findings
-        ).review(changeset)
+            config=config,
+            repo=session.repo,
+            llm=session.llm,
+            static_findings=static_findings,
+        ).review(session.changeset)
 
-    terminal.render(result, console, repo)
+    shared.emit(
+        session,
+        result,
+        as_json=as_json,
+        agent=agent,
+        prompt_only_mode=prompt_only,
+        markdown_path=markdown_out,
+    )
 
-    if post and target is not None and token is not None:
-        _publish(console, repo, target, token, result, no_summary=no_summary, repost=repost)
+    if post and session.target is not None and session.token is not None:
+        _publish(
+            console,
+            session.repo,
+            session.target,
+            session.token,
+            result,
+            no_summary=no_summary,
+            repost=repost,
+        )
 
-    if result.errors:
-        raise typer.Exit(EXIT_ERROR)
-    if fail_on and any(f.severity.at_least(fail_on) for f in result.findings):
-        raise typer.Exit(EXIT_FINDINGS)
-    raise typer.Exit(EXIT_OK)
-
-
-def _load_changeset(
-    repo: Path,
-    provider: Provider | None,
-    target: Target | None,
-    token: str | None,
-    base: str | None,
-    committed: bool,
-    uncommitted: bool,
-    include_untracked: bool,
-    console: Console,
-) -> ChangeSet:
-    if provider is not None:
-        assert target is not None and token is not None  # guaranteed by the caller
-        label = "merge request" if provider == "gitlab" else "pull request"
-        source = GitLabSource if provider == "gitlab" else GitHubSource
-        with console.status(f"[dim]fetching {label}…[/]", spinner="dots"):
-            return source(target=target, token=token).load()
-
-    scope = Scope.COMMITTED if committed else Scope.UNCOMMITTED if uncommitted else Scope.ALL
-    return LocalGitSource(
-        repo=repo, scope=scope, base=base, include_untracked=include_untracked
-    ).load()
+    shared.finish(result, fail_on)
 
 
 def _publish(
@@ -261,8 +227,3 @@ def _report_publish(console: Console, report: PublishReport) -> None:
             console.print(f"  [dim]{finding.location}: {reason}[/]")
     if report.summary_posted:
         console.print("[green]posted[/] summary comment")
-
-
-def _fail(console: Console, message: str) -> None:
-    console.print(f"[bold red]error[/] {message}")
-    raise typer.Exit(EXIT_ERROR)

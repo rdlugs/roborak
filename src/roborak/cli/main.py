@@ -9,6 +9,9 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from roborak.cli.commands import ask as ask_cmd
+from roborak.cli.commands import describe as describe_cmd
+from roborak.cli.commands import improve as improve_cmd
 from roborak.cli.commands import review as review_cmd
 
 app = typer.Typer(
@@ -20,6 +23,9 @@ app = typer.Typer(
 )
 
 app.command("review")(review_cmd.review)
+app.command("describe")(describe_cmd.describe)
+app.command("improve")(improve_cmd.improve)
+app.command("ask")(ask_cmd.ask)
 
 console = Console(stderr=True)
 

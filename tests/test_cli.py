@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from roborak.cli.commands.review import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
 from roborak.cli.main import app
+from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
 
 runner = CliRunner()
 
@@ -132,8 +133,98 @@ def test_cli_flags_beat_the_config_file(repo: Path, monkeypatch):
         seen["model"] = model
         return "SOME_KEY"  # short-circuit before any provider call
 
-    monkeypatch.setattr("roborak.cli.commands.review.missing_credentials", capture)
+    monkeypatch.setattr("roborak.cli.shared.missing_credentials", capture)
     (repo / "app.py").write_text("def f():\n    return 2\n")
 
     runner.invoke(app, ["review", "--uncommitted", "-C", str(repo), "-m", "flag/model"])
     assert seen["model"] == "flag/model"
+
+
+# -- output modes ----------------------------------------------------------
+
+
+def test_json_mode_emits_only_json(repo: Path):
+    """Anything else on stdout would break whatever is parsing it."""
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 1
+    assert "findings" in payload
+
+
+def test_agent_mode_emits_only_json(repo: Path):
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--agent"])
+    assert result.exit_code == EXIT_OK
+    assert set(json.loads(result.stdout)) == {"schema_version", "summary", "findings"}
+
+
+def test_prompt_only_mode(repo: Path):
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(
+        app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--prompt-only"]
+    )
+    assert result.exit_code == EXIT_OK
+    assert "No findings." in result.stdout
+
+
+def test_markdown_report_is_written(repo: Path, tmp_path: Path):
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    out = tmp_path / "report.md"
+    result = runner.invoke(
+        app,
+        ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--markdown", str(out)],
+    )
+    assert result.exit_code == EXIT_OK
+    assert out.is_file()
+    assert out.read_text().startswith("#")
+
+
+# -- forge flags -----------------------------------------------------------
+
+
+def test_mr_and_pr_are_mutually_exclusive(repo: Path):
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--mr", "1", "--pr", "2"])
+    assert result.exit_code == EXIT_ERROR
+    assert "mutually exclusive" in result.output
+
+
+def test_post_without_a_forge_target_is_refused(repo: Path):
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--post"])
+    assert result.exit_code == EXIT_ERROR
+    assert "nowhere to post" in result.output
+
+
+def test_missing_forge_token_is_reported(repo: Path, monkeypatch):
+    for name in ("GITLAB_TOKEN", "ROBORAK_GITLAB_TOKEN", "CI_JOB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--mr", "298"])
+    assert result.exit_code == EXIT_ERROR
+    assert "GITLAB_TOKEN" in result.output
+
+
+def test_unparseable_mr_reference_is_reported(repo: Path, monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "tok")
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--mr", "nonsense"])
+    assert result.exit_code == EXIT_ERROR
+
+
+# -- other commands --------------------------------------------------------
+
+
+@pytest.mark.parametrize("command", ["describe", "improve", "ask"])
+def test_every_command_has_help(command):
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == EXIT_OK
+
+
+def test_commands_are_registered():
+    result = runner.invoke(app, ["--help"])
+    for command in ("review", "describe", "improve", "ask"):
+        assert command in result.output
+
+
+def test_ask_requires_a_question():
+    result = runner.invoke(app, ["ask"])
+    assert result.exit_code != EXIT_OK

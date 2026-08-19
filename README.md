@@ -8,7 +8,7 @@ severity-graded, line-anchored findings with committable fix suggestions.
 
 ## Status
 
-**Phases 1, 3 and 4 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis and posting all work
+**Phases 1, 3, 4 and 5 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis and posting all work
 end to end. See
 [Roadmap](#roadmap) for what is not built yet.
 
@@ -35,12 +35,27 @@ uv run roborak review --mr https://gitlab.com/acme/web/-/merge_requests/298
 uv run roborak review --pr 42               # a GitHub pull request
 uv run roborak review --mr 298 --post       # publish inline threads + a summary
 uv run roborak review --mr 298 --post --repost   # re-post findings already sent
+
+uv run roborak review --json                # full result as JSON
+uv run roborak review --agent               # JSON for another agent to act on
+uv run roborak review --prompt-only         # findings as fix instructions
+uv run roborak review --markdown report.md  # walkthrough-style markdown report
 uv run roborak review -m openai/gpt-5       # any LiteLLM model string
 uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
 ```
 
 Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` error.
+
+### Other commands
+
+```bash
+uv run roborak describe                     # title, overview, per-file table, mermaid flow
+uv run roborak improve                      # suggestions only, every one committable
+uv run roborak ask "why is this locked?"    # a question answered from the diff
+```
+
+Each accepts the same `--mr` / `--pr` / `--base` targeting as `review`.
 
 ### Tokens
 
@@ -80,6 +95,9 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **Incremental review** fingerprints each finding independently of its line
   number, so re-running on a new push posts only what is genuinely new instead of
   repeating itself. State lives in `.roborak/state.json`; `--repost` overrides it.
+- **Output modes** share one result object, so the terminal report, the markdown
+  file, the JSON payload and the forge comment can never disagree. `--json`,
+  `--agent` and `--prompt-only` write to stdout alone, so they stay pipeable.
 - **The compressor** degrades predictably when a diff will not fit the context
   window — ignored files, then deleted-file bodies, then surplus hunk context, then
   whole files — and always reports what it skipped.
@@ -128,13 +146,13 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 | 2 | AST context via tree-sitter, multi-chunk merge for large diffs | todo |
 | 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
 | 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | **done** |
-| 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | todo |
+| 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | **done** |
 | 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | todo |
 
 ## Development
 
 ```bash
-uv run pytest              # 187 tests
+uv run pytest              # 246 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak

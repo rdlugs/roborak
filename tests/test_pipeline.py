@@ -306,3 +306,127 @@ def test_confidence_coercion(value, expected):
     from roborak.llm.parser import _as_confidence
 
     assert _as_confidence(value) == pytest.approx(expected)
+
+
+# -- describe / improve / ask ---------------------------------------------
+
+DESCRIBE_REPLY = textwrap.dedent(
+    """\
+    title: Add session lookup
+    overview: Introduces a session cache keyed by user id.
+    estimated_effort: 3
+    labels: [feature, security]
+    file_summaries:
+      - path: app/auth.py
+        summary: Adds get_session.
+    sequence_diagram: |
+      sequenceDiagram
+        Client->>API: GET /session
+    """
+)
+
+
+def test_describe_produces_a_walkthrough(tmp_path):
+    llm = StubLLM(reply=DESCRIBE_REPLY)
+    result = Reviewer(config=Config(), repo=tmp_path, llm=llm).describe(make_changeset())
+
+    assert result.walkthrough is not None
+    assert result.walkthrough.title == "Add session lookup"
+    assert result.walkthrough.estimated_effort == 3
+    assert result.walkthrough.file_summaries[0].path == "app/auth.py"
+    assert result.walkthrough.sequence_diagram is not None
+    assert result.findings == [], "describe reports no findings"
+    # It must be given the diff, not just the title.
+    assert "11 +    row = db.execute" in llm.user
+
+
+def test_describe_failure_is_reported(tmp_path):
+    class Failing(StubLLM):
+        def complete(self, system, user):
+            from roborak.llm.client import LLMError
+
+            raise LLMError("provider exploded")
+
+    result = Reviewer(config=Config(), repo=tmp_path, llm=Failing(reply="")).describe(
+        make_changeset()
+    )
+    assert result.walkthrough is None
+    assert result.errors
+
+
+def test_improve_keeps_only_committable_suggestions(tmp_path):
+    reply = textwrap.dedent(
+        """\
+        findings:
+          - file: app/auth.py
+            start_line: 11
+            end_line: 11
+            severity: major
+            category: security
+            kind: refactor_suggestion
+            body: Bind the parameter instead of concatenating.
+            confidence: 0.9
+            suggestion: |
+              row = db.execute("SELECT * FROM sessions WHERE user = ?", (user_id,))
+          - file: app/auth.py
+            start_line: 12
+            end_line: 12
+            severity: minor
+            category: maintainability
+            kind: refactor_suggestion
+            confidence: 0.9
+            body: This could be tidier, but here is no concrete replacement.
+        """
+    )
+    result = Reviewer(config=Config(), repo=tmp_path, llm=StubLLM(reply=reply)).improve(
+        make_changeset()
+    )
+    # The second has no suggestion, so it is not an improvement anyone can apply.
+    assert len(result.findings) == 1
+    assert result.findings[0].suggestion is not None
+
+
+def test_improve_prompt_demands_committable_code(tmp_path):
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm).improve(make_changeset())
+    assert "committable" in llm.system.lower()
+
+
+def test_ask_returns_the_models_answer(tmp_path):
+    llm = StubLLM(reply="  The lock is held because two workers share the cache.  ")
+    answer = Reviewer(config=Config(), repo=tmp_path, llm=llm).ask(
+        make_changeset(), "why is this locked?"
+    )
+    assert answer == "The lock is held because two workers share the cache."
+    assert "why is this locked?" in llm.user
+    assert "app/auth.py" in llm.user
+
+
+def test_ask_without_a_model_is_an_error(tmp_path):
+    from roborak.llm.client import LLMError
+
+    with pytest.raises(LLMError, match="cannot run with --no-llm"):
+        Reviewer(config=Config(), repo=tmp_path, llm=None).ask(make_changeset(), "why?")
+
+
+def test_ask_on_an_empty_changeset(tmp_path):
+    llm = StubLLM(reply="unused")
+    answer = Reviewer(config=Config(), repo=tmp_path, llm=llm).ask(ChangeSet(), "why?")
+    assert "no changes" in answer.lower()
+    assert llm.user == "", "the model should not have been called"
+
+
+def test_repo_context_is_picked_up(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("This project forbids raw SQL anywhere.")
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm).review(make_changeset())
+    assert "forbids raw SQL" in llm.user
+
+
+def test_first_context_file_wins(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("AGENTS wins.")
+    (tmp_path / "CLAUDE.md").write_text("CLAUDE loses.")
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm).review(make_changeset())
+    assert "AGENTS wins." in llm.user
+    assert "CLAUDE loses." not in llm.user

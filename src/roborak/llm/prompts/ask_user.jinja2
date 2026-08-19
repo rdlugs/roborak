@@ -1,0 +1,21 @@
+## Question
+{{ question }}
+
+{% if title %}
+## Change title
+{{ title }}
+{% endif %}
+{% if repo_context %}
+## Repository conventions
+{{ repo_context }}
+{% endif %}
+
+## The change
+
+{% for file in files %}
+### {{ file.path }}{% if file.language %} [{{ file.language }}]{% endif %}
+
+```diff
+{{ file.rendered }}
+```
+{% endfor %}
