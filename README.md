@@ -8,7 +8,8 @@ severity-graded, line-anchored findings with committable fix suggestions.
 
 ## Status
 
-**Phases 1 and 3 of 6 complete** — the local-diff review path and static analysis work end to end. See
+**Phases 1, 3 and 4 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis and posting all work
+end to end. See
 [Roadmap](#roadmap) for what is not built yet.
 
 ## Install
@@ -28,12 +29,24 @@ uv run roborak review --committed --base main
 uv run roborak review --include-untracked
 uv run roborak review --no-llm              # static analysis only; no API key needed
 uv run roborak review --no-static           # model only, skip the linters
+
+uv run roborak review --mr 298              # a GitLab merge request
+uv run roborak review --mr https://gitlab.com/acme/web/-/merge_requests/298
+uv run roborak review --pr 42               # a GitHub pull request
+uv run roborak review --mr 298 --post       # publish inline threads + a summary
+uv run roborak review --mr 298 --post --repost   # re-post findings already sent
 uv run roborak review -m openai/gpt-5       # any LiteLLM model string
 uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
 ```
 
 Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` error.
+
+### Tokens
+
+`--mr` needs `GITLAB_TOKEN` (or `ROBORAK_GITLAB_TOKEN`, or CI's `CI_JOB_TOKEN`).
+`--pr` needs `GITHUB_TOKEN`, or an existing `gh auth login` session, which roborak
+will use automatically.
 
 ## How it works
 
@@ -58,6 +71,15 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
   already agreed to. Findings on lines the change did not touch are dropped, so a
   linted file's pre-existing debt never lands on the author. What survives is fed
   to the model as evidence to confirm or explain, rather than reported raw.
+- **Publishing** translates new-file coordinates into each forge's position
+  payload, and only there. GitLab needs all three of `base_sha`/`start_sha`/
+  `head_sha` from the MR's own `diff_refs`; GitHub takes one review containing every
+  comment, always as `COMMENT` — roborak never approves or requests changes on your
+  behalf. A finding that cannot be anchored is reported as unpostable rather than
+  guessed at, and a rejected comment never costs you the rest of the review.
+- **Incremental review** fingerprints each finding independently of its line
+  number, so re-running on a new push posts only what is genuinely new instead of
+  repeating itself. State lives in `.roborak/state.json`; `--repost` overrides it.
 - **The compressor** degrades predictably when a diff will not fit the context
   window — ignored files, then deleted-file bodies, then surplus hunk context, then
   whole files — and always reports what it skipped.
@@ -105,14 +127,14 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 | 1 | Local diff review, terminal output, config, LiteLLM | **done** |
 | 2 | AST context via tree-sitter, multi-chunk merge for large diffs | todo |
 | 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
-| 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | todo |
+| 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | **done** |
 | 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | todo |
 | 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | todo |
 
 ## Development
 
 ```bash
-uv run pytest              # 154 tests
+uv run pytest              # 187 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak
