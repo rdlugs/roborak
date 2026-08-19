@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from roborak.analysis import validator
-from roborak.context.compressor import MAX_HUNK_LINES, compress, filter_files
-from roborak.context.diff import render_hunk_with_line_numbers
+from roborak.context.chunker import chunk, needs_chunking
+from roborak.context.compressor import compress, filter_files
 from roborak.core.config import Config
 from roborak.core.models import ChangedFile, ChangeSet, Finding, ReviewResult
 from roborak.llm.client import LLMClient, LLMError
@@ -22,6 +22,7 @@ from roborak.llm.prompt import (
     build_describe_prompt,
     build_improve_prompt,
     build_review_prompt,
+    render_file_diff,
 )
 from roborak.rules.loader import load_rules
 from roborak.rules.matcher import matching_rules, rules_for_prompt
@@ -30,9 +31,8 @@ log = logging.getLogger(__name__)
 
 
 def render_for_prompt(file: ChangedFile) -> str:
-    return "\n\n".join(
-        render_hunk_with_line_numbers(h, max_lines=MAX_HUNK_LINES) for h in file.hunks
-    )
+    """What the compressor and chunker measure -- the same text the model will see."""
+    return render_file_diff(file)
 
 
 @dataclass
@@ -77,6 +77,13 @@ class Reviewer:
         if not self._prepare(changeset, result) or self.llm is None:
             return result
 
+        # describe is inherently one call, so an oversized change is compressed
+        # rather than split: a walkthrough of half a change is worse than a
+        # walkthrough that says which files it could not cover.
+        compress(
+            changeset, self.llm.context_budget, self.llm.count_tokens, render=render_for_prompt
+        )
+        result.skipped_files = list(changeset.omitted_files)
         prompt = build_describe_prompt(
             changeset, self.config, repo_context=load_repo_context(self.repo)
         )
@@ -129,27 +136,49 @@ class Reviewer:
         return self.llm.complete(prompt.system, prompt.user).text.strip()
 
     def _prepare(self, changeset: ChangeSet, result: ReviewResult) -> bool:
-        """Filter and compress in place. Returns False when nothing is left."""
+        """Filter in place. Returns False when nothing is left to review.
+
+        Note what this deliberately does *not* do: drop files to fit the context
+        budget. Oversized changes are handled by reviewing them in several passes
+        (see `_llm_findings`), which loses nothing. Compression is a last resort,
+        applied per-pass only once the chunker has run out of passes.
+        """
         filter_files(changeset, self.config.ignore_paths)
         if changeset.is_empty:
             return False
-        if self.llm is not None:
-            compress(
-                changeset,
-                self.llm.context_budget,
-                self.llm.count_tokens,
-                render=render_for_prompt,
-            )
         result.skipped_files = list(changeset.omitted_files)
         return True
 
     def _llm_findings(self, changeset: ChangeSet) -> list[Finding]:
+        """Review the change, in several passes when it will not fit in one."""
+        assert self.llm is not None
+
+        if not needs_chunking(
+            changeset, self.llm.context_budget, self.llm.count_tokens, render_for_prompt
+        ):
+            return self._review_chunk(changeset)
+
+        chunks = chunk(changeset, self.llm.context_budget, self.llm.count_tokens, render_for_prompt)
+        log.info("reviewing in %d passes", len(chunks))
+
+        findings: list[Finding] = []
+        for index, piece in enumerate(chunks, start=1):
+            # Record anything the chunker had to drop, so the report can say so.
+            changeset.omitted_files.extend(piece.omitted_files)
+            try:
+                findings.extend(self._review_chunk(piece))
+            except (LLMError, ParseError) as exc:
+                # One failed pass must not discard the passes that worked.
+                log.error("pass %d of %d failed: %s", index, len(chunks), exc)
+        return findings
+
+    def _review_chunk(self, changeset: ChangeSet) -> list[Finding]:
         assert self.llm is not None
         prompt = build_review_prompt(
             changeset,
             self.config,
             rules=self.rules_for(changeset),  # type: ignore[arg-type]
-            static_findings=self._static_for_prompt(),
+            static_findings=self._static_for_prompt(changeset),
             repo_context=load_repo_context(self.repo),
         )
         response = self.llm.complete(prompt.system, prompt.user)
@@ -159,10 +188,13 @@ class Reviewer:
             valid_files={f.path for f in changeset.files},
         )
 
-    def _static_for_prompt(self) -> list[Finding]:
+    def _static_for_prompt(self, changeset: ChangeSet) -> list[Finding]:
+        """Only the static findings for files in this pass, so chunks stay focused."""
         if not (self.config.static.enabled and self.config.static.feed_to_llm):
             return []
-        return self.static_findings[: self.config.static.max_findings_in_prompt]
+        paths = {f.path for f in changeset.files}
+        relevant = [f for f in self.static_findings if f.file in paths]
+        return relevant[: self.config.static.max_findings_in_prompt]
 
 
 # Files a repo uses to tell tools how it wants to be treated. Read in order; the

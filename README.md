@@ -8,14 +8,14 @@ severity-graded, line-anchored findings with committable fix suggestions.
 
 ## Status
 
-**Phases 1, 3, 4, 5 and 6 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis, custom rules, posting
+**All six phases complete.** — local diffs, GitLab MRs, GitHub PRs, static analysis, custom rules, posting
 and every output mode work end to end. See
 [Roadmap](#roadmap) for what is not built yet.
 
 ## Install
 
 ```bash
-uv sync
+uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
 export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY, GEMINI_API_KEY, …
 ```
 
@@ -104,9 +104,15 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **Output modes** share one result object, so the terminal report, the markdown
   file, the JSON payload and the forge comment can never disagree. `--json`,
   `--agent` and `--prompt-only` write to stdout alone, so they stay pipeable.
-- **The compressor** degrades predictably when a diff will not fit the context
-  window — ignored files, then deleted-file bodies, then surplus hunk context, then
-  whole files — and always reports what it skipped.
+- **Large diffs are reviewed in several passes**, not truncated. The chunker
+  splits by directory so related files stay together, each pass inherits the
+  parent's metadata, and one failed pass never discards the others. Compression —
+  which *does* drop things — is the last resort, and always reports what it
+  skipped.
+- **AST context** (optional, via tree-sitter) names the function or class each
+  hunk sits inside. A diff hunk is a window with arbitrary edges; a model that
+  knows it is looking at the middle of `run()` stops guessing at the surrounding
+  control flow, which is where many false positives come from.
 
 ## Configuration
 
@@ -168,16 +174,30 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Local diff review, terminal output, config, LiteLLM | **done** |
-| 2 | AST context via tree-sitter, multi-chunk merge for large diffs | todo |
+| 2 | AST context via tree-sitter, multi-chunk merge for large diffs | **done** |
 | 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
 | 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | **done** |
 | 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | **done** |
 | 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | **done** |
 
+## Design notes
+
+Three decisions carry most of the weight:
+
+1. **`ChangeSet` is the only thing the pipeline knows.** Four sources normalise
+   into it, so adding a fifth touches nothing downstream.
+2. **Line numbers are new-file coordinates everywhere**, translated to forge
+   position payloads only at the publisher. `tests/test_local_git.py` checks the
+   computed numbers against files on disk, so an off-by-one cannot agree with
+   itself and pass.
+3. **The tool's value is mostly in what it refuses to say.** Findings outside the
+   change are dropped, low-confidence ones filtered, duplicates collapsed,
+   pre-existing lint debt suppressed, and already-posted comments skipped.
+
 ## Development
 
 ```bash
-uv run pytest              # 260 tests
+uv run pytest              # 282 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak

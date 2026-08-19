@@ -7,6 +7,8 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from roborak.context.ast_context import symbol_context
+from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
 from roborak.core.config import Config
 from roborak.core.models import ChangedFile, ChangeSet, Finding
@@ -29,8 +31,20 @@ class RenderedPrompt:
 
 
 def render_file_diff(file: ChangedFile) -> str:
-    """The diff body for one file, annotated with new-file line numbers."""
-    return "\n\n".join(render_hunk_with_line_numbers(hunk) for hunk in file.hunks)
+    """The diff body for one file, annotated with line numbers and enclosing symbols.
+
+    Naming the function a hunk sits inside costs a handful of tokens and removes
+    most of the ambiguity a window-shaped diff creates -- a model that knows it is
+    looking at the middle of `run()` stops guessing at the surrounding control
+    flow, which is where a lot of false positives come from.
+    """
+    blocks: list[str] = []
+    for hunk in file.hunks:
+        rendered = render_hunk_with_line_numbers(hunk, max_lines=MAX_HUNK_LINES)
+        if context := symbol_context(file, hunk):
+            rendered = f"# {context}\n{rendered}"
+        blocks.append(rendered)
+    return "\n\n".join(blocks)
 
 
 def build_describe_prompt(
