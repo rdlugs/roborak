@@ -70,8 +70,7 @@ def _salvage_prefix(text: str) -> Any:
         except yaml.YAMLError:
             continue
         if isinstance(data, dict):
-            log.warning("Recovered a truncated model reply by dropping %d lines.",
-                        len(lines) - cut)
+            log.warning("Recovered a truncated model reply by dropping %d lines.", len(lines) - cut)
             return data
     return None
 

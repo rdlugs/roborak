@@ -24,12 +24,30 @@ log = logging.getLogger(__name__)
 
 # Rough per-language interest, used only to decide what to drop last.
 _LANGUAGE_PRIORITY: dict[str | None, int] = {
-    "python": 10, "typescript": 10, "javascript": 10, "go": 10, "rust": 10,
-    "php": 10, "java": 10, "ruby": 10, "csharp": 10, "kotlin": 10, "swift": 10,
-    "c": 9, "cpp": 9, "scala": 9,
-    "sql": 8, "terraform": 8, "shell": 7, "vue": 9,
-    "html": 4, "css": 3, "scss": 3,
-    "yaml": 5, "toml": 4, "json": 2,
+    "python": 10,
+    "typescript": 10,
+    "javascript": 10,
+    "go": 10,
+    "rust": 10,
+    "php": 10,
+    "java": 10,
+    "ruby": 10,
+    "csharp": 10,
+    "kotlin": 10,
+    "swift": 10,
+    "c": 9,
+    "cpp": 9,
+    "scala": 9,
+    "sql": 8,
+    "terraform": 8,
+    "shell": 7,
+    "vue": 9,
+    "html": 4,
+    "css": 3,
+    "scss": 3,
+    "yaml": 5,
+    "toml": 4,
+    "json": 2,
     "markdown": 1,
     None: 5,
 }
@@ -80,7 +98,7 @@ def compress(
     omitted: list[str] = []
 
     for file in ordered:
-        trial = kept + [file]
+        trial = [*kept, file]
         rendered = "\n".join(render(f) for f in trial)
         if count_tokens(rendered) <= budget_tokens:
             kept.append(file)

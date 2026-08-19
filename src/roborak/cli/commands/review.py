@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -28,9 +27,9 @@ EXIT_ERROR = 2
 
 def review(
     repo: Annotated[
-        Path,
+        Path | None,
         typer.Option("--dir", "-C", help="Repository to review.", show_default="cwd"),
-    ] = None,  # type: ignore[assignment]
+    ] = None,
     base: Annotated[
         str | None,
         typer.Option("--base", "-b", help="Base ref to compare against, e.g. main."),

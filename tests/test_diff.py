@@ -225,7 +225,7 @@ def test_render_hunk_with_line_numbers():
     lines = rendered.splitlines()
     assert lines[0] == "@@ def handler(request):"
     assert lines[1].strip().startswith("10 ")
-    assert '13 +    log.info' in rendered
+    assert "13 +    log.info" in rendered
 
 
 def test_removed_lines_render_without_a_number():
@@ -253,9 +253,9 @@ def _numbers_in(rendered: str) -> list[int]:
 def test_trimming_preserves_line_numbers():
     """The whole point of trimming at render time: numbers must survive it."""
     body = ["diff --git a/big.py b/big.py", "--- a/big.py", "+++ b/big.py", "@@ -1,60 +1,61 @@"]
-    body += [f" line {i}" for i in range(1, 30)]   # new lines 1..29
-    body += ["+inserted"]                           # new line 30
-    body += [f" line {i}" for i in range(30, 60)]   # new lines 31..60
+    body += [f" line {i}" for i in range(1, 30)]  # new lines 1..29
+    body += ["+inserted"]  # new line 30
+    body += [f" line {i}" for i in range(30, 60)]  # new lines 31..60
     f = parse_diff("\n".join(body))[0]
     hunk = f.hunks[0]
 
@@ -275,8 +275,9 @@ def test_trimming_preserves_line_numbers():
 
 def test_trimming_is_a_noop_when_under_the_limit():
     f = parse_diff(SIMPLE)[0]
-    assert render_hunk_with_line_numbers(f.hunks[0], max_lines=100) == \
-        render_hunk_with_line_numbers(f.hunks[0])
+    assert render_hunk_with_line_numbers(
+        f.hunks[0], max_lines=100
+    ) == render_hunk_with_line_numbers(f.hunks[0])
 
 
 def test_trimming_keeps_context_around_every_change():

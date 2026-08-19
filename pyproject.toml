@@ -43,7 +43,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "BLE"]
 ignore = ["B008"]  # typer uses function calls in defaults
 
 [tool.mypy]

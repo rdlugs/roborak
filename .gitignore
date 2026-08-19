@@ -11,3 +11,8 @@ wheels/
 
 # roborak
 .roborak/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/

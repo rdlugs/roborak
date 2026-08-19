@@ -28,28 +28,42 @@ _HUNK_RE = re.compile(
 # Extensions we can name a language for. Anything absent stays ``None`` and is
 # still reviewed -- this only informs prompt hints and static-tool selection.
 _LANG_BY_SUFFIX: dict[str, str] = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript",
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
     ".php": "php",
     ".go": "go",
     ".rs": "rust",
     ".rb": "ruby",
     ".java": "java",
-    ".kt": "kotlin", ".kts": "kotlin",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
     ".cs": "csharp",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
     ".swift": "swift",
     ".scala": "scala",
-    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
     ".sql": "sql",
-    ".yaml": "yaml", ".yml": "yaml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
     ".json": "json",
     ".toml": "toml",
     ".md": "markdown",
     ".html": "html",
-    ".css": "css", ".scss": "scss",
+    ".css": "css",
+    ".scss": "scss",
     ".vue": "vue",
     ".tf": "terraform",
 }
@@ -92,9 +106,9 @@ def _parse_file_block(lines: list[str]) -> ChangedFile:
             change_type = "deleted"
         elif line.startswith("rename to "):
             change_type = "renamed"
-            new_path = line[len("rename to "):].strip()
+            new_path = line[len("rename to ") :].strip()
         elif line.startswith("rename from "):
-            old_path = line[len("rename from "):].strip()
+            old_path = line[len("rename from ") :].strip()
         elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
             is_binary = True
         elif line.startswith("@@"):
@@ -131,7 +145,7 @@ def _paths_from_header(lines: list[str]) -> tuple[str | None, str | None]:
             break
 
     if old_path is None and new_path is None and lines and lines[0].startswith("diff --git "):
-        parts = lines[0][len("diff --git "):].split(" b/", 1)
+        parts = lines[0][len("diff --git ") :].split(" b/", 1)
         if len(parts) == 2:
             old_path = _strip_prefix(parts[0])
             new_path = _strip_prefix("b/" + parts[1])

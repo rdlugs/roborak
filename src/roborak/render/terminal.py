@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.syntax import Syntax
@@ -71,13 +71,16 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
     if finding.source == "static" and finding.tool:
         heading.append(f"  via {finding.tool}", style="dim")
 
-    parts: list[object] = [heading, Text(finding.body.strip())]
+    parts: list[RenderableType] = [heading]
 
     snippet = _code_snippet(finding, repo)
     if snippet is not None:
-        parts.insert(1, snippet)
+        parts += [Text(""), snippet]
+
+    parts += [Text(""), Text(finding.body.strip())]
 
     if finding.suggestion:
+        parts.append(Text(""))
         parts.append(Text("Suggested fix", style="bold green"))
         parts.append(
             Syntax(
@@ -155,11 +158,33 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
 
 
 _LEXERS = {
-    "py": "python", "js": "javascript", "jsx": "jsx", "ts": "typescript", "tsx": "tsx",
-    "php": "php", "go": "go", "rs": "rust", "rb": "ruby", "java": "java", "kt": "kotlin",
-    "cs": "csharp", "c": "c", "h": "c", "cpp": "cpp", "sh": "bash", "sql": "sql",
-    "yaml": "yaml", "yml": "yaml", "json": "json", "toml": "toml", "html": "html",
-    "css": "css", "scss": "scss", "vue": "vue", "swift": "swift", "tf": "terraform",
+    "py": "python",
+    "js": "javascript",
+    "jsx": "jsx",
+    "ts": "typescript",
+    "tsx": "tsx",
+    "php": "php",
+    "go": "go",
+    "rs": "rust",
+    "rb": "ruby",
+    "java": "java",
+    "kt": "kotlin",
+    "cs": "csharp",
+    "c": "c",
+    "h": "c",
+    "cpp": "cpp",
+    "sh": "bash",
+    "sql": "sql",
+    "yaml": "yaml",
+    "yml": "yaml",
+    "json": "json",
+    "toml": "toml",
+    "html": "html",
+    "css": "css",
+    "scss": "scss",
+    "vue": "vue",
+    "swift": "swift",
+    "tf": "terraform",
 }
 
 
