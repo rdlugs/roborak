@@ -9,8 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-# roborak
-.roborak/
+# roborak: review state is per-machine; rules under .roborak/rules/ are not.
+.roborak/state.json
+.roborak/*.tmp
 .coverage
 .mypy_cache/
 .pytest_cache/

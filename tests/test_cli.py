@@ -228,3 +228,60 @@ def test_commands_are_registered():
 def test_ask_requires_a_question():
     result = runner.invoke(app, ["ask"])
     assert result.exit_code != EXIT_OK
+
+
+# -- rules and config commands --------------------------------------------
+
+
+def test_rules_init_list_and_test_round_trip(repo: Path):
+    created = runner.invoke(app, ["rules", "init", "-C", str(repo)])
+    assert created.exit_code == EXIT_OK
+
+    listed = runner.invoke(app, ["rules", "list", "-C", str(repo)])
+    assert listed.exit_code == EXIT_OK
+    assert "no-raw-sql" in listed.output
+
+    rule_file = repo / ".roborak" / "rules" / "no-raw-sql.md"
+    checked = runner.invoke(app, ["rules", "test", str(rule_file), "app/svc.py"])
+    assert checked.exit_code == EXIT_OK
+    assert "parses cleanly" in checked.output
+    assert "applies to" in checked.output
+
+
+def test_rules_init_refuses_to_overwrite(repo: Path):
+    runner.invoke(app, ["rules", "init", "-C", str(repo)])
+    second = runner.invoke(app, ["rules", "init", "-C", str(repo)])
+    assert second.exit_code == EXIT_ERROR
+    assert "not overwriting" in second.output
+
+
+def test_rules_list_with_no_rules(repo: Path):
+    result = runner.invoke(app, ["rules", "list", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK
+    assert "No rules found" in result.output
+
+
+def test_rules_test_reports_a_broken_rule(repo: Path, tmp_path: Path):
+    bad = tmp_path / "bad.md"
+    bad.write_text("---\n- not a mapping\n---\nBody.")
+    result = runner.invoke(app, ["rules", "test", str(bad)])
+    assert result.exit_code == EXIT_ERROR
+
+
+def test_config_init_and_show(repo: Path):
+    created = runner.invoke(app, ["config", "init", "-C", str(repo)])
+    assert created.exit_code == EXIT_OK
+    assert (repo / ".roborak.yaml").is_file()
+
+    shown = runner.invoke(app, ["config", "show", "-C", str(repo)])
+    assert shown.exit_code == EXIT_OK
+    assert "severity_floor" in shown.output
+
+
+def test_config_init_refuses_to_overwrite_without_force(repo: Path):
+    runner.invoke(app, ["config", "init", "-C", str(repo)])
+    second = runner.invoke(app, ["config", "init", "-C", str(repo)])
+    assert second.exit_code == EXIT_ERROR
+
+    forced = runner.invoke(app, ["config", "init", "-C", str(repo), "--force"])
+    assert forced.exit_code == EXIT_OK

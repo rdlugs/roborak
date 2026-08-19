@@ -8,8 +8,8 @@ severity-graded, line-anchored findings with committable fix suggestions.
 
 ## Status
 
-**Phases 1, 3, 4 and 5 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis and posting all work
-end to end. See
+**Phases 1, 3, 4, 5 and 6 of 6 complete** — local diffs, GitLab MRs, GitHub PRs, static analysis, custom rules, posting
+and every output mode work end to end. See
 [Roadmap](#roadmap) for what is not built yet.
 
 ## Install
@@ -53,6 +53,12 @@ Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` error.
 uv run roborak describe                     # title, overview, per-file table, mermaid flow
 uv run roborak improve                      # suggestions only, every one committable
 uv run roborak ask "why is this locked?"    # a question answered from the diff
+
+uv run roborak rules init                   # scaffold .roborak/rules/ with an example
+uv run roborak rules list                   # what roborak will apply here
+uv run roborak rules test <rule.md> <file>  # validate a rule and check its scope
+uv run roborak config init                  # write a commented .roborak.yaml
+uv run roborak config show                  # the effective config, all layers merged
 ```
 
 Each accepts the same `--mr` / `--pr` / `--base` targeting as `review`.
@@ -135,6 +141,25 @@ language_instructions:
   php: "Laravel 10 with the repository pattern; controllers stay thin."
 ```
 
+### Custom rules
+
+Standards a linter cannot express go in `.roborak/rules/*.md` as plain language —
+the same idea as Kodus' Kody Rules:
+
+```markdown
+---
+id: no-raw-sql
+paths: ["app/**/*.php"]
+severity: major
+category: security
+---
+Never build SQL by string concatenation. Use the query builder or bound parameters.
+```
+
+Only rules matching the changed files enter the prompt, so token cost stays flat
+as the rule set grows. Frontmatter is optional — a file containing one sentence is
+a valid rule, named after the file.
+
 roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 `CONTRIBUTING.md` (first one found) so reviews match the repo's own conventions.
 
@@ -147,12 +172,12 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 | 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
 | 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | **done** |
 | 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | **done** |
-| 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | todo |
+| 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | **done** |
 
 ## Development
 
 ```bash
-uv run pytest              # 246 tests
+uv run pytest              # 260 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak

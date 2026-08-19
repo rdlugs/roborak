@@ -13,6 +13,8 @@ from roborak.cli.commands import ask as ask_cmd
 from roborak.cli.commands import describe as describe_cmd
 from roborak.cli.commands import improve as improve_cmd
 from roborak.cli.commands import review as review_cmd
+from roborak.cli.commands.config_cmd import config_app
+from roborak.cli.commands.rules import rules_app
 
 app = typer.Typer(
     name="roborak",
@@ -26,6 +28,8 @@ app.command("review")(review_cmd.review)
 app.command("describe")(describe_cmd.describe)
 app.command("improve")(improve_cmd.improve)
 app.command("ask")(ask_cmd.ask)
+app.add_typer(rules_app, name="rules")
+app.add_typer(config_app, name="config")
 
 console = Console(stderr=True)
 

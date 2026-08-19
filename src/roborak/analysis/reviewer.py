@@ -23,6 +23,8 @@ from roborak.llm.prompt import (
     build_improve_prompt,
     build_review_prompt,
 )
+from roborak.rules.loader import load_rules
+from roborak.rules.matcher import matching_rules, rules_for_prompt
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,16 @@ class Reviewer:
     """``None`` runs the static-analysis-only path (``--no-llm``)."""
 
     static_findings: list[Finding] = field(default_factory=list)
+    _rules: list[object] | None = field(default=None, repr=False)
+
+    def rules_for(self, changeset: ChangeSet) -> list[dict[str, str]]:
+        """The team's own rules that apply to this change, ready for the prompt."""
+        if self._rules is None:
+            self._rules = list(load_rules(self.repo, self.config.rules_dir))
+        matched = matching_rules(self._rules, changeset)  # type: ignore[arg-type]
+        if matched:
+            log.debug("%d of %d rules apply to this change", len(matched), len(self._rules))
+        return rules_for_prompt(matched)
 
     def review(self, changeset: ChangeSet) -> ReviewResult:
         result = ReviewResult(changeset=changeset, model=self.config.model if self.llm else None)
@@ -83,7 +95,10 @@ class Reviewer:
             return result
 
         prompt = build_improve_prompt(
-            changeset, self.config, repo_context=load_repo_context(self.repo)
+            changeset,
+            self.config,
+            rules=self.rules_for(changeset),  # type: ignore[arg-type]
+            repo_context=load_repo_context(self.repo),
         )
         try:
             response = self.llm.complete(prompt.system, prompt.user)
@@ -133,6 +148,7 @@ class Reviewer:
         prompt = build_review_prompt(
             changeset,
             self.config,
+            rules=self.rules_for(changeset),  # type: ignore[arg-type]
             static_findings=self._static_for_prompt(),
             repo_context=load_repo_context(self.repo),
         )
