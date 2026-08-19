@@ -1,0 +1,53 @@
+{% if title %}## Change title
+{{ title }}
+{% endif %}
+{% if description %}
+## Description
+{{ description }}
+{% endif %}
+{% if repo_context %}
+## Repository conventions
+{{ repo_context }}
+{% endif %}
+{% if rules %}
+## Project rules
+These are this team's own standards. A violation of one is always worth reporting;
+cite it with the given `rule_id`.
+{% for rule in rules %}
+- id: `{{ rule.id }}` (severity: {{ rule.severity }}, category: {{ rule.category }})
+  {{ rule.body | indent(2) }}
+{% endfor %}
+{% endif %}
+{% if static_findings %}
+## Static analysis findings
+These came from tools that already ran on this diff. Treat them as evidence: confirm,
+explain the consequence, or silently drop them if they are false positives. Do not
+simply repeat them.
+{% for f in static_findings %}
+- {{ f.file }}:{{ f.start_line }} [{{ f.tool }}] {{ f.title }} — {{ f.body }}
+{% endfor %}
+{% endif %}
+{% if language_notes %}
+## Stack notes
+{{ language_notes }}
+{% endif %}
+
+## Diff to review
+
+Line numbers in the left margin are NEW-file line numbers. Lines beginning `+` were
+added, `-` were removed, and unprefixed lines are unchanged context.
+
+{% for file in files %}
+### {{ file.path }}{% if file.change_type != "modified" %} ({{ file.change_type }}){% endif %}{% if file.language %} [{{ file.language }}]{% endif %}
+
+{% if file.previous_path %}Renamed from `{{ file.previous_path }}`.
+{% endif %}
+```diff
+{{ file.rendered }}
+```
+{% endfor %}
+{% if omitted_files %}
+## Not shown
+These files changed but did not fit in the context budget; do not comment on them:
+{{ omitted_files | join(", ") }}
+{% endif %}
