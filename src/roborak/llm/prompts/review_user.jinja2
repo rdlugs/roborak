@@ -5,6 +5,22 @@
 ## Description
 {{ description }}
 {% endif %}
+{% if issue %}
+## Issue being addressed
+{{ issue.reference }}{% if issue.title %} — {{ issue.title }}{% endif %}
+{% if issue.labels %}
+labels: {{ issue.labels | join(", ") }}
+{% endif %}
+{% if issue.body %}
+{{ issue.body }}
+{% endif %}
+{% if issue.comments %}
+### Discussion
+{% for comment in issue.comments %}
+- {{ comment }}
+{% endfor %}
+{% endif %}
+{% endif %}
 {% if repo_context %}
 ## Repository conventions
 {{ repo_context }}

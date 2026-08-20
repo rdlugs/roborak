@@ -14,7 +14,14 @@ from roborak.analysis import validator
 from roborak.context.chunker import chunk, needs_chunking
 from roborak.context.compressor import compress, filter_files
 from roborak.core.config import Config
-from roborak.core.models import ChangedFile, ChangeSet, Finding, ReviewResult
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    Finding,
+    Issue,
+    ReviewResult,
+    Walkthrough,
+)
 from roborak.llm.client import LLMClient, LLMError
 from roborak.llm.parser import ParseError, parse_findings, parse_walkthrough
 from roborak.llm.prompt import (
@@ -43,6 +50,9 @@ class Reviewer:
     """``None`` runs the static-analysis-only path (``--no-llm``)."""
 
     static_findings: list[Finding] = field(default_factory=list)
+    issue: Issue | None = None
+    """What the change is supposed to achieve, when ``--issue`` supplied one."""
+
     _rules: list[object] | None = field(default=None, repr=False)
 
     def rules_for(self, changeset: ChangeSet) -> list[dict[str, str]]:
@@ -55,7 +65,11 @@ class Reviewer:
         return rules_for_prompt(matched)
 
     def review(self, changeset: ChangeSet) -> ReviewResult:
-        result = ReviewResult(changeset=changeset, model=self.config.model if self.llm else None)
+        result = ReviewResult(
+            changeset=changeset,
+            model=self.config.model if self.llm else None,
+            issue=self.issue,
+        )
 
         if not self._prepare(changeset, result):
             return result
@@ -73,31 +87,58 @@ class Reviewer:
 
     def describe(self, changeset: ChangeSet) -> ReviewResult:
         """Produce a walkthrough instead of findings."""
-        result = ReviewResult(changeset=changeset, model=self.config.model)
+        result = ReviewResult(changeset=changeset, model=self.config.model, issue=self.issue)
         if not self._prepare(changeset, result) or self.llm is None:
             return result
 
-        # describe is inherently one call, so an oversized change is compressed
-        # rather than split: a walkthrough of half a change is worse than a
-        # walkthrough that says which files it could not cover.
-        compress(
-            changeset, self.llm.context_budget, self.llm.count_tokens, render=render_for_prompt
-        )
-        result.skipped_files = list(changeset.omitted_files)
-        prompt = build_describe_prompt(
-            changeset, self.config, repo_context=load_repo_context(self.repo)
-        )
         try:
-            response = self.llm.complete(prompt.system, prompt.user)
-            result.walkthrough = parse_walkthrough(response.text)
+            # `describe` compresses the real changeset on purpose: the walkthrough
+            # is the whole output, so the files it could not cover belong in the
+            # report's own skipped list.
+            result.walkthrough = self._walkthrough_on(changeset)
         except (LLMError, ParseError) as exc:
             log.error("describe failed: %s", exc)
             result.errors.append(str(exc))
+        result.skipped_files = list(changeset.omitted_files)
         return result
+
+    def walkthrough(self, changeset: ChangeSet) -> Walkthrough | None:
+        """The overview pass that accompanies a review, or ``None`` if it failed.
+
+        Deliberately non-fatal, and deliberately working on a copy. A review
+        without an overview is still a review, so a failure here is logged rather
+        than recorded in ``result.errors`` -- which would turn a clean review into
+        a non-zero exit. The copy matters just as much: ``compress`` mutates, and
+        shrinking the changeset the findings were anchored against would corrupt
+        every line number downstream.
+        """
+        if self.llm is None:
+            return None
+        try:
+            return self._walkthrough_on(changeset.model_copy(deep=True))
+        except (LLMError, ParseError) as exc:
+            log.warning("overview pass failed; reporting findings without one: %s", exc)
+            return None
+
+    def _walkthrough_on(self, changeset: ChangeSet) -> Walkthrough | None:
+        """One describe call over ``changeset``, which this *will* compress."""
+        assert self.llm is not None
+
+        # A walkthrough is inherently one call, so an oversized change is
+        # compressed rather than split: a walkthrough of half a change is worse
+        # than one that says which files it could not cover.
+        compress(
+            changeset, self.llm.context_budget, self.llm.count_tokens, render=render_for_prompt
+        )
+        prompt = build_describe_prompt(
+            changeset, self.config, repo_context=load_repo_context(self.repo), issue=self.issue
+        )
+        response = self.llm.complete(prompt.system, prompt.user)
+        return parse_walkthrough(response.text)
 
     def improve(self, changeset: ChangeSet) -> ReviewResult:
         """Suggestion-only mode: every finding carries committable code."""
-        result = ReviewResult(changeset=changeset, model=self.config.model)
+        result = ReviewResult(changeset=changeset, model=self.config.model, issue=self.issue)
         if not self._prepare(changeset, result) or self.llm is None:
             return result
 
@@ -106,6 +147,7 @@ class Reviewer:
             self.config,
             rules=self.rules_for(changeset),  # type: ignore[arg-type]
             repo_context=load_repo_context(self.repo),
+            issue=self.issue,
         )
         try:
             response = self.llm.complete(prompt.system, prompt.user)
@@ -132,7 +174,9 @@ class Reviewer:
         compress(
             changeset, self.llm.context_budget, self.llm.count_tokens, render=render_for_prompt
         )
-        prompt = build_ask_prompt(changeset, question, repo_context=load_repo_context(self.repo))
+        prompt = build_ask_prompt(
+            changeset, question, repo_context=load_repo_context(self.repo), issue=self.issue
+        )
         return self.llm.complete(prompt.system, prompt.user).text.strip()
 
     def _prepare(self, changeset: ChangeSet, result: ReviewResult) -> bool:
@@ -180,6 +224,9 @@ class Reviewer:
             rules=self.rules_for(changeset),  # type: ignore[arg-type]
             static_findings=self._static_for_prompt(changeset),
             repo_context=load_repo_context(self.repo),
+            # Every pass carries the issue: a requirement can be missed in any
+            # chunk, and a chunk that omits it would report false gaps.
+            issue=self.issue,
         )
         response = self.llm.complete(prompt.system, prompt.user)
         log.debug("model returned %d chars", len(response.text))

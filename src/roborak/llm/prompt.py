@@ -11,7 +11,7 @@ from roborak.context.ast_context import symbol_context
 from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
 from roborak.core.config import Config
-from roborak.core.models import ChangedFile, ChangeSet, Finding
+from roborak.core.models import ChangedFile, ChangeSet, Finding, Issue
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -52,12 +52,13 @@ def build_describe_prompt(
     config: Config,
     *,
     repo_context: str = "",
+    issue: Issue | None = None,
 ) -> RenderedPrompt:
     """The ``describe`` prompt. Reuses the review user template: the model needs
     the same diff, only the instructions differ."""
     return RenderedPrompt(
         system=_env.get_template("describe_system.jinja2").render(),
-        user=_review_user(changeset, config, repo_context=repo_context),
+        user=_review_user(changeset, config, repo_context=repo_context, issue=issue),
     )
 
 
@@ -67,6 +68,7 @@ def build_improve_prompt(
     *,
     rules: list[object] | None = None,
     repo_context: str = "",
+    issue: Issue | None = None,
 ) -> RenderedPrompt:
     """The ``improve`` prompt: suggestions only, every one committable."""
     return RenderedPrompt(
@@ -74,7 +76,7 @@ def build_improve_prompt(
             categories=[c.value for c in config.review.categories],
             max_findings=config.review.max_findings,
         ),
-        user=_review_user(changeset, config, rules=rules, repo_context=repo_context),
+        user=_review_user(changeset, config, rules=rules, repo_context=repo_context, issue=issue),
     )
 
 
@@ -83,6 +85,7 @@ def build_ask_prompt(
     question: str,
     *,
     repo_context: str = "",
+    issue: Issue | None = None,
 ) -> RenderedPrompt:
     """Free-text Q&A over the changeset."""
     return RenderedPrompt(
@@ -91,6 +94,7 @@ def build_ask_prompt(
             question=question,
             title=changeset.title,
             repo_context=repo_context,
+            issue=issue,
             files=_file_dicts(changeset),
         ),
     )
@@ -103,12 +107,16 @@ def build_review_prompt(
     rules: list[object] | None = None,
     static_findings: list[Finding] | None = None,
     repo_context: str = "",
+    issue: Issue | None = None,
 ) -> RenderedPrompt:
     system = _env.get_template("review_system.jinja2").render(
         categories=[c.value for c in config.review.categories],
         max_findings=config.review.max_findings,
         committable_suggestions=config.review.committable_suggestions,
         full_file=config.review.full_file,
+        # There is nothing to check requirements against without an issue, so the
+        # kind cannot be produced by a run that did not ask for one.
+        check_requirements=issue is not None and config.review.check_requirements,
     )
     user = _review_user(
         changeset,
@@ -116,6 +124,7 @@ def build_review_prompt(
         rules=rules,
         static_findings=static_findings,
         repo_context=repo_context,
+        issue=issue,
     )
     return RenderedPrompt(system=system, user=user)
 
@@ -141,11 +150,13 @@ def _review_user(
     rules: list[object] | None = None,
     static_findings: list[Finding] | None = None,
     repo_context: str = "",
+    issue: Issue | None = None,
 ) -> str:
     return _env.get_template("review_user.jinja2").render(
         title=changeset.title,
         description=changeset.description,
         repo_context=repo_context,
+        issue=issue,
         rules=rules or [],
         static_findings=static_findings or [],
         language_notes=_language_notes(changeset, config),

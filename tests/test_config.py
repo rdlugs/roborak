@@ -163,3 +163,28 @@ def test_world_readable_key_file_warns(tmp_path: Path, monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         load_config(tmp_path)
     assert not caplog.text
+
+
+def test_forge_hosts_are_normalised(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text(
+        "forge:\n  hosts:\n    gitlab: https://gitlab.acme.com/\n    github: http://gh.local:8080\n"
+    )
+    hosts = load_config(tmp_path).forge.hosts
+    # The default scheme is dropped so the value stays a plain domain; http stays.
+    assert hosts == {"gitlab": "gitlab.acme.com", "github": "http://gh.local:8080"}
+
+
+@pytest.mark.parametrize("value", ["https://example.com/gitlab", "  "])
+def test_an_unusable_forge_host_is_a_config_error(value, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text(f"forge:\n  hosts:\n    gitlab: '{value}'\n")
+    with pytest.raises(ValueError, match=r"forge\.hosts\.gitlab"):
+        load_config(tmp_path)
+
+
+def test_host_env_var_beats_the_project_file(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text("forge:\n  hosts:\n    gitlab: from-file\n")
+    monkeypatch.setenv("ROBORAK_GITLAB_HOST", "from-env")
+    assert load_config(tmp_path).forge.hosts["gitlab"] == "from-env"

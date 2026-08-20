@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.rule import Rule
@@ -16,8 +17,18 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from roborak.core.buckets import BUCKET_TITLE, Bucket, group
 from roborak.core.models import Finding, ReviewResult
-from roborak.core.severity import KIND_LABEL, SEVERITY_STYLE, Severity
+from roborak.core.severity import (
+    CATEGORY_LABEL,
+    EFFORT_LABEL,
+    KIND_LABEL,
+    SEVERITY_LABEL,
+    SEVERITY_STYLE,
+    Kind,
+    Severity,
+)
+from roborak.render.lexers import lexer_for
 
 SEVERITY_ICON = {
     Severity.CRITICAL: "✖",
@@ -34,16 +45,96 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
         for error in result.errors:
             console.print(f"[bold red]error[/] {error}")
 
+    changeset = result.changeset
+    if changeset is None or not changeset.is_empty:
+        _render_header(result, console)
+
     if not result.findings:
         _render_clean(result, console)
         return
 
-    console.print()
-    for finding in result.sorted_findings():
-        console.print(_finding_panel(finding, repo))
-        console.print()
-
+    _render_buckets(result, console, repo)
     _render_summary(result, console)
+
+
+def _render_buckets(result: ReviewResult, console: Console, repo: Path) -> None:
+    """Findings grouped the way the report groups them.
+
+    A terminal cannot collapse a section, so the nitpicks are compressed instead:
+    one line each, no snippet. The point is the same either way -- the small stuff
+    must not be able to bury the two findings that matter.
+    """
+    grouped = group(result)
+    for bucket, findings in grouped.items():
+        if len(grouped) > 1:
+            console.print()
+            console.print(
+                Rule(
+                    Text(f"{BUCKET_TITLE[bucket]} ({len(findings)})", style="bold"),
+                    align="left",
+                    style="dim",
+                )
+            )
+        if bucket is Bucket.NITPICK:
+            console.print()
+            for finding in findings:
+                console.print(_nitpick_line(finding))
+            continue
+
+        console.print()
+        for finding in findings:
+            console.print(_finding_panel(finding, repo))
+            console.print()
+
+
+def _render_header(result: ReviewResult, console: Console) -> None:
+    """What was reviewed, and what the change does.
+
+    Mirrors ``markdown._header`` field for field: the two renderers describe the
+    same review, so they must not be able to describe it differently.
+    """
+    walkthrough = result.walkthrough
+    changeset = result.changeset
+
+    title = (walkthrough.title if walkthrough else None) or (changeset.title if changeset else None)
+    if title:
+        console.print()
+        console.print(Text(title, style="bold"))
+
+    if meta := _meta_parts(result):
+        if not title:
+            console.print()
+        console.print(Text(" · ".join(meta), style="dim"))
+
+    if walkthrough is None:
+        return
+
+    if walkthrough.overview:
+        console.print()
+        console.print(Text(walkthrough.overview.strip()))
+
+    if walkthrough.file_summaries:
+        table = Table(box=box.SIMPLE, padding=(0, 1), header_style="dim")
+        table.add_column("File", style="cyan", overflow="fold")
+        table.add_column("Change", overflow="fold")
+        for summary in walkthrough.file_summaries:
+            table.add_row(summary.path, " ".join(summary.summary.split()))
+        console.print()
+        console.print(table)
+
+
+def _meta_parts(result: ReviewResult) -> list[str]:
+    parts: list[str] = []
+    changeset = result.changeset
+    if changeset is not None:
+        if changeset.head_ref and changeset.base_ref:
+            parts.append(f"{changeset.head_ref} → {changeset.base_ref}")
+        parts.append(f"{len(changeset.files)} file(s) changed")
+        if added := changeset.total_added_lines:
+            parts.append(f"+{added} line(s)")
+    if result.walkthrough and result.walkthrough.estimated_effort:
+        parts.append(f"review effort {result.walkthrough.estimated_effort}/5")
+    return parts
 
 
 def _render_clean(result: ReviewResult, console: Console) -> None:
@@ -56,24 +147,44 @@ def _render_clean(result: ReviewResult, console: Console) -> None:
     _render_footer(result, console)
 
 
+def _nitpick_line(finding: Finding) -> Text:
+    """A nitpick in one line: where, what, and nothing else."""
+    line = Text("  • ", style="dim")
+    line.append(finding.location, style="cyan")
+    line.append("  ")
+    line.append(finding.title.rstrip("."), style="none")
+    line.append(f"  {EFFORT_LABEL[finding.effort]}", style="dim")
+    return line
+
+
 def _finding_panel(finding: Finding, repo: Path) -> Panel:
     style = SEVERITY_STYLE[finding.severity]
     icon = SEVERITY_ICON[finding.severity]
 
+    # Category, then severity, then what the fix will cost -- the order the
+    # markdown badges use, so the two reports read the same way.
     heading = Text()
-    heading.append(f"{icon} {finding.severity.value.upper()}", style=style)
-    heading.append("  ")
-    heading.append(KIND_LABEL[finding.kind], style="dim")
-    heading.append("  ")
-    heading.append(finding.category.value, style="dim italic")
+    heading.append(f"{icon} ", style=style)
+    heading.append(CATEGORY_LABEL[finding.category])
+    heading.append(" │ ", style="dim")
+    heading.append(SEVERITY_LABEL[finding.severity], style=style)
+    heading.append(" │ ", style="dim")
+    heading.append(EFFORT_LABEL[finding.effort])
+
+    tail = Text()
+    tail.append(KIND_LABEL[finding.kind], style="dim")
+    if finding.source == "llm":
+        # Only the model reports a calibrated confidence; a linter's 0.8 default
+        # would be a number we invented.
+        tail.append(f"  confidence {finding.confidence:.0%}", style="dim")
     if finding.rule_id:
-        heading.append(f"  [{finding.rule_id}]", style="magenta")
+        tail.append(f"  [{finding.rule_id}]", style="magenta")
     if finding.source == "static" and finding.tool:
-        heading.append(f"  via {finding.tool}", style="dim")
+        tail.append(f"  via {finding.tool}", style="dim")
 
-    parts: list[RenderableType] = [heading]
+    parts: list[RenderableType] = [heading, tail]
 
-    snippet = _code_snippet(finding, repo)
+    snippet = None if finding.kind is Kind.REQUIREMENT_GAP else _code_snippet(finding, repo)
     if snippet is not None:
         parts += [Text(""), snippet]
 
@@ -85,17 +196,20 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
         parts.append(
             Syntax(
                 finding.suggestion,
-                _lexer_for(finding.file),
+                lexer_for(finding.file),
                 theme="ansi_dark",
                 line_numbers=False,
                 word_wrap=True,
             )
         )
 
+    # A gap's line is nominal -- showing it would imply an anchor it does not have.
+    where = finding.file if finding.kind is Kind.REQUIREMENT_GAP else finding.location
+
     return Panel(
         Group(*parts),
         title=Text(finding.title, style="bold"),
-        subtitle=Text(finding.location, style="dim"),
+        subtitle=Text(where, style="dim"),
         subtitle_align="left",
         border_style=style,
         padding=(0, 1),
@@ -117,7 +231,7 @@ def _code_snippet(finding: Finding, repo: Path) -> Syntax | None:
 
     return Syntax(
         "\n".join(lines[start - 1 : end]),
-        _lexer_for(finding.file),
+        lexer_for(finding.file),
         theme="ansi_dark",
         line_numbers=True,
         start_line=start,
@@ -142,11 +256,15 @@ def _render_summary(result: ReviewResult, console: Console) -> None:
     console.print(table)
 
     total = len(result.findings)
-    console.print(f"\n[bold]{total} finding{'s' if total != 1 else ''}[/] posted.")
+    console.print(f"\n[bold]{total} finding{'s' if total != 1 else ''}[/].")
     _render_footer(result, console)
 
 
 def _render_footer(result: ReviewResult, console: Console) -> None:
+    if result.issue is not None:
+        issue = result.issue
+        label = f"{issue.reference} — {issue.title}" if issue.title else issue.reference
+        console.print(f"[dim]reviewed against issue {label}[/]")
     if result.skipped_files:
         console.print(
             f"[dim]{len(result.skipped_files)} file(s) not reviewed (context budget): "
@@ -155,38 +273,3 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
         )
     if result.model:
         console.print(f"[dim]model: {result.model}[/]")
-
-
-_LEXERS = {
-    "py": "python",
-    "js": "javascript",
-    "jsx": "jsx",
-    "ts": "typescript",
-    "tsx": "tsx",
-    "php": "php",
-    "go": "go",
-    "rs": "rust",
-    "rb": "ruby",
-    "java": "java",
-    "kt": "kotlin",
-    "cs": "csharp",
-    "c": "c",
-    "h": "c",
-    "cpp": "cpp",
-    "sh": "bash",
-    "sql": "sql",
-    "yaml": "yaml",
-    "yml": "yaml",
-    "json": "json",
-    "toml": "toml",
-    "html": "html",
-    "css": "css",
-    "scss": "scss",
-    "vue": "vue",
-    "swift": "swift",
-    "tf": "terraform",
-}
-
-
-def _lexer_for(path: str) -> str:
-    return _LEXERS.get(path.rsplit(".", 1)[-1].lower(), "text")

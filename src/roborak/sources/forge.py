@@ -12,11 +12,13 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
 
+from roborak.core.config import ForgeConfig
 from roborak.sources.base import SourceError
 
 log = logging.getLogger(__name__)
@@ -34,16 +36,20 @@ class Target:
 
     provider: Provider
     host: str
+    """Bare ``host[:port]``: it doubles as a state key and appears in every error."""
+
     project: str
     number: int
+    scheme: str = "https"
+    """``http`` only for an instance that says so; kept off ``host`` deliberately."""
 
     @property
     def api_base(self) -> str:
         if self.provider == "gitlab":
-            return f"https://{self.host}/api/v4"
+            return f"{self.scheme}://{self.host}/api/v4"
         if self.host in {"github.com", "www.github.com"}:
             return "https://api.github.com"
-        return f"https://{self.host}/api/v3"  # GitHub Enterprise
+        return f"{self.scheme}://{self.host}/api/v3"  # GitHub Enterprise
 
     @property
     def encoded_project(self) -> str:
@@ -51,44 +57,84 @@ class Target:
         return quote(self.project, safe="")
 
 
-_GITLAB_URL = re.compile(r"^https?://([^/]+)/(.+?)/-/merge_requests/(\d+)")
-_GITHUB_URL = re.compile(r"^https?://([^/]+)/([^/]+/[^/]+)/pull/(\d+)")
+_GITLAB_URL = re.compile(r"^(https?)://([^/]+)/(.+?)/-/merge_requests/(\d+)")
+_GITHUB_URL = re.compile(r"^(https?)://([^/]+)/([^/]+/[^/]+)/pull/(\d+)")
+_GITLAB_ISSUE_URL = re.compile(r"^(https?)://([^/]+)/(.+?)/-/issues/(\d+)")
+_GITHUB_ISSUE_URL = re.compile(r"^(https?)://([^/]+)/([^/]+/[^/]+)/issues/(\d+)")
+
+TargetKind = Literal["change", "issue"]
+"""``change`` is a merge/pull request; ``issue`` is a tracker issue."""
+
+_URL_PATTERNS: dict[tuple[TargetKind, Provider], re.Pattern[str]] = {
+    ("change", "gitlab"): _GITLAB_URL,
+    ("change", "github"): _GITHUB_URL,
+    ("issue", "gitlab"): _GITLAB_ISSUE_URL,
+    ("issue", "github"): _GITHUB_ISSUE_URL,
+}
 
 
 def parse_target(
-    reference: str, provider: Provider, *, host: str | None = None, project: str | None = None
+    reference: str,
+    provider: Provider,
+    *,
+    host: str | None = None,
+    project: str | None = None,
+    kind: TargetKind = "change",
+    repo: Path | None = None,
 ) -> Target:
-    """Accept either a full URL or a bare number plus explicit project details."""
+    """Accept either a full URL or a bare number plus explicit project details.
+
+    ``kind`` selects which URL shape is acceptable, so a merge-request flag still
+    rejects an issue URL rather than silently reviewing the wrong thing.
+    """
     if reference.startswith(("http://", "https://")):
-        pattern = _GITLAB_URL if provider == "gitlab" else _GITHUB_URL
-        match = pattern.match(reference)
+        match = _URL_PATTERNS[(kind, provider)].match(reference)
         if not match:
             raise SourceError(f"Could not parse {provider} URL: {reference}")
-        return Target(provider, match.group(1), match.group(2), int(match.group(3)))
+        scheme, url_host, url_project, number = match.groups()
+        return Target(provider, url_host, url_project, int(number), scheme=scheme)
 
     if not reference.isdigit():
         raise SourceError(f"Expected a number or a URL, got: {reference}")
 
-    resolved_host = host or ("gitlab.com" if provider == "gitlab" else "github.com")
-    resolved_project = project or detect_project(provider)
+    scheme, resolved_host = split_host(
+        host or ("gitlab.com" if provider == "gitlab" else "github.com")
+    )
+    resolved_project = project or detect_project(provider, repo=repo)
     if not resolved_project:
         raise SourceError(
             f"Could not work out which {provider} project to use. "
             f"Pass a full URL, or set a git remote."
         )
-    return Target(provider, resolved_host, resolved_project, int(reference))
+    return Target(provider, resolved_host, resolved_project, int(reference), scheme=scheme)
 
 
-def detect_project(provider: Provider, remote: str = "origin") -> str | None:
-    """Read the project path out of the repository's git remote."""
+def _remote_url(remote: str, repo: Path | None) -> str | None:
+    """The configured URL of ``remote``, read inside ``repo``.
+
+    ``repo`` matters: ``-C other/repo`` must resolve that repository's remote, not
+    whichever directory the process happens to have been started in.
+    """
     if not shutil.which("git"):
         return None
     result = subprocess.run(
-        ["git", "remote", "get-url", remote], capture_output=True, text=True, check=False
+        ["git", "remote", "get-url", remote],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
         return None
-    return project_from_remote(result.stdout.strip())
+    return result.stdout.strip() or None
+
+
+def detect_project(
+    provider: Provider, remote: str = "origin", *, repo: Path | None = None
+) -> str | None:
+    """Read the project path out of the repository's git remote."""
+    url = _remote_url(remote, repo)
+    return project_from_remote(url) if url else None
 
 
 def project_from_remote(url: str) -> str | None:
@@ -105,26 +151,101 @@ def project_from_remote(url: str) -> str | None:
     return None
 
 
-def detect_host(provider: Provider, remote: str = "origin") -> str | None:
-    result = subprocess.run(
-        ["git", "remote", "get-url", remote], capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
+def split_host(value: str) -> tuple[str, str]:
+    """Split ``[scheme://]host[:port]`` into its scheme and netloc, https by default."""
+    for scheme in ("https", "http"):
+        if value.lower().startswith(f"{scheme}://"):
+            return scheme, value[len(scheme) + 3 :].rstrip("/")
+    return "https", value
+
+
+def detect_host(
+    provider: Provider, remote: str = "origin", *, repo: Path | None = None
+) -> str | None:
+    """The host the git remote points at, as ``[scheme://]host[:port]``.
+
+    The scheme is carried only when the remote is plain ``http``, which is a real
+    shape for an internal instance and would otherwise be silently upgraded.
+    """
+    url = _remote_url(remote, repo)
+    if url is None:
         return None
-    url = result.stdout.strip().removesuffix(".git")
+    url = url.removesuffix(".git")
     if url.startswith(("http://", "https://")):
-        return urlparse(url).netloc or None
+        netloc = urlparse(url).netloc
+        if not netloc:
+            return None
+        return f"http://{netloc}" if url.startswith("http://") else netloc
     if "@" in url and ":" in url:
         return url.split("@", 1)[1].split(":", 1)[0] or None
     return None
 
 
-def get_token(provider: Provider) -> str | None:
-    """Find a token, preferring an explicit env var over the gh CLI's session."""
+def resolve_host(
+    provider: Provider, forge: ForgeConfig | None = None, *, repo: Path | None = None
+) -> str | None:
+    """Where this provider lives: the git remote first, then ``forge.hosts``.
+
+    The remote is per-repository evidence and beats configuration on purpose -- a
+    domain set user-wide must not hijack a checkout whose remote says otherwise.
+    ``None`` leaves the caller on the provider's public default.
+    """
+    return detect_host(provider, repo=repo) or (forge.hosts.get(provider) if forge else None)
+
+
+def provider_from_url(reference: str) -> Provider | None:
+    """Which forge a full URL points at, judged by its path shape.
+
+    GitLab namespaces everything under ``/-/``, which is what distinguishes
+    ``.../-/issues/3`` from GitHub's ``.../issues/3``.
+    """
+    if not reference.startswith(("http://", "https://")):
+        return None
+    if _GITLAB_ISSUE_URL.match(reference) or _GITLAB_URL.match(reference):
+        return "gitlab"
+    if _GITHUB_ISSUE_URL.match(reference) or _GITHUB_URL.match(reference):
+        return "github"
+    return None
+
+
+def detect_provider(
+    remote: str = "origin", *, repo: Path | None = None, forge: ForgeConfig | None = None
+) -> Provider | None:
+    """Guess the forge from the git remote's host.
+
+    A host named in ``forge.hosts`` settles it, which is how a self-hosted instance
+    called something like ``git.acme.com`` becomes recognisable at all. Failing
+    that, the name has to speak for itself: anything else returns ``None`` so the
+    caller can ask for a full URL rather than pick one and be wrong.
+    """
+    host = split_host((detect_host("gitlab", remote, repo=repo) or "").lower())[1]
+    if not host:
+        return None
+    if forge is not None:
+        candidates: tuple[Provider, ...] = ("gitlab", "github")
+        for candidate in candidates:
+            configured = forge.hosts.get(candidate)
+            if configured and split_host(configured.lower())[1] == host:
+                return candidate
+    if "gitlab" in host:
+        return "gitlab"
+    if "github" in host:
+        return "github"
+    return None
+
+
+def get_token(provider: Provider, forge: ForgeConfig | None = None) -> str | None:
+    """Find a token: configured first, then the environment, then the gh CLI.
+
+    ``forge.tokens`` already carries ``ROBORAK_<PROVIDER>_TOKEN`` when it is set,
+    since the environment is a config layer, so checking it first keeps the
+    documented precedence of env over file.
+    """
+    if forge is not None and (configured := forge.tokens.get(provider)):
+        return configured.get_secret_value()
+
     names = (
-        ("ROBORAK_GITLAB_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN")
-        if provider == "gitlab"
-        else ("ROBORAK_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
+        ("GITLAB_TOKEN", "CI_JOB_TOKEN") if provider == "gitlab" else ("GITHUB_TOKEN", "GH_TOKEN")
     )
     for name in names:
         if token := os.getenv(name):
@@ -195,8 +316,9 @@ class ForgeClient:
 
         if response.status_code == 401:
             raise SourceError(
-                f"{self.target.host} rejected the token. Check the relevant "
-                f"{'GITLAB_TOKEN' if self.target.provider == 'gitlab' else 'GITHUB_TOKEN'}."
+                f"{self.target.host} rejected the token. Check "
+                f"{'GITLAB_TOKEN' if self.target.provider == 'gitlab' else 'GITHUB_TOKEN'} "
+                f"or forge.tokens.{self.target.provider} in the config."
             )
         if response.status_code == 403:
             raise SourceError(f"Not permitted: {method} {path} on {self.target.host}.")

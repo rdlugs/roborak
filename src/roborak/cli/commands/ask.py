@@ -20,6 +20,9 @@ def ask(
     repo: Annotated[Path | None, typer.Option("--dir", "-C", help="Repository.")] = None,
     mr: Annotated[str | None, typer.Option("--mr", help="GitLab merge request.")] = None,
     pr: Annotated[str | None, typer.Option("--pr", help="GitHub pull request.")] = None,
+    issue: Annotated[
+        str | None, typer.Option("--issue", help="Issue this change should solve.")
+    ] = None,
     base: Annotated[str | None, typer.Option("--base", "-b", help="Base ref.")] = None,
     uncommitted: Annotated[bool, typer.Option("--uncommitted")] = False,
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
@@ -35,6 +38,7 @@ def ask(
         repo=repo,
         mr=mr,
         pr=pr,
+        issue=issue,
         base=base,
         uncommitted=uncommitted,
         config_path=config_path,
@@ -44,9 +48,12 @@ def ask(
 
     try:
         with console.status(f"[dim]asking {session.config.model}…[/]", spinner="dots"):
-            answer = Reviewer(config=session.config, repo=session.repo, llm=session.llm).ask(
-                session.changeset, question
-            )
+            answer = Reviewer(
+                config=session.config,
+                repo=session.repo,
+                llm=session.llm,
+                issue=session.issue,
+            ).ask(session.changeset, question)
     except LLMError as exc:
         console.print(f"[bold red]error[/] {exc}")
         raise typer.Exit(EXIT_ERROR) from exc

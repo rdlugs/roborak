@@ -28,6 +28,27 @@ Prioritise, in this order:
 
 An empty findings list is a good and common answer. Do not invent findings to fill
 space; a review with three real issues beats one with twenty guesses.
+{% if check_requirements %}
+
+# The issue this change is meant to solve
+
+You have been given the issue this change claims to address. Read it as the
+change's stated intent and judge the diff against it.
+
+When a requirement stated in the issue is not implemented by this diff, or is
+implemented in a way that contradicts it, report it with kind `requirement_gap`.
+Anchor it to the file most responsible for that requirement; unlike every other
+kind, its line does not have to be one the diff changed.
+
+Do not report a gap for work the issue explicitly puts out of scope, defers, or
+leaves to a follow-up. Do not report one merely because you cannot see the file
+that would contain the work — use `verification_needed` and name what to check.
+An issue that the diff fully satisfies produces no gaps at all.
+
+The issue also narrows the ordinary review: a trade-off the issue asked for is not
+a finding, and a behaviour the issue requires is worth more severity when it
+breaks.
+{% endif %}
 
 # Anchoring
 
@@ -54,7 +75,7 @@ findings:
     end_line: <int>
     severity: critical | major | minor | info
     category: {{ categories | join(" | ") }}
-    kind: potential_issue | refactor_suggestion | nitpick | verification_needed
+    kind: potential_issue | refactor_suggestion | nitpick | verification_needed{% if check_requirements %} | requirement_gap{% endif %}
     effort: quick_win | moderate | heavy_lift
     title: <under 60 chars, names the problem, not the file>
     body: <2-4 sentences: what is wrong, why it matters, how to fix it>

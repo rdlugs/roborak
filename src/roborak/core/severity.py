@@ -52,6 +52,9 @@ class Kind(StrEnum):
     REFACTOR_SUGGESTION = "refactor_suggestion"
     NITPICK = "nitpick"
     VERIFICATION_NEEDED = "verification_needed"
+    REQUIREMENT_GAP = "requirement_gap"
+    """Something the issue asked for that the change does not appear to do. The one
+    kind that is not anchored to a changed line, because an omission has none."""
 
 
 class Effort(StrEnum):
@@ -69,9 +72,37 @@ SEVERITY_STYLE: dict[Severity, str] = {
     Severity.INFO: "dim",
 }
 
+# The badge vocabulary every renderer draws from, after CodeRabbit's: a finding
+# announces its category, how much it matters, and what fixing it will cost, in
+# that order. Kept here beside the enums so the four surfaces cannot drift.
+CATEGORY_LABEL: dict[Category, str] = {
+    Category.SECURITY: "🔒 Security",
+    Category.BUG: "🎯 Functional Correctness",
+    Category.PERFORMANCE: "🚀 Performance",
+    Category.LOGIC: "🧠 Logic",
+    Category.MAINTAINABILITY: "📐 Maintainability & Code Quality",
+    Category.TESTING: "🧪 Testing",
+    Category.STYLE: "🎨 Style",
+    Category.DOCS: "📝 Documentation",
+}
+
+SEVERITY_LABEL: dict[Severity, str] = {
+    Severity.CRITICAL: "🔴 Critical",
+    Severity.MAJOR: "🟠 Major",
+    Severity.MINOR: "🟡 Minor",
+    Severity.INFO: "🔵 Trivial",
+}
+
+EFFORT_LABEL: dict[Effort, str] = {
+    Effort.QUICK_WIN: "⚡ Quick win",
+    Effort.MODERATE: "🔨 Moderate",
+    Effort.HEAVY_LIFT: "🏗️ Heavy lift",
+}
+
 KIND_LABEL: dict[Kind, str] = {
     Kind.POTENTIAL_ISSUE: "Potential issue",
     Kind.REFACTOR_SUGGESTION: "Refactor suggestion",
     Kind.NITPICK: "Nitpick",
     Kind.VERIFICATION_NEEDED: "Verification needed",
+    Kind.REQUIREMENT_GAP: "Requirement gap",
 }

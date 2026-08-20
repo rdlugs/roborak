@@ -7,7 +7,7 @@ meant to be piped straight into a coding agent.
 
 from __future__ import annotations
 
-from roborak.core.models import ReviewResult
+from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Severity
 
 
@@ -38,6 +38,39 @@ def render(result: ReviewResult) -> str:
         "Line numbers refer to the current file contents."
     )
     return f"{instruction}\n\nFound {header}.\n\n" + "\n\n".join(blocks)
+
+
+AGENT_PREAMBLE = (
+    "Verify each finding against current code. Fix only still-valid issues, skip the\n"
+    "rest with a brief reason, keep changes minimal, and validate."
+)
+"""What a coding agent needs told before it acts on someone else's review.
+
+The review it is holding may be minutes or days old, so the first instruction is
+always to check rather than to trust.
+"""
+
+
+def agent_instruction(finding: Finding) -> str:
+    """One finding as an imperative a coding agent can act on.
+
+    Shared with the markdown renderer's per-finding prompt blocks, so the wording
+    an agent reads is the same whether it came from ``--prompt-only`` or from the
+    review comment posted on the merge request.
+    """
+    where = f"line {finding.start_line}"
+    if finding.end_line != finding.start_line:
+        where = f"lines {finding.start_line}-{finding.end_line}"
+
+    return f"In `@{finding.file}` at {where}, {agent_instruction_body(finding)}"
+
+
+def agent_instruction_body(finding: Finding) -> str:
+    """The imperative alone, for callers that state the location themselves."""
+    body = _flatten(finding.body)
+    if finding.suggestion:
+        body += " A concrete replacement is offered in the review comment."
+    return body
 
 
 def _flatten(text: str) -> str:

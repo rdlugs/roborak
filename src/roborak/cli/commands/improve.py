@@ -17,6 +17,9 @@ def improve(
     repo: Annotated[Path | None, typer.Option("--dir", "-C", help="Repository.")] = None,
     mr: Annotated[str | None, typer.Option("--mr", help="GitLab merge request.")] = None,
     pr: Annotated[str | None, typer.Option("--pr", help="GitHub pull request.")] = None,
+    issue: Annotated[
+        str | None, typer.Option("--issue", help="Issue this change should solve.")
+    ] = None,
     base: Annotated[str | None, typer.Option("--base", "-b", help="Base ref.")] = None,
     uncommitted: Annotated[bool, typer.Option("--uncommitted")] = False,
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
@@ -27,15 +30,21 @@ def improve(
     prompt_only: Annotated[
         bool, typer.Option("--prompt-only", help="Instructions for a coding agent.")
     ] = False,
+    panels: Annotated[
+        bool,
+        typer.Option("--panels", help="Show rich panels with code context instead of the report."),
+    ] = False,
     fail_on: Annotated[Severity | None, typer.Option("--fail-on")] = None,
 ) -> None:
     """Propose concrete, committable improvements to the changed code."""
-    console = Console(quiet=as_json or agent or prompt_only)
+    # Chrome to stderr; stdout carries the report, same as `review`.
+    console = Console(stderr=True, quiet=as_json or agent or prompt_only)
     session = shared.start(
         console,
         repo=repo,
         mr=mr,
         pr=pr,
+        issue=issue,
         base=base,
         uncommitted=uncommitted,
         config_path=config_path,
@@ -47,9 +56,21 @@ def improve(
         session.config.review.max_findings = max_findings
 
     with console.status(f"[dim]improving with {session.config.model}…[/]", spinner="dots"):
-        result = Reviewer(config=session.config, repo=session.repo, llm=session.llm).improve(
-            session.changeset
-        )
+        result = Reviewer(
+            config=session.config,
+            repo=session.repo,
+            llm=session.llm,
+            issue=session.issue,
+        ).improve(session.changeset)
 
-    shared.emit(session, result, as_json=as_json, agent=agent, prompt_only_mode=prompt_only)
+    if panels:
+        session.config.output.panels = True
+    shared.emit(
+        session,
+        result,
+        as_json=as_json,
+        agent=agent,
+        prompt_only_mode=prompt_only,
+        panels=session.config.output.panels,
+    )
     shared.finish(result, fail_on)

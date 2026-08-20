@@ -90,6 +90,33 @@ class ForgeRef(BaseModel):
     web_url: str | None = None
 
 
+class Issue(BaseModel):
+    """A tracker issue the change is meant to solve.
+
+    Carried alongside the ``ChangeSet`` rather than inside it: a ``ChangeSet``
+    describes where the code came from, and the issue describes what it was
+    supposed to achieve. Keeping them apart means a source never has to know
+    whether an issue was supplied.
+    """
+
+    provider: Literal["gitlab", "github"]
+    host: str
+    project: str
+    number: int
+    title: str = ""
+    body: str = ""
+    labels: list[str] = Field(default_factory=list)
+    state: str = ""
+    web_url: str | None = None
+    comments: list[str] = Field(default_factory=list)
+    """Human discussion, oldest first. System notes are dropped at the source."""
+
+    @property
+    def reference(self) -> str:
+        # Both forges write issues as `#N`; only merge requests take `!N`.
+        return f"#{self.number}"
+
+
 class ChangeSet(BaseModel):
     files: list[ChangedFile] = Field(default_factory=list)
     title: str | None = None
@@ -189,6 +216,9 @@ class ReviewResult(BaseModel):
     walkthrough: Walkthrough | None = None
     changeset: ChangeSet | None = None
     model: str | None = None
+    issue: Issue | None = None
+    """The issue this review was judged against, when ``--issue`` was given."""
+
     tokens_used: int = 0
     skipped_files: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

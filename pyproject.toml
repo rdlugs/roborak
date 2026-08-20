@@ -13,6 +13,8 @@ dependencies = [
     "jinja2>=3.1",
     "httpx>=0.28",
     "pyyaml>=6.0",
+    # litellm imports tenacity for its num_retries path but does not declare it
+    "tenacity>=9.0",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +47,8 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "BLE"]
 ignore = ["B008"]  # typer uses function calls in defaults
+# The report badges are emoji; ℹ and ⚠ are the characters GitHub renders, not typos.
+allowed-confusables = ["ℹ", "⚠", "→", "·"]
 
 [tool.mypy]
 python_version = "3.12"
