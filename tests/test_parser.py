@@ -14,6 +14,7 @@ from roborak.core.severity import Category, Effort, Kind, Severity
 from roborak.llm.parser import (
     ParseError,
     parse_findings,
+    parse_requirement_evidence,
     parse_walkthrough,
     strip_fences,
 )
@@ -284,3 +285,23 @@ def test_fingerprint_ignores_line_numbers_but_not_content():
     # An edit above a finding shifts its line without making it a new finding.
     assert make(10, "Same problem.").fingerprint == make(40, "Same   problem.").fingerprint
     assert make(10, "Same problem.").fingerprint != make(10, "Different one.").fingerprint
+
+
+def test_requirement_evidence_is_optional_and_tolerates_bad_entries():
+    text = """
+findings: []
+requirement_evidence:
+  - requirement: Rate limit requests
+    file: api.py
+    evidence: Adds a limiter before dispatch.
+  - nonsense
+  - requirement: Missing explanation
+"""
+    assert parse_requirement_evidence(text) == [
+        {
+            "requirement": "Rate limit requests",
+            "file": "api.py",
+            "evidence": "Adds a limiter before dispatch.",
+        }
+    ]
+    assert parse_requirement_evidence("findings: []\nrequirement_evidence: nope") == []

@@ -71,7 +71,9 @@ uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
 ```
 
-Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` error.
+Exit codes: `0` complete, `1` findings at or above `--fail-on`, `2` operational
+error or partial review (including failed chunks, unavailable forge patches, or a
+requested publish that did not complete).
 
 ### Other commands
 
@@ -255,6 +257,7 @@ review:
 
 static:
   enabled: true
+  execution: auto     # local direct; CI sandboxed, or skipped if unavailable
   tools: null          # null = autodetect what is on PATH
 
 output:
@@ -292,6 +295,22 @@ a valid rule, named after the file.
 
 roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 `CONTRIBUTING.md` (first one found) so reviews match the repo's own conventions.
+When a base revision is available, conventions are read from that revision so a
+change cannot rewrite the instructions used to review itself.
+
+### Static-analysis trust
+
+Static analyzers load repository binaries, plugins, and configuration, which can
+execute code. Outside CI, `static.execution: auto` treats the checkout as trusted.
+In CI it runs through Bubblewrap with a read-only filesystem and no network; when
+Bubblewrap is unavailable, the static pass is skipped rather than running
+untrusted code directly. `--trust-static` (or `static.execution: trusted`) is the
+explicit override for a checkout you control. Every static subprocess receives a
+credential-scrubbed environment in all modes.
+
+CI also ignores `.roborak.yaml` from the working tree, since it could redirect an
+API key or opt into trusted execution. Put CI settings in environment variables,
+the user config, or pass a trusted base-controlled file with `--config`.
 
 ## Roadmap
 
@@ -327,3 +346,8 @@ uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak
 ```
+
+Live reviewer-quality evaluation is intentionally separate from deterministic PR
+CI. `uv run python evals/run.py` exercises 30 labeled defect and clean-control
+cases, writes token and quality metrics, and enforces the nightly recall,
+false-positive, anchoring, and parse-success gates.

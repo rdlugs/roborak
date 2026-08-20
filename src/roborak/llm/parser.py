@@ -92,6 +92,29 @@ def parse_findings(text: str, *, valid_files: set[str] | None = None) -> list[Fi
     return findings
 
 
+def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
+    """Read optional map-stage evidence from a chunked review response."""
+    data = load_yaml_mapping(text)
+    raw = data.get("requirement_evidence") or []
+    if not isinstance(raw, list):
+        return []
+    evidence: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        requirement = _as_str(entry.get("requirement"))
+        explanation = _as_str(entry.get("evidence"))
+        if requirement and explanation:
+            evidence.append(
+                {
+                    "requirement": requirement,
+                    "file": _as_str(entry.get("file")),
+                    "evidence": explanation,
+                }
+            )
+    return evidence
+
+
 def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Finding | None:
     path = _as_str(entry.get("file"))
     if not path:

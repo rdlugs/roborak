@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -67,12 +68,55 @@ def load_rules(repo: Path, rules_dir: str) -> list[Rule]:
     return [rule for rule in rules if rule.enabled]
 
 
+def load_rules_at_ref(repo: Path, rules_dir: str, ref: str) -> list[Rule] | None:
+    """Load trusted rules from a git revision; ``None`` means the ref was unavailable."""
+    try:
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", ref, "--", rules_dir],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listed.returncode != 0:
+        return None
+
+    rules: list[Rule] = []
+    for name in sorted(line for line in listed.stdout.splitlines() if line.endswith(".md")):
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{ref}:{name}"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if shown.returncode != 0:
+            continue
+        try:
+            rules.append(parse_rule_text(shown.stdout, Path(name), repo))
+        except RuleError as exc:
+            log.warning("skipping rule %s at %s: %s", name, ref, exc)
+    return [rule for rule in rules if rule.enabled]
+
+
 def parse_rule(path: Path, repo: Path | None = None) -> Rule:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise RuleError(str(exc)) from exc
 
+    return parse_rule_text(text, path, repo)
+
+
+def parse_rule_text(text: str, path: Path, repo: Path | None = None) -> Rule:
+    """Parse rule content supplied by either the filesystem or a git revision."""
     match = _FRONTMATTER.match(text)
     if match is None:
         # No frontmatter: treat the whole file as the rule, named after the file.

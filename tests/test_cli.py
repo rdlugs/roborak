@@ -157,7 +157,14 @@ def test_agent_mode_emits_only_json(repo: Path):
     (repo / "app.py").write_text("def f():\n    return 2\n")
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--agent"])
     assert result.exit_code == EXIT_OK
-    assert set(json.loads(result.stdout)) == {"schema_version", "summary", "findings"}
+    assert set(json.loads(result.stdout)) == {
+        "schema_version",
+        "status",
+        "errors",
+        "coverage",
+        "summary",
+        "findings",
+    }
 
 
 def test_prompt_only_mode(repo: Path):
@@ -746,6 +753,9 @@ def _mr_session(monkeypatch):
     )
 
     monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
+    monkeypatch.setattr(
+        "roborak.cli.commands.review.remote_fingerprints", lambda target, token: frozenset()
+    )
 
     class FakeSource:
         def __init__(self, target, token):

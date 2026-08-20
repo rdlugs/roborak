@@ -24,7 +24,7 @@ from roborak.static.adapters.phpstan import PhpstanAdapter
 from roborak.static.adapters.ruff import RuffAdapter
 from roborak.static.adapters.semgrep import SemgrepAdapter
 from roborak.static.normalize import classify_ruff, classify_semgrep
-from roborak.static.runner import StaticRunner
+from roborak.static.runner import StaticRunner, _safe_environment
 
 # -- captured tool output --------------------------------------------------
 
@@ -228,7 +228,8 @@ def test_semgrep_non_security_rules_keep_their_severity():
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
+def repo(tmp_path: Path, monkeypatch) -> Path:
+    monkeypatch.delenv("CI", raising=False)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
     for key, value in (("user.email", "t@e.com"), ("user.name", "T")):
         subprocess.run(["git", "config", key, value], cwd=tmp_path, check=True)
@@ -259,6 +260,23 @@ def _has_commit(repo: Path) -> bool:
 def test_disabled_runner_does_nothing(repo: Path):
     runner = StaticRunner(repo=repo, config=StaticConfig(enabled=False))
     assert runner.run(ChangeSet()) == []
+
+
+def test_static_subprocess_environment_drops_credentials(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("PATH", "/bin")
+    env = _safe_environment()
+    assert env["PATH"] == "/bin"
+    assert "GITHUB_TOKEN" not in env
+    assert "AWS_SECRET_ACCESS_KEY" not in env
+
+
+def test_auto_static_analysis_refuses_unsandboxed_ci(repo: Path, monkeypatch, caplog):
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr("roborak.static.runner.shutil.which", lambda name: None)
+    assert StaticRunner(repo=repo, config=StaticConfig()).run(ChangeSet()) == []
+    assert "bubblewrap is unavailable" in caplog.text
 
 
 def test_tool_selection_filters_adapters(repo: Path):

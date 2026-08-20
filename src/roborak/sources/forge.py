@@ -296,6 +296,11 @@ class ForgeClient:
     def post(self, path: str, payload: dict[str, Any]) -> Any:
         return self._request("POST", path, json=payload)
 
+    def get_raw(self, path: str, **params: Any) -> bytes:
+        """Fetch a raw repository blob while retaining the normal error handling."""
+        response = self._send("GET", path, params=params)
+        return response.content
+
     def paginate(self, path: str, **params: Any) -> list[Any]:
         """Walk every page, stopping at ``MAX_PAGES`` rather than looping forever."""
         items: list[Any] = []
@@ -309,6 +314,15 @@ class ForgeClient:
         return items
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = self._send(method, path, **kwargs)
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise SourceError(f"{self.target.host} returned a non-JSON response.") from exc
+
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         try:
             response = self._client.request(method, path, **kwargs)
         except httpx.RequestError as exc:
@@ -333,9 +347,4 @@ class ForgeClient:
                 f"{response.text[:300]}"
             )
 
-        if not response.content:
-            return None
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise SourceError(f"{self.target.host} returned a non-JSON response.") from exc
+        return response

@@ -208,11 +208,12 @@ def test_files_are_grouped_by_directory():
     assert first == ["app/auth/a.py", "app/auth/b.py"], "related files belong together"
 
 
-def test_a_single_oversized_file_still_gets_its_own_chunk():
+def test_a_single_oversized_file_is_split_into_reviewable_windows():
     changeset = ChangeSet(files=[make_file("huge.py", 5000)])
     chunks = chunk(changeset, 10, count, render)
-    assert len(chunks) == 1
-    assert chunks[0].files[0].path == "huge.py"
+    assert len(chunks) == MAX_CHUNKS
+    assert all(piece.files[0].path == "huge.py" for piece in chunks)
+    assert chunks[0].omitted_files == ["huge.py"]
 
 
 def test_chunk_count_is_capped_and_omissions_recorded():
@@ -271,3 +272,75 @@ def test_multi_pass_review_merges_findings(tmp_path):
 
     assert Counting.calls > 1, "a change this size should take several passes"
     assert len(result.findings) == Counting.calls, "every pass's findings must be kept"
+
+
+def test_failed_chunk_marks_the_review_partial_without_losing_other_passes(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import ReviewStatus
+    from roborak.llm.client import LLMError, LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    changeset = ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(5)])
+
+    class SometimesFailing(StubLLM):
+        calls = 0
+
+        def complete(self, system, user):
+            SometimesFailing.calls += 1
+            if SometimesFailing.calls == 1:
+                raise LLMError("one pass failed")
+            return LLMResponse(text="findings: []", model="stub")
+
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=SometimesFailing(reply="", context_budget=140)
+    ).review(changeset)
+    assert result.status is ReviewStatus.PARTIAL
+    assert any("one pass failed" in error for error in result.errors)
+    assert any(item.reason.value == "chunk_failed" for item in result.coverage)
+
+
+def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import Issue
+    from roborak.core.severity import Kind
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    changeset = ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(4)])
+
+    class EvidenceLLM(StubLLM):
+        def complete(self, system, user):
+            if "checking whether a complete code change" in system:
+                return LLMResponse(
+                    text=(
+                        "findings:\n"
+                        "  - file: pkg0/f.py\n"
+                        "    start_line: 1\n"
+                        "    severity: major\n"
+                        "    category: bug\n"
+                        "    kind: requirement_gap\n"
+                        "    body: The required timeout is absent.\n"
+                    ),
+                    model="stub",
+                )
+            return LLMResponse(
+                text=(
+                    "findings: []\nrequirement_evidence:\n"
+                    "  - requirement: Preserve retries\n"
+                    "    file: pkg0/f.py\n"
+                    "    evidence: Retry handling remains present.\n"
+                ),
+                model="stub",
+            )
+
+    issue = Issue(provider="github", host="github.com", project="a/b", number=1, body="Timeout")
+    result = Reviewer(
+        config=Config(),
+        repo=tmp_path,
+        llm=EvidenceLLM(reply="", context_budget=140),
+        issue=issue,
+    ).review(changeset)
+    assert [finding.kind for finding in result.findings] == [Kind.REQUIREMENT_GAP]
+    assert result.usage[-1].purpose == "requirements"

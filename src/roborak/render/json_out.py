@@ -16,8 +16,22 @@ SCHEMA_VERSION = 1
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
+    omitted_paths = {item.path for item in result.coverage}
+    reviewed_files = (
+        [file.path for file in result.changeset.files if file.path not in omitted_paths]
+        if result.changeset is not None
+        else []
+    )
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
+        "status": result.status.value,
+        "errors": result.errors,
+        "coverage": {
+            "reviewed_files": reviewed_files,
+            "omissions": [
+                item.model_dump(mode="json", exclude_none=True) for item in result.coverage
+            ],
+        },
         "summary": {
             "total": len(result.findings),
             "by_severity": {s.value: n for s, n in result.counts_by_severity.items() if n},
@@ -29,8 +43,12 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     if not agent:
         # Metadata an agent does not need in order to act.
         payload["model"] = result.model
+        payload["models_used"] = result.models_used
+        payload["tokens_used"] = result.tokens_used
+        payload["usage"] = [
+            call.model_dump() | {"total_tokens": call.total_tokens} for call in result.usage
+        ]
         payload["skipped_files"] = result.skipped_files
-        payload["errors"] = result.errors
         if result.changeset is not None:
             payload["changeset"] = {
                 "origin": result.changeset.origin,

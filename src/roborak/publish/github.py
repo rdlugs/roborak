@@ -49,7 +49,10 @@ class GitHubPublisher:
             # Only the actionable bucket earns a thread; nitpicks and anything
             # unanchorable are carried by the summary. See core.buckets.
             for finding in inline_findings(result):
-                if finding.fingerprint in self.seen_fingerprints:
+                if {
+                    finding.fingerprint,
+                    finding.fingerprint_v2,
+                } & self.seen_fingerprints:
                     report.skipped_duplicate.append(finding)
                     continue
                 comment = self._comment_for(finding, changeset)
@@ -69,6 +72,9 @@ class GitHubPublisher:
         if changeset.forge_ref.head_sha:
             payload["commit_id"] = changeset.forge_ref.head_sha
 
+        if not comments and not self.post_summary:
+            return report
+
         base = f"/repos/{self.target.project}/pulls/{self.target.number}/reviews"
         with ForgeClient(self.target, self.token) as client:
             try:
@@ -79,11 +85,14 @@ class GitHubPublisher:
                 log.warning("inline review rejected (%s); posting the summary only", exc)
                 report.failed.extend((f, str(exc)) for f in report.posted)
                 report.posted.clear()
-                client.post(
-                    f"/repos/{self.target.project}/issues/{self.target.number}/comments",
-                    {"body": summary_markdown(result)},
-                )
-            report.summary_posted = self.post_summary
+                if self.post_summary:
+                    client.post(
+                        f"/repos/{self.target.project}/issues/{self.target.number}/comments",
+                        {"body": summary_markdown(result)},
+                    )
+                    report.summary_posted = True
+            else:
+                report.summary_posted = self.post_summary
 
         return report
 

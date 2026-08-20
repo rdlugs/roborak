@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import logging
 import os
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from roborak.core.severity import Category, Severity
 
@@ -42,7 +43,19 @@ DEFAULT_IGNORE_PATHS = [
 ]
 
 
-class ReviewConfig(BaseModel):
+class ConfigModel(BaseModel):
+    """Configuration is user-authored, so typos must fail instead of disappearing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class StaticExecution(StrEnum):
+    AUTO = "auto"
+    TRUSTED = "trusted"
+    OFF = "off"
+
+
+class ReviewConfig(ConfigModel):
     categories: list[Category] = Field(
         default_factory=lambda: [
             Category.SECURITY,
@@ -52,9 +65,9 @@ class ReviewConfig(BaseModel):
         ]
     )
     severity_floor: Severity = Severity.MINOR
-    max_findings: int = 25
+    max_findings: int = Field(default=25, ge=1)
     committable_suggestions: bool = True
-    min_confidence: float = 0.5
+    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     full_file: bool = False
     """Allow findings on lines the change did not touch. Off by default: it is the
     main source of noise, since untouched code is not what the author asked about."""
@@ -64,22 +77,25 @@ class ReviewConfig(BaseModel):
     consulted when ``--issue`` supplied something to check against."""
 
 
-class StaticConfig(BaseModel):
+class StaticConfig(ConfigModel):
     enabled: bool = True
+    execution: StaticExecution = StaticExecution.AUTO
+    """``auto`` is direct for local work and sandboxed in CI; ``trusted`` is an
+    explicit opt-in to direct execution, and ``off`` disables static tools."""
     tools: list[str] | None = None
     """``None`` means autodetect whatever is on PATH."""
 
-    timeout_seconds: int = 90
+    timeout_seconds: int = Field(default=90, ge=1)
     feed_to_llm: bool = True
-    max_findings_in_prompt: int = 40
+    max_findings_in_prompt: int = Field(default=40, ge=0)
 
 
-class LLMConfig(BaseModel):
+class LLMConfig(ConfigModel):
     model: str = "anthropic/claude-sonnet-5"
     fallback_models: list[str] = Field(default_factory=list)
-    temperature: float = 0.2
-    max_tokens: int = 8000
-    context_budget: int | None = None
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=8000, ge=1)
+    context_budget: int | None = Field(default=None, ge=1000)
     """Prompt token ceiling. ``None`` derives it from the model's known window."""
 
     api_keys: dict[str, SecretStr] = Field(default_factory=dict)
@@ -91,11 +107,11 @@ class LLMConfig(BaseModel):
     """Endpoint override applied to every call: an OpenAI-compatible proxy, an
     Azure deployment, or a local Ollama."""
 
-    timeout_seconds: int = 180
-    max_retries: int = 2
+    timeout_seconds: int = Field(default=180, ge=1)
+    max_retries: int = Field(default=2, ge=0)
 
 
-class OutputConfig(BaseModel):
+class OutputConfig(ConfigModel):
     walkthrough: bool = True
     """Spend a second model call on an overview of the change. Worth it for the
     summary comment a review posts; turn it off to halve the cost of a run."""
@@ -110,7 +126,7 @@ class OutputConfig(BaseModel):
     report cannot do -- but they are not what gets published."""
 
 
-class ForgeConfig(BaseModel):
+class ForgeConfig(ConfigModel):
     tokens: dict[str, SecretStr] = Field(default_factory=dict)
     """Provider name to token, e.g. ``{"gitlab": "glpat-..."}``. Takes precedence
     over the provider's environment variable; omit a provider to keep using it.
@@ -120,6 +136,9 @@ class ForgeConfig(BaseModel):
     """Provider name to the instance's domain, e.g. ``{"gitlab": "gitlab.acme.com"}``.
     Only consulted when the repository's git remote does not answer the question, so a
     domain set user-wide can never hijack a repo whose remote says otherwise."""
+
+    max_recovered_file_bytes: int = Field(default=1_048_576, ge=1)
+    """Largest forge-truncated text file we will fetch to reconstruct a patch."""
 
     @field_validator("hosts")
     @classmethod
@@ -149,8 +168,8 @@ class ForgeConfig(BaseModel):
         return cleaned
 
 
-class Config(BaseModel):
-    version: int = 1
+class Config(ConfigModel):
+    version: Literal[1] = 1
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     static: StaticConfig = Field(default_factory=StaticConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -177,12 +196,17 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
         if not explicit_path.is_file():
             raise FileNotFoundError(f"Config file not found: {explicit_path}")
         layers.append(_read_yaml(explicit_path))
-    else:
+    elif not _in_ci():
         for name in PROJECT_CONFIG_NAMES:
             candidate = repo / name
             if candidate.is_file():
                 layers.append(_read_yaml(candidate))
                 break
+    else:
+        log.debug(
+            "ignoring working-tree project configuration in CI; pass --config with a trusted "
+            "path or use environment/user configuration"
+        )
 
     layers.append(_env_layer())
 
@@ -238,7 +262,14 @@ def _env_layer() -> dict[str, Any]:
         layer["forge"] = forge
     if (static_off := os.getenv("ROBORAK_NO_STATIC")) and static_off not in {"0", "false", ""}:
         layer.setdefault("static", {})["enabled"] = False
+    if execution := os.getenv("ROBORAK_STATIC_EXECUTION"):
+        layer.setdefault("static", {})["execution"] = execution
     return layer
+
+
+def _in_ci() -> bool:
+    value = os.getenv("CI", "").strip().lower()
+    return value not in {"", "0", "false", "no"}
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

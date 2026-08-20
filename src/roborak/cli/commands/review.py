@@ -14,9 +14,9 @@ from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
 from roborak.cli.shared import fail
 from roborak.core.buckets import Bucket, group
-from roborak.core.models import Finding, ReviewResult
+from roborak.core.models import Finding, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
-from roborak.publish.base import PublishReport
+from roborak.publish.base import PublishReport, remote_fingerprints
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
 from roborak.render import markdown
@@ -88,6 +88,13 @@ def review(
     ] = False,
     no_static: Annotated[
         bool, typer.Option("--no-static", help="Skip static analysis; model only.")
+    ] = False,
+    trust_static: Annotated[
+        bool,
+        typer.Option(
+            "--trust-static",
+            help="Allow repository-provided static tools to execute directly in CI.",
+        ),
     ] = False,
     model: Annotated[
         str | None, typer.Option("--model", "-m", help="Override the configured model.")
@@ -161,6 +168,10 @@ def review(
         config.review.full_file = True
     if no_static:
         config.static.enabled = False
+    if trust_static:
+        from roborak.core.config import StaticExecution
+
+        config.static.execution = StaticExecution.TRUSTED
     if no_walkthrough:
         config.output.walkthrough = False
     if no_post:
@@ -197,16 +208,7 @@ def review(
     if config.output.walkthrough and session.llm is not None and not session.changeset.is_empty:
         with console.status("[dim]writing the overview…[/]", spinner="dots"):
             result.walkthrough = reviewer.walkthrough(session.changeset)
-
-    shared.emit(
-        session,
-        result,
-        as_json=as_json,
-        agent=agent,
-        prompt_only_mode=prompt_only,
-        markdown_path=markdown_out,
-        panels=config.output.panels,
-    )
+        reviewer.apply_usage(result)
 
     if post and session.target is not None and session.token is not None:
         _publish(
@@ -219,7 +221,18 @@ def review(
             post_summary=not no_summary,
             repost=repost,
         )
-    elif not post:
+
+    shared.emit(
+        session,
+        result,
+        as_json=as_json,
+        agent=agent,
+        prompt_only_mode=prompt_only,
+        markdown_path=markdown_out,
+        panels=config.output.panels,
+    )
+
+    if not post:
         _offer_to_share(
             console,
             session,
@@ -256,6 +269,14 @@ def _publish(
     store = StateStore(repo)
     key = review_key(target.provider, target.host, target.project, target.number)
     seen = _seen_fingerprints(repo, target, repost=repost)
+    if not repost:
+        try:
+            seen = frozenset({*seen, *remote_fingerprints(target, token)})
+        except SourceError as exc:
+            result.status = ReviewStatus.PARTIAL
+            result.errors.append(f"could not discover existing review comments: {exc}")
+            console.print(f"[bold red]could not post review[/] {exc}")
+            return
 
     publisher_cls = GitLabPublisher if target.provider == "gitlab" else GitHubPublisher
     publisher = publisher_cls(
@@ -271,10 +292,15 @@ def _publish(
             report = publisher.publish(result)
     except SourceError as exc:
         console.print(f"[bold red]could not post review[/] {exc}")
+        result.status = ReviewStatus.PARTIAL
+        result.errors.append(f"could not post review: {exc}")
         return
 
     store.record(key, report.posted, result.changeset.head_sha if result.changeset else "")
     _report_publish(console, report)
+    if report.failed:
+        result.status = ReviewStatus.PARTIAL
+        result.errors.append(f"could not post {len(report.failed)} inline comment(s)")
 
 
 def _report_publish(console: Console, report: PublishReport) -> None:

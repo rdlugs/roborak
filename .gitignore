@@ -31,6 +31,8 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 htmlcov/
+eval-results.json
+evals/eval-results.json
 
 # Editor and OS cruft
 .idea/

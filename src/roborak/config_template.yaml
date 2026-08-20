@@ -37,6 +37,8 @@ forge:
   hosts: {}
   #   gitlab: gitlab.acme.com
   #   github: http://gh.local:8080
+  # Maximum forge-truncated file size to fetch when reconstructing a patch.
+  max_recovered_file_bytes: 1048576
 
 review:
   categories: [security, bug, performance, logic]
@@ -56,6 +58,9 @@ review:
 
 static:
   enabled: true
+  # auto runs directly for local work and sandboxed in CI; trusted explicitly
+  # allows direct CI execution; off disables static tools.
+  execution: auto
   # null autodetects whatever is on PATH.
   tools: null
   timeout_seconds: 90

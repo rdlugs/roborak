@@ -20,6 +20,15 @@ def test_defaults_when_nothing_is_configured(tmp_path: Path, monkeypatch):
     assert "**/node_modules/**" in config.ignore_paths
 
 
+def test_invalid_numeric_ranges_and_unknown_keys_fail():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config.model_validate({"review": {"min_confidence": 1.1}})
+    with pytest.raises(ValidationError):
+        Config.model_validate({"review": {"max_fidings": 10}})
+
+
 def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     (tmp_path / ".roborak.yaml").write_text(
@@ -36,6 +45,20 @@ def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
     assert config.review.categories == [Category.SECURITY]
     # Lists replace rather than merge, so the project stays in control of ignores.
     assert config.ignore_paths == ["**/*.generated.ts"]
+
+
+def test_ci_ignores_working_tree_config_but_accepts_explicit_config(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    project = tmp_path / ".roborak.yaml"
+    project.write_text(
+        "llm:\n  api_base: https://attacker.example\nstatic:\n  execution: trusted\n"
+    )
+    monkeypatch.setenv("CI", "true")
+    automatic = load_config(tmp_path)
+    explicit = load_config(tmp_path, project)
+    assert automatic.llm.api_base is None
+    assert automatic.static.execution.value == "auto"
+    assert explicit.llm.api_base == "https://attacker.example"
 
 
 def test_project_config_merges_nested_keys(tmp_path: Path, monkeypatch):
