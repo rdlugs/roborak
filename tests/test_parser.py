@@ -257,6 +257,22 @@ def test_walkthrough_parsing():
     assert "```" not in walkthrough.sequence_diagram
 
 
+def test_walkthrough_parses_a_general_mermaid_flow():
+    reply = textwrap.dedent(
+        """\
+        flow_diagram: |
+          flowchart TD
+            Boot --> LegacyRoutes
+            LegacyRoutes --> TypedRoutes
+        """
+    )
+
+    walkthrough = parse_walkthrough(reply)
+
+    assert walkthrough.sequence_diagram is not None
+    assert walkthrough.sequence_diagram.startswith("flowchart TD")
+
+
 def test_walkthrough_rejects_out_of_range_effort():
     assert parse_walkthrough("estimated_effort: 9").estimated_effort is None
     assert parse_walkthrough("estimated_effort: 0").estimated_effort is None

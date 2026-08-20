@@ -25,6 +25,10 @@ def describe(
         str | None, typer.Option("--issue", help="Issue this change should solve.")
     ] = None,
     base: Annotated[str | None, typer.Option("--base", "-b", help="Base ref.")] = None,
+    no_discussions: Annotated[
+        bool,
+        typer.Option("--no-discussions", help="Do not use existing MR/PR comments as context."),
+    ] = False,
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
@@ -41,6 +45,7 @@ def describe(
         pr=pr,
         issue=issue,
         base=base,
+        no_discussions=no_discussions,
         config_path=config_path,
         model=model,
         quiet_status=as_json,

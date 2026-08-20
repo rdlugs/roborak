@@ -160,11 +160,14 @@ def parse_walkthrough(text: str) -> Walkthrough:
             summaries.append({"path": path, "summary": _as_str(entry.get("summary")) or ""})
 
     effort = _as_int(data.get("estimated_effort"))
+    # ``sequence_diagram`` is the public result field and the legacy prompt key.
+    # Prefer the generalized key while continuing to accept recorded/older replies.
+    flow_diagram = data.get("flow_diagram") or data.get("sequence_diagram")
     return Walkthrough(
         title=_as_str(data.get("title")) or None,
         overview=_as_str(data.get("overview")) or "",
         file_summaries=summaries,  # type: ignore[arg-type]
-        sequence_diagram=_clean_mermaid(data.get("sequence_diagram")),
+        sequence_diagram=_clean_mermaid(flow_diagram),
         labels=[s for s in (_as_str(x) for x in data.get("labels") or []) if s],
         estimated_effort=effort if effort and 1 <= effort <= 5 else None,
     )

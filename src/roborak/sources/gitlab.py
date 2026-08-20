@@ -16,6 +16,7 @@ from urllib.parse import quote
 from roborak.context.diff import detect_language, parse_diff
 from roborak.core.models import ChangedFile, ChangeSet, ChangeType, ForgeRef, Hunk
 from roborak.sources.base import SourceError
+from roborak.sources.discussion import load_change_discussions
 from roborak.sources.forge import ForgeClient, Target
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class GitLabSource:
     target: Target
     token: str
     max_recovered_file_bytes: int = 1_048_576
+    include_discussions: bool = True
 
     def load(self) -> ChangeSet:
         with ForgeClient(self.target, self.token) as client:
@@ -48,6 +50,11 @@ class GitLabSource:
                 head_sha=refs.get("head_sha") or "",
                 max_bytes=self.max_recovered_file_bytes,
             )
+            discussions = (
+                load_change_discussions(client, self.target, head_sha=refs.get("head_sha") or "")
+                if self.include_discussions
+                else []
+            )
         forge_ref = ForgeRef(
             provider="gitlab",
             host=self.target.host,
@@ -69,6 +76,7 @@ class GitLabSource:
             head_ref=merge_request.get("source_branch"),
             origin="gitlab",
             forge_ref=forge_ref,
+            discussions=discussions,
         )
 
 

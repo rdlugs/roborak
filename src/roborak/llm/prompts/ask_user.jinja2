@@ -21,6 +21,7 @@ labels: {{ issue.labels | join(", ") }}
 {% endfor %}
 {% endif %}
 {% endif %}
+{% include "discussion_context.jinja2" %}
 {% if repo_context %}
 ## Repository conventions
 {{ repo_context }}

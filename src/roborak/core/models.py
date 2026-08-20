@@ -154,6 +154,16 @@ class Issue(BaseModel):
         return f"#{self.number}"
 
 
+class ReviewComment(BaseModel):
+    """One eligible human comment from a merge or pull request discussion."""
+
+    author: str = ""
+    body: str
+    path: str | None = None
+    line: int | None = None
+    created_at: str = ""
+
+
 class ChangeSet(BaseModel):
     files: list[ChangedFile] = Field(default_factory=list)
     title: str | None = None
@@ -164,6 +174,9 @@ class ChangeSet(BaseModel):
     head_ref: str | None = None
     origin: Origin = "local"
     forge_ref: ForgeRef | None = None
+    discussions: list[ReviewComment] = Field(default_factory=list)
+    """Bounded, untrusted human discussion supplied as review context."""
+
     omitted_files: list[str] = Field(default_factory=list)
     """Files dropped by the compressor; surfaced in the report footer."""
 
@@ -247,7 +260,10 @@ class Walkthrough(BaseModel):
     overview: str = ""
     file_summaries: list[FileSummary] = Field(default_factory=list)
     sequence_diagram: str | None = None
-    """Mermaid source, when the change alters a control flow worth drawing."""
+    """Mermaid flowchart or sequence diagram source.
+
+    The legacy field name remains part of the public result schema for compatibility.
+    """
 
     labels: list[str] = Field(default_factory=list)
     estimated_effort: int | None = Field(default=None, ge=1, le=5)

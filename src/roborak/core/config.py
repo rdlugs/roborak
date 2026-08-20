@@ -76,6 +76,9 @@ class ReviewConfig(ConfigModel):
     """Let the model report requirements the change does not implement. Only ever
     consulted when ``--issue`` supplied something to check against."""
 
+    include_discussions: bool = True
+    """Use relevant forge discussion as bounded, untrusted review context."""
+
 
 class StaticConfig(ConfigModel):
     enabled: bool = True

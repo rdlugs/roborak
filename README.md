@@ -55,6 +55,7 @@ uv run roborak review --mr https://gitlab.com/acme/web/-/merge_requests/298
 uv run roborak review --pr 42               # a GitHub pull request
 uv run roborak review --mr 298 --post       # publish inline threads + a summary
 uv run roborak review --mr 298 --post --repost   # re-post findings already sent
+uv run roborak review --mr 298 --no-discussions # ignore existing MR discussion
 uv run roborak review --mr 298 --no-post    # review it, never ask about publishing
 
 uv run roborak review --issue 42            # review whatever MR/PR implements issue 42
@@ -176,6 +177,9 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **Incremental review** fingerprints each finding independently of its line
   number, so re-running on a new push posts only what is genuinely new instead of
   repeating itself. State lives in `.roborak/state.json`; `--repost` overrides it.
+- **Existing review discussion is context, not instruction.** Forge reviews include
+  bounded unresolved human comments by default, while dropping system notes, bots,
+  stale positions and roborak's own output. `--no-discussions` disables it.
 - **Deciding to publish comes after reading the review.** `--post` has to be
   chosen before the model has said anything, so an interactive run ends by asking
   instead — post it, save it as markdown, or neither — showing first how many
@@ -254,6 +258,7 @@ review:
   committable_suggestions: true
   min_confidence: 0.5
   check_requirements: true   # with --issue, report requirements the change misses
+  include_discussions: true  # use relevant unresolved MR/PR comments as context
 
 static:
   enabled: true

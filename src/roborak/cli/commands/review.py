@@ -59,6 +59,10 @@ def review(
     include_untracked: Annotated[
         bool, typer.Option("--include-untracked", help="Also review untracked files.")
     ] = False,
+    no_discussions: Annotated[
+        bool,
+        typer.Option("--no-discussions", help="Do not use existing MR/PR comments as context."),
+    ] = False,
     post: Annotated[
         bool,
         typer.Option("--post", help="Publish the review back to the merge/pull request."),
@@ -147,6 +151,7 @@ def review(
         committed=committed,
         uncommitted=uncommitted,
         include_untracked=include_untracked,
+        no_discussions=no_discussions,
         config_path=config_path,
         model=model,
         no_llm=no_llm,

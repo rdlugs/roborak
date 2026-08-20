@@ -340,6 +340,13 @@ def test_issue_flag_is_offered_by_every_command(command):
     assert "--issue" in result.output
 
 
+@pytest.mark.parametrize("command", ["review", "describe", "improve", "ask"])
+def test_discussion_opt_out_is_offered_by_every_change_command(command):
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == EXIT_OK
+    assert "--no-discussions" in result.output
+
+
 def test_issue_without_a_recognisable_forge_fails_clearly(repo: Path, monkeypatch):
     # A bare number and a remote that names neither forge: guessing would be worse
     # than asking.
@@ -548,6 +555,7 @@ def test_the_scaffolded_file_is_the_commented_template(repo: Path):
     # A bare model dump would carry none of this.
     assert written.startswith("# roborak configuration")
     assert "check_requirements" in written
+    assert "include_discussions" in written
     assert "# null autodetects whatever is on PATH." in written
 
 
@@ -728,6 +736,43 @@ diff --git a/app/auth.py b/app/auth.py
          return None
 +    return db.execute("SELECT * FROM s WHERE u = " + user_id)
 """
+
+
+def test_no_discussions_disables_forge_context_loading(repo: Path, monkeypatch):
+    from roborak.core.models import ChangeSet
+
+    observed: list[bool] = []
+
+    class FakeSource:
+        include_discussions = True
+        max_recovered_file_bytes = 0
+
+        def __init__(self, target, token):
+            pass
+
+        def load(self):
+            observed.append(self.include_discussions)
+            return ChangeSet(origin="gitlab")
+
+    monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
+    monkeypatch.setattr("roborak.cli.shared.GitLabSource", FakeSource)
+
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "--mr",
+            MR_URL,
+            "--no-discussions",
+            "--no-llm",
+            "--no-post",
+            "-C",
+            str(repo),
+        ],
+    )
+
+    assert result.exit_code == EXIT_OK
+    assert observed == [False]
 
 
 def _mr_session(monkeypatch):

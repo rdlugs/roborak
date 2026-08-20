@@ -135,6 +135,7 @@ def test_severity_ordering():
 
 def test_config_model_shortcut():
     assert Config().model == Config().llm.model
+    assert Config().review.include_discussions is True
 
 
 def test_api_keys_are_secret_and_merge_across_layers(tmp_path: Path, monkeypatch):
