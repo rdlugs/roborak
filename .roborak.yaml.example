@@ -9,6 +9,15 @@ llm:
   max_tokens: 8000
   # Prompt token ceiling. Omit to derive it from the model's context window.
   context_budget: null
+  # Per-provider API keys, overriding the provider's environment variable. These
+  # are real secrets: keep this file out of version control, or put them in
+  # ~/.config/roborak/config.yaml instead. `roborak config show` redacts them.
+  api_keys: {}
+  #   anthropic: sk-ant-...
+  #   openai: sk-...
+  # Endpoint override for every call: an OpenAI-compatible proxy, an Azure
+  # deployment, or a local Ollama. Setting it skips the missing-key check.
+  api_base: null
 
 review:
   categories: [security, bug, performance, logic]

@@ -78,6 +78,11 @@ class LLMClient:
             max_tokens=self.config.max_tokens,
             timeout=self.config.timeout_seconds,
             num_retries=self.config.max_retries,
+            # Resolved per call: a fallback model may belong to another provider.
+            # Passed as a kwarg rather than exported, so the keys never reach the
+            # subprocesses the static runner spawns with an inherited environment.
+            api_key=self._key_for(model),
+            api_base=self.config.api_base,
         )
         text = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)
@@ -87,6 +92,14 @@ class LLMClient:
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )
+
+    def _key_for(self, model: str) -> str | None:
+        """The configured key for this model's provider, if there is one.
+
+        ``None`` leaves litellm to find the key in the environment as before.
+        """
+        key = self.config.api_keys.get(provider_of(model))
+        return key.get_secret_value() if key else None
 
     def count_tokens(self, text: str) -> int:
         """Token count for the configured model, with a cheap character-based fallback."""
@@ -112,13 +125,19 @@ class LLMClient:
         return max(8_000, window - self.config.max_tokens - 4_000)
 
 
-def missing_credentials(model: str) -> str | None:
+def missing_credentials(model: str, llm: LLMConfig | None = None) -> str | None:
     """Return the env var the user still needs to set, if we can tell.
 
     Better to say "set ANTHROPIC_API_KEY" up front than to surface a provider's
     auth error after the user has waited for a diff to be assembled.
+
+    A key in ``llm.api_keys`` answers the question already, and an ``api_base``
+    pointing at a proxy or a local Ollama often needs no provider key at all --
+    demanding one in either case would be a false alarm.
     """
-    provider = model.split("/", 1)[0] if "/" in model else _infer_provider(model)
+    provider = provider_of(model)
+    if llm is not None and (llm.api_base or provider in llm.api_keys):
+        return None
     required = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
@@ -132,6 +151,11 @@ def missing_credentials(model: str) -> str | None:
     if required and not os.getenv(required):
         return required
     return None
+
+
+def provider_of(model: str) -> str:
+    """The provider a model string names, from its prefix or its shape."""
+    return model.split("/", 1)[0] if "/" in model else _infer_provider(model)
 
 
 def _infer_provider(model: str) -> str:

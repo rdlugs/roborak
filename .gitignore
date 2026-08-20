@@ -17,7 +17,8 @@ wheels/
 .roborak.yaml
 .roborak.yml
 
-# Credentials. API keys and forge tokens come from the environment, never a file.
+# Credentials. Forge tokens come from the environment; API keys may also sit in
+# .roborak.yaml, which is one more reason that file is ignored above.
 .env
 .env.*
 !.env.example

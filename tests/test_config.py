@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from roborak.core.config import Config, load_config
 from roborak.core.severity import Category, Severity
@@ -111,3 +112,54 @@ def test_severity_ordering():
 
 def test_config_model_shortcut():
     assert Config().model == Config().llm.model
+
+
+def test_api_keys_are_secret_and_merge_across_layers(tmp_path: Path, monkeypatch):
+    """A user-level key and a project-level key for different providers coexist."""
+    user = tmp_path / "user.yaml"
+    user.write_text("llm:\n  api_keys:\n    openai: sk-user-openai\n")
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    (tmp_path / ".roborak.yaml").write_text(
+        "llm:\n  api_keys:\n    anthropic: sk-project-anthropic\n"
+    )
+
+    config = load_config(tmp_path)
+    assert config.llm.api_keys["anthropic"].get_secret_value() == "sk-project-anthropic"
+    assert config.llm.api_keys["openai"].get_secret_value() == "sk-user-openai"
+
+
+def test_api_keys_are_redacted_when_dumped(tmp_path: Path, monkeypatch):
+    """``config show`` dumps the merged config; a real key must not survive it."""
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text(
+        "llm:\n  api_keys:\n    anthropic: sk-ant-do-not-print\n"
+    )
+
+    dumped = load_config(tmp_path).model_dump(mode="json")
+    assert dumped["llm"]["api_keys"]["anthropic"] == "**********"
+    assert "sk-ant-do-not-print" not in yaml.safe_dump(dumped)
+
+
+def test_api_base_defaults_to_none_and_round_trips(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    assert load_config(tmp_path).llm.api_base is None
+
+    (tmp_path / ".roborak.yaml").write_text("llm:\n  api_base: http://localhost:11434\n")
+    assert load_config(tmp_path).llm.api_base == "http://localhost:11434"
+
+
+def test_world_readable_key_file_warns(tmp_path: Path, monkeypatch, caplog):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    project = tmp_path / ".roborak.yaml"
+    project.write_text("llm:\n  api_keys:\n    anthropic: sk-ant-exposed\n")
+    project.chmod(0o644)
+
+    with caplog.at_level("WARNING"):
+        load_config(tmp_path)
+    assert "chmod 600" in caplog.text
+
+    caplog.clear()
+    project.chmod(0o600)
+    with caplog.at_level("WARNING"):
+        load_config(tmp_path)
+    assert not caplog.text

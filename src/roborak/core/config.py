@@ -8,14 +8,17 @@ severity floor, path ignores, and a static-analysis section.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from roborak.core.severity import Category, Severity
+
+log = logging.getLogger(__name__)
 
 PROJECT_CONFIG_NAMES = (".roborak.yaml", ".roborak.yml")
 USER_CONFIG_PATH = Path.home() / ".config" / "roborak" / "config.yaml"
@@ -75,6 +78,15 @@ class LLMConfig(BaseModel):
     context_budget: int | None = None
     """Prompt token ceiling. ``None`` derives it from the model's known window."""
 
+    api_keys: dict[str, SecretStr] = Field(default_factory=dict)
+    """Provider name to key, e.g. ``{"anthropic": "sk-ant-..."}``. Takes precedence
+    over the provider's environment variable; omit a provider to keep using it.
+    ``SecretStr`` keeps the value out of ``config show``, logs and tracebacks."""
+
+    api_base: str | None = None
+    """Endpoint override applied to every call: an OpenAI-compatible proxy, an
+    Azure deployment, or a local Ollama."""
+
     timeout_seconds: int = 180
     max_retries: int = 2
 
@@ -126,7 +138,21 @@ def _read_yaml(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a YAML mapping, got {type(data).__name__}.")
+    _warn_if_others_can_read_keys(path, data)
     return data
+
+
+def _warn_if_others_can_read_keys(path: Path, data: dict[str, Any]) -> None:
+    """A file holding literal API keys has no business being readable by others."""
+    llm = data.get("llm")
+    if not isinstance(llm, dict) or not llm.get("api_keys"):
+        return
+    try:
+        mode = path.stat().st_mode
+    except OSError:  # racing a delete is not worth failing the load over
+        return
+    if mode & 0o077:
+        log.warning("%s holds API keys and is readable by other accounts; chmod 600 it.", path)
 
 
 def _env_layer() -> dict[str, Any]:

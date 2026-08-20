@@ -19,6 +19,22 @@ uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
 export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY, GEMINI_API_KEY, …
 ```
 
+Keys can also live in the config file, per provider, which is useful when a
+checkout needs credentials the shell does not carry:
+
+```yaml
+llm:
+  api_keys:
+    anthropic: sk-ant-...
+    openai: sk-...
+  api_base: http://localhost:11434   # optional: proxy, Azure, or a local Ollama
+```
+
+A configured key wins over the provider's environment variable. These are real
+secrets on disk, so keep them in `~/.config/roborak/config.yaml` or in a
+`.roborak.yaml` your repo ignores — `roborak config show` redacts them, git does
+not. Setting `api_base` alone is enough for endpoints that need no key.
+
 ## Use
 
 ```bash

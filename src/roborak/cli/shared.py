@@ -88,7 +88,7 @@ def start(
 
     # Credentials before work: a missing key should fail in a second, not after a
     # diff has been fetched over the network.
-    if not no_llm and (missing := missing_credentials(config.model)):
+    if not no_llm and (missing := missing_credentials(config.model, config.llm)):
         fail(
             console,
             f"{config.model} needs [bold]{missing}[/] to be set.\n"

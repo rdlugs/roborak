@@ -129,7 +129,7 @@ def test_cli_flags_beat_the_config_file(repo: Path, monkeypatch):
     (repo / ".roborak.yaml").write_text("llm:\n  model: file/model\n")
     seen: dict[str, str] = {}
 
-    def capture(model: str) -> str | None:
+    def capture(model: str, llm=None) -> str | None:
         seen["model"] = model
         return "SOME_KEY"  # short-circuit before any provider call
 

@@ -45,7 +45,7 @@ def show_config(
     sources += [str(repo / name) for name in PROJECT_CONFIG_NAMES if (repo / name).is_file()]
     console.print(f"[dim]loaded from: {', '.join(sources) or 'defaults only'}[/]")
 
-    if missing := missing_credentials(config.model):
+    if missing := missing_credentials(config.model, config.llm):
         console.print(f"[yellow]note[/] {config.model} needs {missing}, which is not set.")
     raise typer.Exit(EXIT_OK)
 
