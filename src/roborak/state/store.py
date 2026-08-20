@@ -81,7 +81,11 @@ class StateStore:
             data["reviews"] = reviews
 
         record = self.get(key)
-        record.fingerprints |= {f.fingerprint for f in findings}
+        record.fingerprints |= {
+            identity
+            for finding in findings
+            for identity in (finding.fingerprint, finding.fingerprint_v2)
+        }
         record.last_head_sha = head_sha
         record.last_reviewed_at = datetime.now(UTC).isoformat(timespec="seconds")
         reviews[key] = record.to_json()

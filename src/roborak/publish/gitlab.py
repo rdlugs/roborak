@@ -67,7 +67,7 @@ class GitLabPublisher:
         forge_ref: ForgeRef,
         report: PublishReport,
     ) -> None:
-        if finding.fingerprint in self.seen_fingerprints:
+        if {finding.fingerprint, finding.fingerprint_v2} & self.seen_fingerprints:
             report.skipped_duplicate.append(finding)
             return
 

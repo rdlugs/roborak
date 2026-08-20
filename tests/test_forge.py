@@ -265,6 +265,56 @@ def test_gitlab_source(monkeypatch):
     assert deleted is not None and deleted.change_type == "deleted"
 
 
+def test_gitlab_recovers_truncated_text_and_classifies_binary():
+    from roborak.sources.gitlab import _files_from_changes
+
+    class Client:
+        def get_raw(self, path, **params):
+            if path.endswith("binary.bin/raw"):
+                return b"\0binary"
+            return b"x = 1\n" if params["ref"] == "base" else b"x = 1\ny = 2\n"
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 42)
+    files = _files_from_changes(
+        [
+            {"old_path": "app.py", "new_path": "app.py", "diff": ""},
+            {"old_path": "binary.bin", "new_path": "binary.bin", "diff": ""},
+            {"old_path": "", "new_path": "", "diff": ""},
+        ],
+        client=Client(),
+        target=target,
+        base_sha="base",
+        head_sha="head",
+    )
+    assert files[0].added_lines == {2}
+    assert files[1].is_binary
+    assert len(files) == 2
+
+
+def test_gitlab_marks_a_failed_or_oversized_recovery_unavailable():
+    from roborak.sources.gitlab import _files_from_changes
+
+    class Client:
+        def get_raw(self, path, **params):
+            return b"too large"
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 42)
+    [file] = _files_from_changes(
+        [{"old_path": "app.py", "new_path": "app.py", "diff": ""}],
+        client=Client(),
+        target=target,
+        base_sha="base",
+        head_sha="head",
+        max_bytes=2,
+    )
+    assert file.patch_unavailable
+
+    [without_client] = _files_from_changes(
+        [{"old_path": "app.py", "new_path": "app.py", "diff": ""}]
+    )
+    assert without_client.is_binary
+
+
 # -- GitHub source ---------------------------------------------------------
 
 GITHUB_PR = {
@@ -310,6 +360,24 @@ def test_github_source(monkeypatch):
 
     renamed = changeset.file_by_path("new/name.py")
     assert renamed is not None and renamed.previous_path == "old/name.py"
+
+
+def test_github_recovers_a_truncated_text_patch():
+    import base64
+
+    from roborak.sources.github import _to_changed_file
+
+    class Client:
+        def get(self, path, **params):
+            content = "x = 1\n" if params["ref"] == "base" else "x = 1\ny = 2\n"
+            return {"encoding": "base64", "content": base64.b64encode(content.encode()).decode()}
+
+    target = Target("github", "github.com", "acme/web", 42)
+    file = _to_changed_file(
+        {"filename": "app.py", "status": "modified"}, Client(), target, "base", "head"
+    )
+    assert not file.patch_unavailable
+    assert file.added_lines == {2}
 
 
 # -- publishing ------------------------------------------------------------
@@ -467,6 +535,54 @@ def test_github_falls_back_to_a_plain_comment_when_anchors_are_rejected(monkeypa
     assert len(report.failed) == 1
 
 
+def test_github_no_summary_never_posts_a_fallback_comment(monkeypatch):
+    target = Target("github", "github.com", "acme/web", 42)
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(422, text="invalid anchor")
+
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitHubPublisher(target=target, token="tok", post_summary=False).publish(make_result())
+    assert not any(path.endswith("/issues/42/comments") for path in paths)
+    assert not report.summary_posted
+
+
+def test_remote_markers_are_discovered_across_github_comment_surfaces(monkeypatch):
+    from roborak.publish.base import remote_fingerprints
+
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"body": "<!-- roborak:v1:0123456789abcdef -->"}],
+        )
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    assert remote_fingerprints(target, "tok") == {"0123456789abcdef"}
+
+
+def test_remote_markers_are_discovered_in_gitlab_discussions(monkeypatch):
+    from roborak.publish.base import remote_fingerprints
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/discussions"):
+            return httpx.Response(
+                200,
+                json=[{"notes": [{"body": "<!-- roborak:v2:fedcba9876543210 -->"}]}],
+            )
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    assert remote_fingerprints(target, "tok") == {"fedcba9876543210"}
+
+
 def test_publishing_a_local_review_is_refused():
     target = Target("gitlab", "gitlab.com", "acme/web", 298)
     result = ReviewResult(changeset=ChangeSet(origin="local"))
@@ -537,7 +653,11 @@ def test_state_round_trip(tmp_path: Path):
     store.record(key, findings, "head333")
 
     reloaded = StateStore(tmp_path).get(key)
-    assert reloaded.fingerprints == {f.fingerprint for f in findings}
+    assert reloaded.fingerprints == {
+        identity
+        for finding in findings
+        for identity in (finding.fingerprint, finding.fingerprint_v2)
+    }
     assert reloaded.last_head_sha == "head333"
     assert reloaded.last_reviewed_at
 
@@ -552,7 +672,8 @@ def test_state_accumulates_across_runs(tmp_path: Path):
     second[0].body = "A different problem entirely."
     store.record(key, second, "sha2")
 
-    assert len(store.get(key).fingerprints) == 2
+    # The body-based v1 changes, while the wording-resistant v2 remains stable.
+    assert len(store.get(key).fingerprints) == 3
     assert store.get(key).last_head_sha == "sha2"
 
 

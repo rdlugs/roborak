@@ -6,12 +6,14 @@ carrying a committable suggestion block, in the syntax the forge understands.
 
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 from roborak.core.buckets import SUMMARY_BUCKETS, Bucket, group
 from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Kind
 from roborak.render import markdown
+from roborak.sources.forge import ForgeClient, Target
 
 
 class Publisher(Protocol):
@@ -73,3 +75,40 @@ def summary_markdown(result: ReviewResult) -> str:
     that what you saw on screen is what lands on the merge request.
     """
     return markdown.render(result)
+
+
+_MARKER_RE = re.compile(r"<!--\s*roborak:v[12]:([0-9a-f]{16})\s*-->")
+
+
+def fingerprints_in(text: str) -> set[str]:
+    return set(_MARKER_RE.findall(text))
+
+
+def remote_fingerprints(target: Target, token: str) -> frozenset[str]:
+    """Read identities already published, making remote state authoritative."""
+    bodies: list[str] = []
+    with ForgeClient(target, token) as client:
+        if target.provider == "github":
+            root = f"/repos/{target.project}"
+            payloads = [
+                *client.paginate(f"{root}/issues/{target.number}/comments"),
+                *client.paginate(f"{root}/pulls/{target.number}/comments"),
+                *client.paginate(f"{root}/pulls/{target.number}/reviews"),
+            ]
+            bodies.extend(
+                str(item.get("body") or "") for item in payloads if isinstance(item, dict)
+            )
+        else:
+            base = f"/projects/{target.encoded_project}/merge_requests/{target.number}"
+            notes = client.paginate(f"{base}/notes")
+            discussions = client.paginate(f"{base}/discussions")
+            bodies.extend(str(item.get("body") or "") for item in notes if isinstance(item, dict))
+            for discussion in discussions:
+                if not isinstance(discussion, dict):
+                    continue
+                bodies.extend(
+                    str(note.get("body") or "")
+                    for note in discussion.get("notes") or []
+                    if isinstance(note, dict)
+                )
+    return frozenset(identity for body in bodies for identity in fingerprints_in(body))

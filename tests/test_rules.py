@@ -9,7 +9,7 @@ import pytest
 
 from roborak.core.models import ChangedFile, ChangeSet
 from roborak.core.severity import Category, Severity
-from roborak.rules.loader import EXAMPLE_RULE, RuleError, load_rules, parse_rule
+from roborak.rules.loader import EXAMPLE_RULE, RuleError, load_rules, load_rules_at_ref, parse_rule
 from roborak.rules.matcher import applies_to, matching_rules, rules_for_prompt
 
 FULL_RULE = textwrap.dedent(
@@ -97,6 +97,22 @@ def test_rules_are_found_recursively(tmp_path: Path):
 
 def test_missing_rules_directory_is_fine(tmp_path: Path):
     assert load_rules(tmp_path, ".roborak/rules") == []
+
+
+def test_rules_can_be_loaded_from_the_trusted_base_revision(tmp_path: Path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
+    path = write(tmp_path / ".roborak" / "rules", "policy.md", "Trusted base rule.")
+    write(tmp_path / ".roborak" / "rules", "broken.md", "")
+    subprocess.run(["git", "add", ".roborak/rules"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    path.write_text("Changed untrusted rule.")
+    rules = load_rules_at_ref(tmp_path, ".roborak/rules", "HEAD")
+    assert rules is not None and rules[0].body == "Trusted base rule."
+    assert load_rules_at_ref(tmp_path, ".roborak/rules", "missing-ref") is None
 
 
 def test_the_shipped_example_rule_is_valid(tmp_path: Path):

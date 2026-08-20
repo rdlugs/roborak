@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,40 @@ from roborak.core.severity import Category, Effort, Kind, Severity
 
 ChangeType = Literal["added", "modified", "deleted", "renamed"]
 Origin = Literal["local", "gitlab", "github", "paths"]
+
+
+class ReviewStatus(StrEnum):
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class OmissionReason(StrEnum):
+    IGNORED = "ignored"
+    BINARY = "binary"
+    FORGE_PATCH_UNAVAILABLE = "forge_patch_unavailable"
+    CONTEXT_LIMIT = "context_limit"
+    CHUNK_FAILED = "chunk_failed"
+
+
+class ReviewOmission(BaseModel):
+    path: str
+    reason: OmissionReason
+    detail: str | None = None
+
+
+class LLMCallUsage(BaseModel):
+    purpose: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: int = 0
+    cost_usd: float | None = None
+    chunk: int | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
 
 
 class Hunk(BaseModel):
@@ -58,6 +93,8 @@ class ChangedFile(BaseModel):
     """Full post-change file body. Populated for path review and for AST context."""
 
     is_binary: bool = False
+    patch_unavailable: bool = False
+    """The forge omitted a text patch and reconstruction did not recover it."""
 
     @property
     def added_lines(self) -> set[int]:
@@ -183,6 +220,13 @@ class Finding(BaseModel):
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     @property
+    def fingerprint_v2(self) -> str:
+        """A wording-resistant identity retained alongside the legacy body hash."""
+        title = re.sub(r"[^a-z0-9]+", " ", self.title.lower()).strip()
+        key = f"{self.file}|{self.category}|{self.kind}|{self.rule_id or self.tool or ''}|{title}"
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @property
     def location(self) -> str:
         if self.start_line == self.end_line:
             return f"{self.file}:{self.start_line}"
@@ -220,8 +264,31 @@ class ReviewResult(BaseModel):
     """The issue this review was judged against, when ``--issue`` was given."""
 
     tokens_used: int = 0
+    status: ReviewStatus = ReviewStatus.COMPLETE
+    coverage: list[ReviewOmission] = Field(default_factory=list)
+    models_used: list[str] = Field(default_factory=list)
+    usage: list[LLMCallUsage] = Field(default_factory=list)
     skipped_files: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+    def add_omission(self, path: str, reason: OmissionReason, detail: str | None = None) -> None:
+        omission = ReviewOmission(path=path, reason=reason, detail=detail)
+        if omission not in self.coverage:
+            self.coverage.append(omission)
+        if reason in {
+            OmissionReason.FORGE_PATCH_UNAVAILABLE,
+            OmissionReason.CONTEXT_LIMIT,
+            OmissionReason.CHUNK_FAILED,
+        }:
+            self.status = ReviewStatus.PARTIAL
+            if path not in self.skipped_files:
+                self.skipped_files.append(path)
+
+    def add_usage(self, usage: LLMCallUsage) -> None:
+        self.usage.append(usage)
+        self.tokens_used += usage.total_tokens
+        if usage.model not in self.models_used:
+            self.models_used.append(usage.model)
 
     @property
     def counts_by_severity(self) -> dict[Severity, int]:

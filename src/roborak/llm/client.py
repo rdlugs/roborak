@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 
 from roborak.core.config import LLMConfig
@@ -31,6 +32,8 @@ class LLMResponse:
     model: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    latency_ms: int = 0
+    cost_usd: float | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -68,6 +71,7 @@ class LLMClient:
 
     def _call(self, model: str, system: str, user: str) -> LLMResponse:
         assert self._litellm is not None
+        started = time.monotonic()
         response = self._litellm.completion(  # type: ignore[attr-defined]
             model=model,
             messages=[
@@ -86,11 +90,15 @@ class LLMClient:
         )
         text = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)
+        hidden = getattr(response, "_hidden_params", None) or {}
+        raw_cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
         return LLMResponse(
             text=text,
             model=model,
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            latency_ms=round((time.monotonic() - started) * 1000),
+            cost_usd=float(raw_cost) if isinstance(raw_cost, int | float) else None,
         )
 
     def _key_for(self, model: str) -> str | None:

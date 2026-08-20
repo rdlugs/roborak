@@ -38,6 +38,7 @@ from roborak.render.prompt_only import (
 )
 
 FINGERPRINT_PREFIX = "roborak:v1"
+FINGERPRINT_V2_PREFIX = "roborak:v2"
 """Marks a rendered finding with its identity, the way CodeRabbit's
 ``cr-comment:v1`` marker does. Invisible to a reader, but it means a published
 review carries a record of itself that does not depend on local state."""
@@ -252,7 +253,11 @@ def finding_markdown(
             collapsible=collapsible,
         ),
     ]
-    lines += ["", f"<!-- {FINGERPRINT_PREFIX}:{finding.fingerprint} -->"]
+    lines += [
+        "",
+        f"<!-- {FINGERPRINT_PREFIX}:{finding.fingerprint} -->",
+        f"<!-- {FINGERPRINT_V2_PREFIX}:{finding.fingerprint_v2} -->",
+    ]
 
     if source := _source_note(finding):
         lines += ["", source]
@@ -351,12 +356,41 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             )
         )
 
-    if result.skipped_files:
+    if result.coverage:
+        listed = "\n".join(
+            f"* `{item.path}` — {item.reason.value.replace('_', ' ')}"
+            + (f": {item.detail}" if item.detail else "")
+            for item in result.coverage
+        )
+        blocks.append(
+            _details(
+                f"🚧 Review coverage ({len(result.coverage)} omission(s))",
+                listed,
+                level=3,
+                collapsible=collapsible,
+            )
+        )
+    elif result.skipped_files:
         listed = "\n".join(f"* `{path}`" for path in result.skipped_files)
         blocks.append(
             _details(
                 f"🚧 Files skipped (context budget) ({len(result.skipped_files)})",
                 listed,
+                level=3,
+                collapsible=collapsible,
+            )
+        )
+
+    if result.usage:
+        models = ", ".join(result.models_used)
+        total_cost = sum(call.cost_usd or 0.0 for call in result.usage)
+        cost = f" · Cost: ${total_cost:.4f}" if total_cost else ""
+        blocks.append(
+            _details(
+                "📊 Model usage",
+                f"Status: **{result.status.value}**  \n"
+                f"Models: {models}  \n"
+                f"Calls: {len(result.usage)} · Tokens: {result.tokens_used}{cost}",
                 level=3,
                 collapsible=collapsible,
             )

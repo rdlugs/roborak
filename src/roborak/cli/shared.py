@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from roborak.core.config import Config, ForgeConfig, load_config
-from roborak.core.models import ChangeSet, Issue, ReviewResult
+from roborak.core.models import ChangeSet, Issue, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
 from roborak.llm.client import LLMClient, missing_credentials
 from roborak.render import json_out, markdown, prompt_only, terminal
@@ -172,6 +172,7 @@ def start(
             provider,
             target,
             token,
+            max_recovered_file_bytes=config.forge.max_recovered_file_bytes,
             base=base,
             committed=committed,
             uncommitted=uncommitted,
@@ -300,6 +301,7 @@ def _load_changeset(
     target: Target | None,
     token: str | None,
     *,
+    max_recovered_file_bytes: int,
     base: str | None,
     committed: bool,
     uncommitted: bool,
@@ -310,10 +312,12 @@ def _load_changeset(
         assert target is not None and token is not None  # guaranteed by the caller
         label = "merge request" if provider == "gitlab" else "pull request"
         source = GitLabSource if provider == "gitlab" else GitHubSource
+        instance = source(target=target, token=token)
+        instance.max_recovered_file_bytes = max_recovered_file_bytes
         if quiet:
-            return source(target=target, token=token).load()
+            return instance.load()
         with console.status(f"[dim]fetching {label}…[/]", spinner="dots"):
-            return source(target=target, token=token).load()
+            return instance.load()
 
     scope = Scope.COMMITTED if committed else Scope.UNCOMMITTED if uncommitted else Scope.ALL
     return LocalGitSource(
@@ -372,7 +376,7 @@ def emit(
 
 def finish(result: ReviewResult, fail_on: Severity | None) -> None:
     """Translate the result into an exit code."""
-    if result.errors:
+    if result.errors or result.status is not ReviewStatus.COMPLETE:
         raise typer.Exit(EXIT_ERROR)
     if fail_on is not None and any(f.severity.at_least(fail_on) for f in result.findings):
         raise typer.Exit(EXIT_FINDINGS)

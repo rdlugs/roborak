@@ -17,11 +17,21 @@ from roborak.core.models import (
     FileSummary,
     Finding,
     Issue,
+    LLMCallUsage,
     ReviewResult,
     Walkthrough,
 )
 from roborak.core.severity import Category, Effort, Kind, Severity
 from roborak.render import json_out, markdown, prompt_only
+
+
+def test_result_accumulates_usage_metadata():
+    result = ReviewResult()
+    result.add_usage(
+        LLMCallUsage(purpose="review", model="test/model", prompt_tokens=10, completion_tokens=5)
+    )
+    assert result.tokens_used == 15
+    assert result.models_used == ["test/model"]
 
 
 def make_result(*, walkthrough: bool = False) -> ReviewResult:
@@ -106,7 +116,14 @@ def test_json_findings_carry_provenance():
 
 def test_agent_mode_is_a_lean_actionable_payload():
     payload = json.loads(json_out.render(make_result(), agent=True))
-    assert set(payload) == {"schema_version", "summary", "findings"}
+    assert set(payload) == {
+        "schema_version",
+        "status",
+        "errors",
+        "coverage",
+        "summary",
+        "findings",
+    }
     finding = payload["findings"][0]
     # Everything needed to make the fix, and nothing else.
     assert set(finding) == {
