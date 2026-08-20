@@ -12,8 +12,26 @@ wheels/
 # roborak: review state is per-machine; rules under .roborak/rules/ are not.
 .roborak/state.json
 .roborak/*.tmp
+
+# The working config is per-checkout; .roborak.yaml.example is the tracked one.
+.roborak.yaml
+.roborak.yml
+
+# Credentials. API keys and forge tokens come from the environment, never a file.
+.env
+.env.*
+!.env.example
+
+# Test and type-check caches
 .coverage
+.coverage.*
+coverage.xml
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 htmlcov/
+
+# Editor and OS cruft
+.idea/
+.vscode/
+.DS_Store
