@@ -15,9 +15,9 @@ import pytest
 from roborak.analysis.reviewer import Reviewer
 from roborak.context.diff import parse_diff
 from roborak.core.config import Config
-from roborak.core.models import ChangeSet, Finding
+from roborak.core.models import ChangeSet, Finding, Issue
 from roborak.core.severity import Category, Kind, Severity
-from roborak.llm.client import LLMResponse
+from roborak.llm.client import LLMError, LLMResponse
 
 DIFF = textwrap.dedent(
     """\
@@ -430,3 +430,230 @@ def test_first_context_file_wins(tmp_path):
     Reviewer(config=Config(), repo=tmp_path, llm=llm).review(make_changeset())
     assert "AGENTS wins." in llm.user
     assert "CLAUDE loses." not in llm.user
+
+
+# -- issue context ---------------------------------------------------------
+
+ISSUE = Issue(
+    provider="github",
+    host="github.com",
+    project="acme/web",
+    number=42,
+    title="Sessions can be hijacked",
+    body="Compare tokens with a constant-time function.",
+    labels=["security"],
+    comments=["Also rate-limit the endpoint."],
+)
+
+
+def test_the_issue_reaches_the_prompt(tmp_path):
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm, issue=ISSUE).review(make_changeset())
+
+    assert "## Issue being addressed" in llm.user
+    assert "#42 — Sessions can be hijacked" in llm.user
+    assert "constant-time function" in llm.user
+    assert "rate-limit the endpoint" in llm.user
+    assert "security" in llm.user
+
+
+def test_no_issue_means_no_issue_section():
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=Path("/nonexistent"), llm=llm).review(make_changeset())
+
+    assert "## Issue being addressed" not in llm.user
+    # And the model is never told about a kind it has nothing to base one on.
+    assert "requirement_gap" not in llm.system
+
+
+def test_the_issue_reaches_describe_improve_and_ask(tmp_path):
+    for run in (
+        lambda r: r.describe(make_changeset()),
+        lambda r: r.improve(make_changeset()),
+        lambda r: r.ask(make_changeset(), "why?"),
+    ):
+        llm = StubLLM(reply="findings: []")
+        run(Reviewer(config=Config(), repo=tmp_path, llm=llm, issue=ISSUE))
+        assert "Sessions can be hijacked" in llm.user
+
+
+def test_the_result_records_the_issue_it_was_judged_against(tmp_path):
+    llm = StubLLM(reply="findings: []")
+    result = Reviewer(config=Config(), repo=tmp_path, llm=llm, issue=ISSUE).review(make_changeset())
+    assert result.issue is not None and result.issue.number == 42
+
+
+def test_requirement_gap_instructions_appear_only_with_an_issue(tmp_path):
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm, issue=ISSUE).review(make_changeset())
+    assert "requirement_gap" in llm.system
+
+
+def test_check_requirements_false_keeps_the_kind_out_of_the_prompt(tmp_path):
+    config = Config()
+    config.review.check_requirements = False
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=config, repo=tmp_path, llm=llm, issue=ISSUE).review(make_changeset())
+
+    # The issue is still context -- only the gap-reporting instruction is gone.
+    assert "## Issue being addressed" in llm.user
+    assert "requirement_gap" not in llm.system
+
+
+GAP_REPLY = textwrap.dedent(
+    """\
+    findings:
+      - file: app/auth.py
+        start_line: 1
+        end_line: 1
+        severity: major
+        category: security
+        kind: requirement_gap
+        title: Token comparison is still not constant-time
+        body: >
+          The issue asks for a constant-time comparison, but the change still uses
+          ==. Nothing in this diff addresses that requirement.
+        confidence: 0.9
+      - file: app/auth.py
+        start_line: 1
+        end_line: 1
+        severity: minor
+        category: security
+        kind: potential_issue
+        title: A defect on an unchanged line
+        body: This points at a line the diff never touched, so it must be dropped.
+        confidence: 0.9
+    """
+)
+
+
+def test_a_gap_survives_anchoring_while_an_ordinary_finding_does_not(tmp_path):
+    # Line 1 is nowhere near the diff, which starts at line 8.
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=StubLLM(reply=GAP_REPLY), issue=ISSUE
+    ).review(make_changeset())
+
+    kinds = {f.kind for f in result.findings}
+    assert kinds == {Kind.REQUIREMENT_GAP}
+    assert result.findings[0].title.startswith("Token comparison")
+
+
+def test_a_gap_for_a_file_outside_the_change_is_still_dropped(tmp_path):
+    reply = GAP_REPLY.replace("app/auth.py", "app/nowhere.py")
+    result = Reviewer(config=Config(), repo=tmp_path, llm=StubLLM(reply=reply), issue=ISSUE).review(
+        make_changeset()
+    )
+    assert result.findings == []
+
+
+def test_two_gaps_in_one_file_are_not_collapsed():
+    from roborak.analysis import validator
+
+    gaps = [
+        Finding(
+            file="app/auth.py",
+            start_line=1,
+            end_line=1,
+            severity=Severity.MAJOR,
+            category=Category.SECURITY,
+            kind=Kind.REQUIREMENT_GAP,
+            title=f"Gap {n}",
+            body=f"A distinct requirement, number {n}, is not implemented at all.",
+        )
+        for n in (1, 2)
+    ]
+    kept = validator.validate(gaps, make_changeset(), Config())
+    assert len(kept) == 2
+
+
+# -- the overview pass -----------------------------------------------------
+
+
+WALKTHROUGH_REPLY = textwrap.dedent(
+    """\
+    title: Add session lookup
+    overview: Looks up a session row and compares its token.
+    estimated_effort: 2
+    file_summaries:
+      - path: app/auth.py
+        summary: Adds a session lookup to get_session
+    """
+)
+
+
+@dataclass
+class ScriptedLLM(StubLLM):
+    """A stub that answers a sequence of calls, for passes that make more than one."""
+
+    replies: list[str] | None = None
+    calls: int = 0
+
+    def complete(self, system: str, user: str) -> LLMResponse:
+        self.system, self.user = system, user
+        script = self.replies or [self.reply]
+        reply = script[min(self.calls, len(script) - 1)]
+        self.calls += 1
+        return LLMResponse(text=reply, model="stub")
+
+
+class FailingWalkthroughLLM(ScriptedLLM):
+    def complete(self, system: str, user: str) -> LLMResponse:
+        if self.calls:
+            self.calls += 1
+            raise LLMError("the overview call fell over")
+        return super().complete(system, user)
+
+
+def review_and_describe(llm, tmp: Path):
+    reviewer = Reviewer(config=Config(), repo=tmp, llm=llm)
+    changeset = make_changeset()
+    result = reviewer.review(changeset)
+    result.walkthrough = reviewer.walkthrough(changeset)
+    return result, changeset
+
+
+def test_the_overview_pass_fills_in_the_walkthrough(tmp_path):
+    llm = ScriptedLLM(reply=GOOD_REPLY, replies=[GOOD_REPLY, WALKTHROUGH_REPLY])
+    result, _ = review_and_describe(llm, tmp_path)
+
+    assert llm.calls == 2
+    assert result.walkthrough is not None
+    assert result.walkthrough.overview == "Looks up a session row and compares its token."
+    assert len(result.findings) == 2, "the overview must not disturb the findings"
+
+
+def test_a_failed_overview_is_not_an_error(tmp_path):
+    """A review without an overview is still a review, and must still exit clean."""
+    llm = FailingWalkthroughLLM(reply=GOOD_REPLY, replies=[GOOD_REPLY])
+    result, _ = review_and_describe(llm, tmp_path)
+
+    assert result.walkthrough is None
+    assert len(result.findings) == 2
+    # shared.finish turns a non-empty errors list into exit code 2.
+    assert result.errors == []
+
+
+def test_the_overview_pass_cannot_shrink_the_reviewed_diff(tmp_path):
+    """``compress`` mutates, so the overview runs on a copy.
+
+    Without the copy a budget this small would strip the hunks the findings were
+    anchored against, corrupting every line number already reported.
+    """
+    llm = ScriptedLLM(reply=GOOD_REPLY, replies=[GOOD_REPLY, WALKTHROUGH_REPLY])
+    llm.context_budget = 1
+
+    reviewer = Reviewer(config=Config(), repo=tmp_path, llm=llm)
+    changeset = make_changeset()
+    result = reviewer.review(changeset)
+    before = [(f.path, len(f.hunks)) for f in changeset.files]
+
+    reviewer.walkthrough(changeset)
+
+    assert [(f.path, len(f.hunks)) for f in changeset.files] == before
+    assert changeset.omitted_files == []
+    assert len(result.findings) == 2
+
+
+def test_no_llm_means_no_overview(tmp_path):
+    reviewer = Reviewer(config=Config(), repo=tmp_path, llm=None)
+    assert reviewer.walkthrough(make_changeset()) is None

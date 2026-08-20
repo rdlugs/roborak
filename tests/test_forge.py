@@ -13,7 +13,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from roborak.core.models import ChangeSet, Finding, ForgeRef, ReviewResult
+from roborak.core.config import ForgeConfig, load_config
+from roborak.core.models import ChangeSet, Finding, ForgeRef, Issue, ReviewResult
 from roborak.core.severity import Category, Kind, Severity
 from roborak.publish.base import finding_markdown, summary_markdown
 from roborak.publish.github import GitHubPublisher
@@ -22,8 +23,10 @@ from roborak.sources.base import SourceError
 from roborak.sources.forge import (
     ForgeClient,
     Target,
+    get_token,
     parse_target,
     project_from_remote,
+    resolve_host,
 )
 from roborak.sources.github import GitHubSource
 from roborak.sources.gitlab import GitLabSource
@@ -89,6 +92,67 @@ def test_unparseable_reference_is_an_error():
 )
 def test_project_from_remote(remote, expected):
     assert project_from_remote(remote) == expected
+
+
+def test_remote_host_beats_a_configured_one(monkeypatch):
+    monkeypatch.setattr("roborak.sources.forge.detect_host", lambda *a, **k: "gitlab.com")
+    forge = ForgeConfig(hosts={"gitlab": "gitlab.acme.com"})
+    # Per-repo evidence wins: a user-wide domain must not hijack this checkout.
+    assert resolve_host("gitlab", forge) == "gitlab.com"
+
+
+def test_configured_host_fills_in_when_there_is_no_remote(monkeypatch):
+    monkeypatch.setattr("roborak.sources.forge.detect_host", lambda *a, **k: None)
+    assert resolve_host("gitlab", ForgeConfig(hosts={"gitlab": "gitlab.acme.com"})) == (
+        "gitlab.acme.com"
+    )
+    assert resolve_host("github", ForgeConfig(hosts={"gitlab": "gitlab.acme.com"})) is None
+    assert resolve_host("gitlab") is None
+
+
+def test_a_configured_host_targets_a_bare_number():
+    target = parse_target("705", "gitlab", host="gitlab.acme.com", project="acme/app")
+    assert target.host == "gitlab.acme.com"
+    assert target.api_base == "https://gitlab.acme.com/api/v4"
+
+
+def test_a_plain_http_host_keeps_its_scheme_and_port():
+    target = parse_target("705", "gitlab", host="http://gitlab.local:8080", project="a/b")
+    # The scheme stays off `host`, which doubles as a state key and error label.
+    assert (target.host, target.scheme) == ("gitlab.local:8080", "http")
+    assert target.api_base == "http://gitlab.local:8080/api/v4"
+
+
+def test_an_http_url_is_not_silently_upgraded():
+    target = parse_target("http://gitlab.local:8080/a/b/-/merge_requests/7", "gitlab")
+    assert target.api_base == "http://gitlab.local:8080/api/v4"
+
+
+def test_an_http_remote_keeps_its_scheme(monkeypatch):
+    monkeypatch.setattr(
+        "roborak.sources.forge._remote_url", lambda *a, **k: "http://gl.local:8080/a/b.git"
+    )
+    assert resolve_host("gitlab") == "http://gl.local:8080"
+
+
+def test_configured_token_is_used_and_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "from-env")
+    forge = ForgeConfig(tokens={"gitlab": "from-config"})
+    assert get_token("gitlab", forge) == "from-config"
+
+
+def test_token_falls_back_to_the_environment_for_unconfigured_providers(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "from-env")
+    assert get_token("gitlab", ForgeConfig(tokens={"github": "gh"})) == "from-env"
+    assert get_token("gitlab") == "from-env"
+
+
+def test_roborak_prefixed_env_var_reaches_the_forge_config(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    monkeypatch.setenv("ROBORAK_GITLAB_TOKEN", "from-env")
+    (tmp_path / ".roborak.yaml").write_text("forge:\n  tokens:\n    gitlab: from-file\n")
+    # The environment is the higher layer, so it still wins over the file.
+    assert get_token("gitlab", load_config(tmp_path).forge) == "from-env"
 
 
 def test_gitlab_encodes_the_project_path():
@@ -313,19 +377,32 @@ def test_gitlab_position_payload_uses_all_three_shas(monkeypatch):
     assert any(path.endswith("/notes") for path, _ in posted)
 
 
-def test_gitlab_skips_findings_it_cannot_anchor(monkeypatch):
+def test_a_finding_it_cannot_anchor_is_reported_not_dropped(monkeypatch):
+    """It used to be counted as a failure and shown only in the terminal, so a
+    reviewer reading the merge request never learned it existed."""
+    posted: list[tuple[str, dict]] = []
     target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(201, json={"id": "1"})
+
     monkeypatch.setattr(
-        "roborak.publish.gitlab.ForgeClient",
-        lambda t, tok: client_with(lambda r: httpx.Response(201, json={}), t),
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
     )
     result = make_result()
     result.findings[0].start_line = 900  # nowhere near the diff
 
     report = GitLabPublisher(target=target, token="tok").publish(result)
+
     assert report.posted == []
-    assert len(report.failed) == 1
-    assert "anchor" in report.failed[0][1]
+    assert report.failed == [], "not being anchorable is not a failure to post"
+    assert [f.title for f in report.summarised] == ["SQL injection"]
+
+    note = next(body for path, body in posted if path.endswith("/notes"))
+    assert "[!CAUTION]" in note["body"]
+    assert "Outside diff range comments (1)" in note["body"]
+    assert "SQL injection" in note["body"]
 
 
 def test_gitlab_one_rejected_comment_does_not_abort_the_review(monkeypatch):
@@ -402,18 +479,46 @@ def test_publishing_a_local_review_is_refused():
 
 def test_finding_markdown_contains_everything_a_reviewer_needs():
     result = make_result()
-    markdown = finding_markdown(result.findings[0])
-    assert "Critical" in markdown
-    assert "SQL injection" in markdown
-    assert "```suggestion" in markdown
-    assert "security" in markdown
+    body = finding_markdown(result.findings[0])
+    assert "_🔒 Security_ | _🔴 Critical_" in body
+    assert "**SQL injection.**" in body
+    assert "```suggestion" in body
+    # An inline comment carries the same agent prompt and identity as the report.
+    assert "🤖 Prompt for AI Agents" in body
+    assert f"<!-- roborak:v1:{result.findings[0].fingerprint} -->" in body
 
 
-def test_summary_markdown_has_a_severity_table():
-    markdown = summary_markdown(make_result())
-    assert "## roborak review" in markdown
-    assert "| Severity | Count |" in markdown
-    assert "test/model" in markdown
+def test_gitlabs_ranged_suggestion_fence_survives_the_shared_renderer():
+    result = make_result()
+    result.findings[0].end_line = result.findings[0].start_line + 2
+    body = finding_markdown(result.findings[0], suggestion_syntax="suggestion:-0+2")
+    assert "```suggestion:-0+2" in body
+
+
+def test_the_comment_is_the_whole_report():
+    """The single most important invariant of this shape: what was printed on
+    screen is byte for byte what lands on the merge request."""
+    from roborak.render import markdown as markdown_render
+
+    result = make_result()
+    assert summary_markdown(result) == markdown_render.render(result)
+
+
+def test_the_comment_repeats_the_findings_that_also_went_inline():
+    """A deliberate trade: a comment that omitted them would be a document
+    nobody had read before it was published."""
+    body = summary_markdown(make_result())
+    assert "**SQL injection.**" in body
+    assert "No findings" not in body
+
+
+def test_summary_markdown_carries_what_could_not_go_inline():
+    result = make_result()
+    result.findings[0].start_line = 900  # nowhere near the diff
+    body = summary_markdown(result)
+    assert "| Severity | Count |" in body
+    assert "Outside diff range comments (1)" in body
+    assert "**Model**: `test/model`" in body
 
 
 def test_summary_markdown_when_clean():
@@ -479,3 +584,114 @@ def test_state_can_be_cleared(tmp_path: Path):
     store.record(key, make_result().findings, "sha")
     store.clear(key)
     assert store.get(key).fingerprints == set()
+
+
+# -- requirement gaps ------------------------------------------------------
+
+GAP = Finding(
+    file="app/auth.py",
+    start_line=1,
+    end_line=1,
+    severity=Severity.MAJOR,
+    category=Category.SECURITY,
+    kind=Kind.REQUIREMENT_GAP,
+    title="Rate limiting was never added",
+    body="The issue asks for a rate limit on this endpoint; nothing here adds one.",
+)
+
+
+def result_with_a_gap() -> ReviewResult:
+    result = make_result()
+    result.findings.append(GAP)
+    result.issue = Issue(
+        provider="gitlab", host="gitlab.com", project="acme/web", number=42, title="Harden auth"
+    )
+    return result
+
+
+def test_gitlab_posts_a_gap_in_the_summary_not_inline(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(201, json={"id": "1"})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitLabPublisher(target=target, token="tok").publish(result_with_a_gap())
+
+    # The gap has no honest line, so it must not become an inline discussion.
+    assert [f.title for f in report.posted] == ["SQL injection"]
+    assert [f.title for f in report.summarised] == ["Rate limiting was never added"]
+    assert report.failed == []
+
+    note = next(body for path, body in posted if path.endswith("/notes"))
+    assert "🔍 Requirements not met (1)" in note["body"]
+    assert "Rate limiting was never added" in note["body"]
+
+
+def test_github_leaves_a_gap_out_of_the_inline_comments(monkeypatch):
+    posted: list[dict] = []
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": 1})
+
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitHubPublisher(target=target, token="tok").publish(result_with_a_gap())
+
+    (payload,) = posted
+    assert len(payload["comments"]) == 1
+    assert [f.title for f in report.summarised] == ["Rate limiting was never added"]
+    assert "Rate limiting was never added" in payload["body"]
+
+
+def test_summary_without_gaps_has_no_requirements_section():
+    assert "Requirements not met" not in summary_markdown(make_result())
+
+
+# -- the shared anchorability check ----------------------------------------
+
+
+def test_can_anchor_agrees_with_what_the_publishers_do():
+    """One check, so the pre-flight preview and the publishers cannot disagree."""
+    from roborak.core.buckets import can_anchor
+
+    result = make_result()
+    changeset = result.changeset
+    assert changeset is not None
+    finding = result.findings[0]
+
+    assert can_anchor(finding, changeset)
+
+    finding.start_line = 900  # nowhere near the diff
+    assert not can_anchor(finding, changeset)
+
+    finding.start_line = 11
+    finding.file = "app/never_touched.py"
+    assert not can_anchor(finding, changeset)
+
+
+def test_post_inline_false_publishes_only_the_summary(monkeypatch):
+    """What the prompt's [s] answer does."""
+    posted: list[str] = []
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.url.path)
+        return httpx.Response(201, json={"id": "1"})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitLabPublisher(target=target, token="tok", post_inline=False).publish(make_result())
+
+    assert report.posted == []
+    assert report.summary_posted
+    assert not any(path.endswith("/discussions") for path in posted)
+    assert any(path.endswith("/notes") for path in posted)

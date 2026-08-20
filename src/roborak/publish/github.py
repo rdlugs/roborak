@@ -15,8 +15,15 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from roborak.core.models import Finding, ReviewResult
-from roborak.publish.base import PublishReport, finding_markdown, summary_markdown
+from roborak.core.buckets import can_anchor
+from roborak.core.models import ChangeSet, Finding, ReviewResult
+from roborak.publish.base import (
+    PublishReport,
+    finding_markdown,
+    inline_findings,
+    summarised_findings,
+    summary_markdown,
+)
 from roborak.sources.base import SourceError
 from roborak.sources.forge import ForgeClient, Target
 
@@ -39,7 +46,9 @@ class GitHubPublisher:
 
         comments: list[dict[str, Any]] = []
         if self.post_inline:
-            for finding in result.sorted_findings():
+            # Only the actionable bucket earns a thread; nitpicks and anything
+            # unanchorable are carried by the summary. See core.buckets.
+            for finding in inline_findings(result):
                 if finding.fingerprint in self.seen_fingerprints:
                     report.skipped_duplicate.append(finding)
                     continue
@@ -49,6 +58,8 @@ class GitHubPublisher:
                     continue
                 comments.append(comment)
                 report.posted.append(finding)
+
+        report.summarised.extend(summarised_findings(result))
 
         payload: dict[str, Any] = {
             "body": summary_markdown(result) if self.post_summary else "",
@@ -76,10 +87,11 @@ class GitHubPublisher:
 
         return report
 
-    def _comment_for(self, finding: Finding, changeset: Any) -> dict[str, Any] | None:
-        file = changeset.file_by_path(finding.file)
-        if file is None or file.diff_position(finding.start_line) is None:
+    def _comment_for(self, finding: Finding, changeset: ChangeSet) -> dict[str, Any] | None:
+        if not can_anchor(finding, changeset):
             return None
+        file = changeset.file_by_path(finding.file)
+        assert file is not None  # can_anchor just proved it
 
         comment: dict[str, Any] = {
             "path": file.path,

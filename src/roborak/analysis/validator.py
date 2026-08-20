@@ -11,6 +11,7 @@ import logging
 
 from roborak.core.config import Config
 from roborak.core.models import ChangeSet, Finding
+from roborak.core.severity import Kind
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,12 @@ def anchor_to_changed_lines(
         file = changeset.file_by_path(finding.file)
         if file is None:
             log.debug("dropping finding for file not in changeset: %s", finding.file)
+            continue
+
+        if finding.kind is Kind.REQUIREMENT_GAP:
+            # An omission has no changed line to point at; the file it names is
+            # the whole anchor, and that has already been checked above.
+            kept.append(finding)
             continue
 
         added = file.added_lines
@@ -96,6 +103,11 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
 
 
 def _overlaps(a: Finding, b: Finding) -> bool:
+    # Requirement gaps share a file and a category by nature and their lines are
+    # nominal, so the overlap heuristic would collapse genuinely distinct ones.
+    # Fingerprinting, which compares the text, still dedupes them.
+    if Kind.REQUIREMENT_GAP in {a.kind, b.kind}:
+        return False
     return (
         a.file == b.file
         and a.category == b.category

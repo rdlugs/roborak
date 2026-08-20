@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -12,11 +13,13 @@ from rich.console import Console
 from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
 from roborak.cli.shared import fail
+from roborak.core.buckets import Bucket, group
 from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Severity
 from roborak.publish.base import PublishReport
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
+from roborak.render import markdown
 from roborak.sources.base import SourceError
 from roborak.sources.forge import Target
 from roborak.state.store import StateStore, review_key
@@ -37,6 +40,10 @@ def review(
     pr: Annotated[
         str | None,
         typer.Option("--pr", help="GitHub pull request: a number or a full URL."),
+    ] = None,
+    issue: Annotated[
+        str | None,
+        typer.Option("--issue", help="Issue this change should solve: a number or a URL."),
     ] = None,
     base: Annotated[
         str | None,
@@ -62,6 +69,18 @@ def review(
     repost: Annotated[
         bool,
         typer.Option("--repost", help="Post findings even if a previous run already did."),
+    ] = False,
+    no_post: Annotated[
+        bool,
+        typer.Option("--no-post", help="Never offer to publish at the end of a review."),
+    ] = False,
+    no_walkthrough: Annotated[
+        bool,
+        typer.Option("--no-walkthrough", help="Skip the overview; one model call instead of two."),
+    ] = False,
+    panels: Annotated[
+        bool,
+        typer.Option("--panels", help="Show rich panels with code context instead of the report."),
     ] = False,
     no_llm: Annotated[
         bool,
@@ -105,9 +124,10 @@ def review(
     ] = None,
 ) -> None:
     """Review changes and report findings."""
-    console = Console(quiet=as_json or agent or prompt_only)
+    # Everything roborak says about the run goes to stderr; stdout is the report.
+    console = Console(stderr=True, quiet=as_json or agent or prompt_only)
 
-    if post and not (mr or pr):
+    if post and not (mr or pr or issue):
         fail(console, "--post needs --mr or --pr; there is nowhere to post a local review.")
 
     session = shared.start(
@@ -115,6 +135,7 @@ def review(
         repo=repo,
         mr=mr,
         pr=pr,
+        issue=issue,
         base=base,
         committed=committed,
         uncommitted=uncommitted,
@@ -125,6 +146,12 @@ def review(
         quiet_status=as_json or agent or prompt_only,
     )
 
+    if post and session.target is None:
+        fail(
+            console,
+            f"--post needs a merge or pull request; issue {issue} has no linked change.",
+        )
+
     config = session.config
     if severity_floor:
         config.review.severity_floor = severity_floor
@@ -134,6 +161,12 @@ def review(
         config.review.full_file = True
     if no_static:
         config.static.enabled = False
+    if no_walkthrough:
+        config.output.walkthrough = False
+    if no_post:
+        config.output.confirm_post = False
+    if panels:
+        config.output.panels = True
 
     static_findings: list[Finding] = []
     if config.static.enabled and session.changeset.origin == "local":
@@ -147,14 +180,23 @@ def review(
             "skipping static analysis: %s changes are not checked out", session.changeset.origin
         )
 
+    reviewer = Reviewer(
+        config=config,
+        repo=session.repo,
+        llm=session.llm,
+        static_findings=static_findings,
+        issue=session.issue,
+    )
+
     status = f"reviewing with {config.model}…" if session.llm else "collecting findings…"
     with console.status(f"[dim]{status}[/]", spinner="dots"):
-        result = Reviewer(
-            config=config,
-            repo=session.repo,
-            llm=session.llm,
-            static_findings=static_findings,
-        ).review(session.changeset)
+        result = reviewer.review(session.changeset)
+
+    # A second call, so it gets its own spinner rather than sitting silently
+    # behind a message that says the review is still running.
+    if config.output.walkthrough and session.llm is not None and not session.changeset.is_empty:
+        with console.status("[dim]writing the overview…[/]", spinner="dots"):
+            result.walkthrough = reviewer.walkthrough(session.changeset)
 
     shared.emit(
         session,
@@ -163,6 +205,7 @@ def review(
         agent=agent,
         prompt_only_mode=prompt_only,
         markdown_path=markdown_out,
+        panels=config.output.panels,
     )
 
     if post and session.target is not None and session.token is not None:
@@ -172,11 +215,31 @@ def review(
             session.target,
             session.token,
             result,
+            post_inline=True,
+            post_summary=not no_summary,
+            repost=repost,
+        )
+    elif not post:
+        _offer_to_share(
+            console,
+            session,
+            result,
+            machine_mode=as_json or agent or prompt_only,
             no_summary=no_summary,
             repost=repost,
+            already_written=markdown_out is not None,
         )
 
     shared.finish(result, fail_on)
+
+
+def _seen_fingerprints(repo: Path, target: Target, *, repost: bool) -> frozenset[str]:
+    """What an earlier run already posted, so we neither repeat nor re-offer it."""
+    if repost:
+        return frozenset()
+    store = StateStore(repo)
+    key = review_key(target.provider, target.host, target.project, target.number)
+    return frozenset(store.get(key).fingerprints)
 
 
 def _publish(
@@ -186,18 +249,20 @@ def _publish(
     token: str,
     result: ReviewResult,
     *,
-    no_summary: bool,
+    post_inline: bool,
+    post_summary: bool,
     repost: bool,
 ) -> None:
     store = StateStore(repo)
     key = review_key(target.provider, target.host, target.project, target.number)
-    seen = frozenset() if repost else frozenset(store.get(key).fingerprints)
+    seen = _seen_fingerprints(repo, target, repost=repost)
 
     publisher_cls = GitLabPublisher if target.provider == "gitlab" else GitHubPublisher
     publisher = publisher_cls(
         target=target,
         token=token,
-        post_summary=not no_summary,
+        post_inline=post_inline,
+        post_summary=post_summary,
         seen_fingerprints=seen,
     )
 
@@ -227,3 +292,154 @@ def _report_publish(console: Console, report: PublishReport) -> None:
             console.print(f"  [dim]{finding.location}: {reason}[/]")
     if report.summary_posted:
         console.print("[green]posted[/] summary comment")
+
+
+DEFAULT_REPORT_NAME = "roborak-review.md"
+
+
+def _is_interactive() -> bool:
+    """Whether there is a human here to answer.
+
+    Both halves matter: a redirected stdout means the report is being captured
+    rather than read, and a non-tty stdin means nobody could answer anyway.
+    Typer's ``CliRunner`` and every CI runner fail the second test, which is what
+    keeps them from hanging. Asked of the streams directly rather than of the
+    console, because the console is stderr now and stderr staying a terminal says
+    nothing about whether stdout was piped into a file.
+    """
+    return sys.stdout.isatty() and sys.stdin.isatty()
+
+
+def _offer_to_share(
+    console: Console,
+    session: shared.Session,
+    result: ReviewResult,
+    *,
+    machine_mode: bool,
+    no_summary: bool,
+    repost: bool,
+    already_written: bool,
+) -> None:
+    """Ask, once the report is on screen, what to do with it.
+
+    Deciding after reading the review is the point: ``--post`` has to be chosen
+    before the model has said anything, and changing your mind afterwards costs a
+    whole second run.
+    """
+    if machine_mode or not session.config.output.confirm_post:
+        return
+    if not _is_interactive():
+        return
+    if not result.findings and result.walkthrough is None:
+        return
+
+    changeset = result.changeset
+    can_post = (
+        session.target is not None
+        and session.token is not None
+        and changeset is not None
+        and changeset.forge_ref is not None
+    )
+    # --markdown already wrote the file; offering to write it again is noise.
+    can_save = not already_written
+    if not (can_post or can_save):
+        return
+
+    console.print()
+    if can_post:
+        assert session.target is not None
+        target = session.target
+        console.print(
+            f"[bold]Post to {target.host} {target.project} {_reference(target)}?[/]",
+            highlight=False,
+        )
+        _print_preview(console, session, result, no_summary=no_summary, repost=repost)
+    else:
+        # A local diff has nowhere to post, so saving is the only thing on offer.
+        console.print("[bold]Save this review?[/]", highlight=False)
+
+    offered = [key for key, ok in (("[p] post", can_post), ("[s] save as .md", can_save)) if ok]
+    # markup=False: rich would read `[p]` as a style tag and swallow it.
+    # highlight=False: and its repr highlighter would then bold the brackets.
+    console.print(f"\n  {'  '.join(offered)}  [n] no", markup=False, highlight=False)
+    answer = _ask(console)
+
+    if answer == "p" and can_post:
+        assert session.target is not None and session.token is not None
+        _publish(
+            console,
+            session.repo,
+            session.target,
+            session.token,
+            result,
+            post_inline=True,
+            post_summary=not no_summary,
+            repost=repost,
+        )
+    elif answer == "s" and can_save:
+        _save(console, result, suggested=DEFAULT_REPORT_NAME)
+
+
+def _print_preview(
+    console: Console,
+    session: shared.Session,
+    result: ReviewResult,
+    *,
+    no_summary: bool,
+    repost: bool,
+) -> None:
+    """What would go where, before a single request is made."""
+    assert session.target is not None
+    actionable = group(result).get(Bucket.ACTIONABLE, [])
+    seen = _seen_fingerprints(session.repo, session.target, repost=repost)
+    postable = [f for f in actionable if f.fingerprint not in seen]
+    already = len(actionable) - len(postable)
+
+    if not no_summary:
+        console.print("  [dim]the report above, as a comment[/]", highlight=False)
+    if postable:
+        suffix = f" ({already} already posted earlier)" if already else ""
+        console.print(f"  [dim]{len(postable)} inline comment(s){suffix}[/]", highlight=False)
+    elif already:
+        console.print(
+            f"  [dim]nothing new inline; {already} already posted earlier[/]", highlight=False
+        )
+
+
+def _ask(console: Console) -> str | None:
+    """Read one key. Anything that is not an offered choice means no."""
+    try:
+        return console.input("> ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        # A closed stdin or a Ctrl-C is a decision not to publish, not an error.
+        console.print()
+        return None
+
+
+def _save(console: Console, result: ReviewResult, *, suggested: str | None) -> None:
+    """Write the report, at a path the user names."""
+    hint = f" [dim](default {suggested})[/]" if suggested else ""
+    console.print(f"[bold]Path?[/]{hint}", highlight=False)
+    try:
+        answer = console.input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return
+
+    if not answer:
+        if suggested is None:
+            return
+        answer = suggested
+
+    path = Path(answer).expanduser()
+    try:
+        path.write_text(markdown.render(result), encoding="utf-8")
+    except OSError as exc:
+        console.print(f"[bold red]error[/] could not write {path}: {exc}")
+        return
+    console.print(f"[dim]report written to {path}[/]")
+
+
+def _reference(target: Target) -> str:
+    """How each forge writes a change: GitLab takes ``!N``, GitHub ``#N``."""
+    return f"!{target.number}" if target.provider == "gitlab" else f"#{target.number}"

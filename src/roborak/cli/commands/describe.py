@@ -21,6 +21,9 @@ def describe(
     ] = None,
     mr: Annotated[str | None, typer.Option("--mr", help="GitLab merge request.")] = None,
     pr: Annotated[str | None, typer.Option("--pr", help="GitHub pull request.")] = None,
+    issue: Annotated[
+        str | None, typer.Option("--issue", help="Issue this change should solve.")
+    ] = None,
     base: Annotated[str | None, typer.Option("--base", "-b", help="Base ref.")] = None,
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
@@ -36,6 +39,7 @@ def describe(
         repo=repo,
         mr=mr,
         pr=pr,
+        issue=issue,
         base=base,
         config_path=config_path,
         model=model,
@@ -43,9 +47,12 @@ def describe(
     )
 
     with console.status(f"[dim]describing with {session.config.model}…[/]", spinner="dots"):
-        result = Reviewer(config=session.config, repo=session.repo, llm=session.llm).describe(
-            session.changeset
-        )
+        result = Reviewer(
+            config=session.config,
+            repo=session.repo,
+            llm=session.llm,
+            issue=session.issue,
+        ).describe(session.changeset)
 
     if as_json:
         shared.emit(session, result, as_json=True)

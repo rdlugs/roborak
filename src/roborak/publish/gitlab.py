@@ -13,8 +13,15 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from roborak.core.buckets import can_anchor
 from roborak.core.models import ChangeSet, Finding, ForgeRef, ReviewResult
-from roborak.publish.base import PublishReport, finding_markdown, summary_markdown
+from roborak.publish.base import (
+    PublishReport,
+    finding_markdown,
+    inline_findings,
+    summarised_findings,
+    summary_markdown,
+)
 from roborak.sources.base import SourceError
 from roborak.sources.forge import ForgeClient, Target
 
@@ -38,8 +45,12 @@ class GitLabPublisher:
         base = f"/projects/{self.target.encoded_project}/merge_requests/{self.target.number}"
         with ForgeClient(self.target, self.token) as client:
             if self.post_inline:
-                for finding in result.sorted_findings():
+                # Only the actionable bucket earns a thread; nitpicks and
+                # anything unanchorable are carried by the summary.
+                for finding in inline_findings(result):
                     self._post_one(client, base, finding, changeset, changeset.forge_ref, report)
+
+            report.summarised.extend(summarised_findings(result))
 
             if self.post_summary:
                 client.post(f"{base}/notes", {"body": summary_markdown(result)})
@@ -78,11 +89,12 @@ class GitLabPublisher:
     def _discussion_payload(
         self, finding: Finding, changeset: ChangeSet, forge_ref: ForgeRef
     ) -> dict[str, Any] | None:
-        file = changeset.file_by_path(finding.file)
-        if file is None or file.diff_position(finding.start_line) is None:
+        if not can_anchor(finding, changeset):
             return None
         if not (forge_ref.base_sha and forge_ref.head_sha):
             return None
+        file = changeset.file_by_path(finding.file)
+        assert file is not None  # can_anchor just proved it
 
         body = finding_markdown(finding, suggestion_syntax=_suggestion_spec(finding))
 

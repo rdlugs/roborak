@@ -41,6 +41,8 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
                 "head_ref": result.changeset.head_ref,
                 "files": [f.path for f in result.changeset.files],
             }
+        if result.issue is not None:
+            payload["issue"] = result.issue.model_dump(exclude_none=True)
         if result.walkthrough is not None:
             payload["walkthrough"] = result.walkthrough.model_dump(exclude_none=True)
 
