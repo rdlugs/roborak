@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 from roborak.core.models import (
     ChangedFile,
@@ -252,7 +253,12 @@ def test_the_global_agent_prompt_collates_every_instruction():
 def test_agent_prompts_are_wrapped_to_the_fence_width():
     """A fenced block does not wrap, so an unwrapped line becomes a scrollbar."""
     text = markdown.render(make_result())
+    # The signature is HTML, which wraps wherever the reader's viewport ends; its
+    # length is the logo URL's, and breaking that across lines would not help.
+    signature = markdown._signature(form=markdown.Form.PUBLISHED)
     for line in text.splitlines():
+        if line == signature:
+            continue
         assert len(line) <= markdown.FENCE_WIDTH + 4, line
 
 
@@ -518,39 +524,153 @@ def test_the_terminal_summary_does_not_claim_anything_was_posted():
 # -- the terminal form of the same document --------------------------------
 
 
+def _terminal(result, **kwargs) -> str:
+    return markdown.render(result, form=markdown.Form.TERMINAL, **kwargs)
+
+
 def test_the_terminal_form_turns_sections_into_headings():
     """rich.Markdown drops HTML silently, taking every section heading with it."""
-    text = markdown.render(make_result(), collapsible=False)
+    text = _terminal(make_result())
     assert "<details>" not in text
     assert "<summary>" not in text
     assert "<blockquote>" not in text
     assert "## Actionable comments (1)" in text
     assert "### app/auth.py (1)" in text
+
+
+def test_the_terminal_leaves_out_what_is_written_for_a_machine():
+    """Opened out, the agent prompts and the review-info tree bury the review."""
+    text = _terminal(make_result())
+    assert "🤖 Prompt for AI Agents" not in text
+    assert "🤖 Prompt for all review comments" not in text
+    assert "ℹ️ Review info" not in text
+    assert "📒 Files selected for processing" not in text
+
+
+def test_full_puts_the_machine_sections_back():
+    text = _terminal(make_result(), full=True)
     assert "#### 🤖 Prompt for AI Agents" in text
+    assert "## 🤖 Prompt for all review comments with AI agents" in text
     assert "## ℹ️ Review info" in text
 
 
-def test_both_forms_say_the_same_things():
-    """Only the way a section folds may differ; the words may not."""
+def test_the_terminal_footer_carries_the_run_without_the_tree():
+    text = _terminal(make_result())
+    assert "source local" in text
+    assert "model" not in text, "model metadata is not for a human-facing report"
+    assert "--full" in text, "the reader has to be told the rest is one flag away"
+
+
+def test_the_footer_never_hides_what_was_not_reviewed():
+    """A skipped file is the one thing a folded section must not be able to lose."""
+    text = _terminal(make_result())
+    assert "generated/big.ts" in text
+
+    result = make_result()
+    result.errors.append("chunk 2 failed")
+    assert "chunk 2 failed" in _terminal(result)
+
+
+def test_the_footer_counts_the_files_it_does_not_name():
+    result = make_result()
+    result.skipped_files = [f"gen/{n}.ts" for n in range(8)]
+    text = _terminal(result)
+    assert "gen/0.ts" in text
+    assert "and 3 more" in text
+    assert "gen/7.ts" not in text, "a footer that listed them all would not be a footer"
+
+
+def test_a_finding_leads_with_a_path_an_editor_can_open():
+    """The file is three headings up the screen; the finding has to say it again."""
+    text = _terminal(make_result())
+    assert "app/auth.py:11-13" in text
+    assert "##### 🔒 Security · 🔴 Critical · ⚡ Quick win · app/auth.py:11-13" in text
+
+
+def test_a_gap_leads_with_the_file_and_no_line(tmp_path: Path):
+    result = make_result()
+    result.findings = [
+        Finding(
+            file="app/auth.py",
+            start_line=1,
+            end_line=1,
+            severity=Severity.MAJOR,
+            category=Category.LOGIC,
+            kind=Kind.REQUIREMENT_GAP,
+            title="No rate limit",
+            body="The issue asked for one.",
+        )
+    ]
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/auth.py").write_text("x = 1\n")
+
+    text = _terminal(result, repo=tmp_path)
+    assert "· app/auth.py" in text
+    assert "app/auth.py:1" not in text, "a gap has no line to point at"
+    assert markdown.CONTEXT_FENCE not in text, "nor any code to show"
+
+
+def test_a_finding_carries_the_lines_it_points_at(tmp_path: Path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/auth.py").write_text("\n".join(f"line {n}" for n in range(1, 21)) + "\n")
+
+    text = _terminal(make_result(), repo=tmp_path)
+    assert f"```{markdown.CONTEXT_FENCE} 8 11 13 app/auth.py" in text
+    assert "line 8" in text, "three lines of context above"
+    assert "line 16" in text, "and three below"
+    assert "line 7" not in text
+
+
+def test_a_long_span_is_shown_from_the_top_not_in_full(tmp_path: Path):
+    """One finding must not be able to cost a screenful."""
+    from roborak.render import snippet
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/auth.py").write_text("\n".join(f"line {n}" for n in range(1, 101)) + "\n")
+
+    result = make_result()
+    result.findings[0].end_line = 60
+    text = _terminal(result, repo=tmp_path)
+
+    block = text.split(f"```{markdown.CONTEXT_FENCE}")[1].split("```")[0]
+    code = block.strip().splitlines()[1:]  # the info string, then the lines
+    assert len(code) == snippet.MAX_LINES
+    assert code[0] == "line 8" and code[-1] == "line 21"
+    assert "app/auth.py:11-60" in text, "the lead still names the whole span"
+
+
+def test_no_repo_and_no_file_mean_no_code_block(tmp_path: Path):
+    """A forge review has no working tree, and a deleted file has no lines."""
+    assert markdown.CONTEXT_FENCE not in _terminal(make_result())
+    assert markdown.CONTEXT_FENCE not in _terminal(make_result(), repo=tmp_path)
+
+
+def test_no_finding_is_lost_between_the_forms():
+    """The terminal may show less *about* the run. It may not show less review."""
     result = make_result(walkthrough=True)
     published = markdown.render(result)
-    shown = markdown.render(result, collapsible=False)
+    shown = _terminal(result)
 
     for fragment in (
         "**SQL injection.**",
         "user_id is concatenated into SQL.",
         "**Unused import.**",
-        "_🔒 Security_ | _🔴 Critical_ | _⚡ Quick win_",
+        "os is imported but never used.",
+        "🔒 Security",
+        "🔴 Critical",
+        "⚡ Quick win",
         "Introduces a session cache keyed by user id.",
-        "Actionable comments:\nIn `@app/auth.py`:",
         "_Confidence: 95%_",
+        "row = db.execute",
     ):
         assert fragment in published, fragment
         assert fragment in shown, fragment
 
-    # The identity markers survive too; rich hides them as HTML comments.
+    # The identity marker is the one thing only the published form carries: it
+    # is how a review recognises its own comments, and nothing reads a screen.
     for finding in result.findings:
-        assert f"<!-- roborak:v1:{finding.fingerprint} -->" in shown
+        assert f"<!-- roborak:v1:{finding.fingerprint} -->" in published
+    assert "roborak:v1" not in shown
 
 
 def test_the_terminal_names_the_language_so_the_fix_gets_coloured():
@@ -558,7 +678,7 @@ def test_the_terminal_names_the_language_so_the_fix_gets_coloured():
     and would render it as an uncoloured block."""
     result = make_result()
     assert "```suggestion" in markdown.render(result)
-    assert "```python" in markdown.render(result, collapsible=False)
+    assert "```python" in _terminal(result)
 
 
 def test_the_caution_banner_becomes_a_plain_note():
@@ -579,7 +699,7 @@ def test_the_caution_banner_becomes_a_plain_note():
             )
         ],
     )
-    shown = markdown.render(result, collapsible=False)
+    shown = _terminal(result)
     # rich shows `[!CAUTION]` as literal text, and quoting the whole section is
     # a wall of bar -- but the warning itself must survive.
     assert "[!CAUTION]" not in shown
@@ -587,15 +707,77 @@ def test_the_caution_banner_becomes_a_plain_note():
     assert "## ⚠️ Outside diff range comments (1)" in shown
 
 
-def test_the_terminal_form_renders_through_rich_without_losing_a_heading():
-    from rich.console import Console
-    from rich.markdown import Markdown
+# -- the rendered report ---------------------------------------------------
+
+
+def render_report(result, repo: Path | None = None, *, full: bool = False) -> Console:
+    from roborak.render.rich_report import ReportMarkdown
 
     console = Console(record=True, width=100)
-    console.print(Markdown(markdown.render(make_result(), collapsible=False)))
-    text = console.export_text()
+    console.print(
+        ReportMarkdown(markdown.render(result, form=markdown.Form.TERMINAL, repo=repo, full=full))
+    )
+    return console
+
+
+def test_the_report_renders_through_rich_without_losing_a_heading():
+    text = render_report(make_result()).export_text()
 
     assert "Actionable comments (1)" in text
     assert "🧹 Nitpick comments (1)" in text
     assert "SQL injection." in text
+    assert "app/auth.py:11-13" in text
     assert "roborak:v1" not in text, "the identity marker is for machines, not readers"
+    assert "🤖 Prompt" not in text
+
+
+def test_the_rendered_report_colours_a_finding_by_its_severity():
+    """The badge says critical; the line has to look it.
+
+    The one thing the report gains over the document it renders. Asserted on the
+    escape codes because "it is red" is the whole feature.
+    """
+    styled = render_report(make_result()).export_text(styles=True)
+    critical = next(line for line in styled.splitlines() if "🔒 Security" in line)
+    minor = next(line for line in styled.splitlines() if "📐 Maintainability" in line)
+
+    assert critical.startswith("\x1b[") and ";31m" in critical.split("m")[0] + "m", critical
+    assert ";31m" not in minor.split("m")[0] + "m", "a nitpick is not red"
+    assert "\x1b[36m" in minor or ";36m" in minor, "SEVERITY_STYLE[MINOR] is cyan"
+
+
+def test_the_rendered_report_gutters_the_code_it_shows(tmp_path: Path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/auth.py").write_text("\n".join(f"line {n}" for n in range(1, 21)) + "\n")
+
+    text = render_report(make_result(), tmp_path).export_text()
+    assert markdown.CONTEXT_FENCE not in text, "the sentinel is for the renderer, not the reader"
+    assert " 11 " in text, "the gutter numbers from the file's real position"
+    assert "line 11" in text
+
+
+# -- the signature ---------------------------------------------------------
+
+
+def test_the_published_report_is_signed_with_the_icon():
+    """A posted comment should say who wrote it where a reader can see it."""
+    text = markdown.render(make_result())
+    assert markdown.LOGO_URL in text
+    assert "Reviewed by <b>roborak</b>" in text
+    assert text.rstrip().endswith("</sub>"), "the signature is the last thing in the document"
+
+
+def test_the_terminal_report_is_signed_without_html():
+    """rich.Markdown drops HTML, so the terminal form signs itself in characters."""
+    text = _terminal(make_result())
+    assert "Reviewed by roborak" in text
+    assert "<img" not in text
+    assert "<sub" not in text
+    assert markdown.LOGO_URL not in text
+
+
+def test_a_clean_review_is_still_signed():
+    """``_review_info`` can be empty; the document must not end on a bare rule."""
+    text = markdown.render(ReviewResult())
+    assert "Reviewed by <b>roborak</b>" in text
+    assert not text.rstrip().endswith("---")

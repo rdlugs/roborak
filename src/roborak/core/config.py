@@ -124,9 +124,15 @@ class OutputConfig(ConfigModel):
     consulted on a terminal: a script or a CI job is never prompted."""
 
     panels: bool = False
-    """Print the review as rich panels instead of the markdown report. The panels
-    show each finding's code in context, read from the working tree, which the
-    report cannot do -- but they are not what gets published."""
+    """Print the review as rich panels instead of the report -- one finding to a
+    bordered panel, which is the denser way to read a long review. Not what gets
+    published either way."""
+
+    full: bool = False
+    """Show the sections the terminal report leaves out: the agent prompt under
+    each finding and the review-info tree. They are written for a machine, and
+    opened out on a screen they bury the review. What a reader must not lose --
+    an omitted file, a skipped file, an error -- is in the footer regardless."""
 
 
 class ForgeConfig(ConfigModel):

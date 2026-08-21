@@ -598,7 +598,7 @@ def test_the_new_flags_are_documented():
     result = runner.invoke(app, ["review", "--help"])
     assert result.exit_code == EXIT_OK
     help_text = flatten(result.output)
-    for flag in ("--no-post", "--no-walkthrough"):
+    for flag in ("--no-post", "--no-walkthrough", "--full", "--panels"):
         assert flag in help_text
 
 
@@ -1055,6 +1055,20 @@ def test_a_reader_gets_it_rendered(repo: Path, monkeypatch):
     assert "<!-- roborak:v1" not in out
     assert "Actionable comments (1)" in out
     assert "Returns the wrong value." in out
+    assert "app.py:2" in out, "a path the reader can open"
+    assert "🤖 Prompt" not in out, "the agent prompt is written for a machine"
+    assert "Review info" not in out
+
+
+def test_full_restores_what_the_reader_does_not_normally_want(repo: Path, monkeypatch):
+    _with_one_finding(monkeypatch)
+    monkeypatch.setattr("roborak.cli.shared.stdout_is_a_terminal", lambda: True)
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--full"])
+    assert result.exit_code == EXIT_OK, result.output
+    assert "🤖 Prompt for AI Agents" in result.stdout
+    assert "Review info" in result.stdout
 
 
 def test_a_pipe_still_gets_the_markdown(repo: Path, monkeypatch):

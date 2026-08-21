@@ -1,16 +1,39 @@
+<div align="center">
+
+<img src="assets/roborak_256.png" alt="roborak" width="128" height="128">
+
 # roborak
 
-AI code review from the terminal — local diffs, GitLab MRs, and GitHub PRs.
+**AI code review from the terminal** — local diffs, GitLab MRs, and GitHub PRs.
 
-Modelled on the process and output of [CodeRabbit](https://coderabbit.ai),
-[Qodo Merge](https://github.com/qodo-ai/pr-agent), and [Kodus](https://github.com/kodustech/kodus-ai):
-severity-graded, line-anchored findings with committable fix suggestions.
+Severity-graded, line-anchored findings with committable fix suggestions.
 
-## Status
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-434%20passing-2ea44f)](#development)
+[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
+[![Providers](https://img.shields.io/badge/LLM-any%20LiteLLM%20model-8A2BE2)](https://docs.litellm.ai/docs/providers)
+[![Forges](https://img.shields.io/badge/forges-GitLab%20%7C%20GitHub-FC6D26?logo=gitlab&logoColor=white)](#tokens)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
 
-**All seven phases complete.** — local diffs, GitLab MRs, GitHub PRs, issue context,
-static analysis, custom rules, posting and every output mode work end to end. See
-[Roadmap](#roadmap) for what is not built yet.
+[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [License](LICENSE.md)
+
+</div>
+
+---
+
+## What it does
+
+|  | |
+|---|---|
+| 🎯 **Anchored, not approximate** | Every finding points at a line the change actually touched — verified against the files on disk, not the model's word for it. |
+| 🧹 **Refuses more than it says** | Low-confidence findings filtered, duplicates collapsed, pre-existing lint debt suppressed, already-posted comments skipped. |
+| 🔌 **Four sources, one pipeline** | Local git, GitLab MRs, GitHub PRs and raw paths all normalise into one IR, so output modes can never disagree. |
+| 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan with *your* config, and feeds the results to the model to confirm or explain. |
+| 💬 **Publishes where you're looking** | Inline threads for what's worth interrupting for, a summary comment for the rest, incremental so re-runs don't repeat themselves. |
+| 📋 **Issue-aware** | `--issue 42` judges the diff against what was actually asked, and reports the requirements it misses. |
+
+**Status: feature complete.** Local diffs, GitLab MRs, GitHub PRs, issue context,
+static analysis, custom rules, posting and every output mode work end to end.
 
 ## Install
 
@@ -18,6 +41,17 @@ static analysis, custom rules, posting and every output mode work end to end. Se
 uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
 export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY, GEMINI_API_KEY, …
 ```
+
+```bash
+uv run roborak review    # review everything that differs from the base branch
+```
+
+That is the whole quick start. Everything below is optional.
+
+<details>
+<summary><b>Keys in the config file instead of the shell</b></summary>
+
+<br>
 
 Keys can also live in the config file, per provider, which is useful when a
 checkout needs credentials the shell does not carry:
@@ -36,6 +70,8 @@ secrets on disk, so keep them in `~/.config/roborak/config.yaml` or in a
 not. `roborak config init --global` scaffolds that user-wide file and creates it
 mode 600. Setting `api_base` alone is enough for endpoints that need no key.
 
+</details>
+
 ## Use
 
 ```bash
@@ -47,9 +83,14 @@ uv run roborak review --include-untracked
 uv run roborak review --no-llm              # static analysis only; no API key needed
 uv run roborak review --no-static           # model only, skip the linters
 uv run roborak review --no-walkthrough      # skip the overview; one model call, not two
-uv run roborak review --panels              # rich panels with code context, not the report
+uv run roborak review --full                # add the agent prompts and the review info
+uv run roborak review --panels              # one finding to a panel, not the report
 uv run roborak review > review.md           # piped: the raw markdown, chrome on stderr
+```
 
+**Forges**
+
+```bash
 uv run roborak review --mr 298              # a GitLab merge request
 uv run roborak review --mr https://gitlab.com/acme/web/-/merge_requests/298
 uv run roborak review --pr 42               # a GitHub pull request
@@ -57,12 +98,20 @@ uv run roborak review --mr 298 --post       # publish inline threads + a summary
 uv run roborak review --mr 298 --post --repost   # re-post findings already sent
 uv run roborak review --mr 298 --no-discussions # ignore existing MR discussion
 uv run roborak review --mr 298 --no-post    # review it, never ask about publishing
+```
 
+**Issue context**
+
+```bash
 uv run roborak review --issue 42            # review whatever MR/PR implements issue 42
 uv run roborak review --issue https://gitlab.com/acme/web/-/issues/42
 uv run roborak review --mr 298 --issue 42   # review MR 298, judged against issue 42
 uv run roborak review --issue 42 --base main     # local diff, judged against issue 42
+```
 
+**Output and filtering**
+
+```bash
 uv run roborak review --json                # full result as JSON
 uv run roborak review --agent               # JSON for another agent to act on
 uv run roborak review --prompt-only         # findings as fix instructions
@@ -72,9 +121,11 @@ uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
 ```
 
-Exit codes: `0` complete, `1` findings at or above `--fail-on`, `2` operational
-error or partial review (including failed chunks, unavailable forge patches, or a
-requested publish that did not complete).
+| Exit code | Meaning |
+|---|---|
+| `0` | Review completed |
+| `1` | Findings at or above `--fail-on` |
+| `2` | Operational error or partial review — failed chunks, unavailable forge patches, or a requested publish that did not complete |
 
 ### Other commands
 
@@ -197,28 +248,35 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **Output modes** share one result object, so the terminal report, the markdown
   file, the JSON payload and the forge comment can never disagree. `--json`,
   `--agent` and `--prompt-only` write to stdout alone, so they stay pipeable.
-- **The report is shaped like CodeRabbit's.** Findings are grouped into
+- **The report is built for skimming.** Findings are grouped into
   collapsible sections by where they belong, badged with category, severity and
   the effort a fix will cost, and each one carries a 🤖 prompt a coding agent can
   act on — plus one collated block for the whole review. A `<!-- roborak:v1:… -->`
   marker records each finding's identity in the comment itself, so a published
   review carries a record of itself that does not depend on local state.
-- **There is one document, and you read it before you publish it.** The report
-  you see is what `--markdown` writes and what `--post` publishes as the comment
-  — asserted by a test, because it is the invariant a refactor would quietly
-  break. It means the comment repeats the findings that also went out as inline
-  threads, which is the deliberate half of the trade: a comment that omitted them
-  would be a fourth document nobody had read before it was published.
-- **How it reaches you depends on who is reading.** At a terminal it is rendered:
-  headings, tables, syntax-highlighted fixes. Redirected or piped it is the raw
-  markdown, so `roborak review > review.md` gives back the publishable file.
-  Rendering costs one small translation — `rich.Markdown` drops HTML silently,
-  which would take every `<details>` section heading with it, so the collapsible
-  sections are opened out into headings first. Same document, same order, same
-  words; only the way a section folds changes. Everything roborak says *about* a
-  run — spinners, errors, the closing question — goes to stderr either way.
-  `--panels` brings back the old rich view, still the only one that shows each
-  finding's code in context, read from your working tree.
+- **There is one document, and you read it before you publish it.** One renderer
+  builds it, so what `--markdown` writes, what a pipe gives back and what `--post`
+  publishes are byte for byte the same thing — asserted by a test, because it is
+  the invariant a refactor would quietly break. It means the comment repeats the
+  findings that also went out as inline threads, which is the deliberate half of
+  the trade: a comment that omitted them would be a fourth document nobody had
+  read before it was published.
+- **How it reaches you depends on who is reading.** Redirected or piped it is the
+  raw markdown, so `roborak review > review.md` gives back exactly the publishable
+  file. At a terminal it is rendered — headings, tables, severity in colour, the
+  flagged lines shown in context from your working tree, syntax-highlighted fixes.
+  Everything roborak says *about* a run — spinners, errors, the closing question —
+  goes to stderr either way.
+- **A terminal cannot fold a section, so it leaves them out instead.** A report is
+  built to be skimmed by opening what you want, and every `<details>` opened at
+  once is the opposite of that: on a twenty-finding review the per-finding agent
+  prompts alone outweigh the findings. The rendered form drops the sections
+  written for a machine — the agent prompts, the review-info tree — and puts what
+  a reader must not lose (an omitted file, a skipped file, an error) in a one-line
+  footer instead. `--full` restores them. What it never drops is the review: every
+  finding, every badge, every body and every fix is in both forms, which is what
+  `tests/test_render.py` asserts. `--panels` is the older view, one finding to a
+  bordered panel.
 - **Large diffs are reviewed in several passes**, not truncated. The chunker
   splits by directory so related files stay together, each pass inherits the
   parent's metadata, and one failed pass never discards the others. Compression —
@@ -268,7 +326,8 @@ static:
 output:
   walkthrough: true    # spend a second model call on the overview
   confirm_post: true   # offer to publish at the end of an interactive review
-  panels: false        # rich panels instead of the report; not what gets posted
+  panels: false        # one finding to a panel instead of the report
+  full: false          # show the agent prompts and review info the terminal hides
 
 ignore_paths:
   - "**/*.lock"
@@ -281,8 +340,7 @@ language_instructions:
 
 ### Custom rules
 
-Standards a linter cannot express go in `.roborak/rules/*.md` as plain language —
-the same idea as Kodus' Kody Rules:
+Standards a linter cannot express go in `.roborak/rules/*.md` as plain language:
 
 ```markdown
 ---
@@ -305,8 +363,10 @@ change cannot rewrite the instructions used to review itself.
 
 ### Static-analysis trust
 
-Static analyzers load repository binaries, plugins, and configuration, which can
-execute code. Outside CI, `static.execution: auto` treats the checkout as trusted.
+> [!IMPORTANT]
+> Static analyzers load repository binaries, plugins, and configuration, which can
+> execute code. Outside CI, `static.execution: auto` treats the checkout as trusted.
+
 In CI it runs through Bubblewrap with a read-only filesystem and no network; when
 Bubblewrap is unavailable, the static pass is skipped rather than running
 untrusted code directly. `--trust-static` (or `static.execution: trusted`) is the
@@ -316,18 +376,6 @@ credential-scrubbed environment in all modes.
 CI also ignores `.roborak.yaml` from the working tree, since it could redirect an
 API key or opt into trusted execution. Put CI settings in environment variables,
 the user config, or pass a trusted base-controlled file with `--config`.
-
-## Roadmap
-
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Local diff review, terminal output, config, LiteLLM | **done** |
-| 2 | AST context via tree-sitter, multi-chunk merge for large diffs | **done** |
-| 3 | Static analysis adapters (ruff, mypy, semgrep, eslint, phpstan) | **done** |
-| 4 | GitLab MR and GitHub PR sources, posting inline threads, incremental review | **done** |
-| 5 | Markdown walkthrough with mermaid, JSON/agent mode, `describe`/`improve`/`ask` | **done** |
-| 6 | Custom rules (`.roborak/rules/*.md`), `config init`, `rules test` | **done** |
-| 7 | Issue context and targeting (`--issue`), requirement-gap findings | **done** |
 
 ## Design notes
 
@@ -356,3 +404,12 @@ Live reviewer-quality evaluation is intentionally separate from deterministic PR
 CI. `uv run python evals/run.py` exercises 30 labeled defect and clean-control
 cases, writes token and quality metrics, and enforces the nightly recall,
 false-positive, anchoring, and parse-success gates.
+
+## License
+
+MIT — see [LICENSE.md](LICENSE.md).
+
+<div align="center">
+<br>
+<sub>Built with <a href="https://docs.litellm.ai/">LiteLLM</a>, <a href="https://typer.tiangolo.com/">Typer</a> and <a href="https://rich.readthedocs.io/">Rich</a>.</sub>
+</div>

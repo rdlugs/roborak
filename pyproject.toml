@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "AI code review from the terminal — local diffs, GitLab MRs, and GitHub PRs."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE.md"]
 dependencies = [
     "typer>=0.15",
     "rich>=13.9",

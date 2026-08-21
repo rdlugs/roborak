@@ -7,12 +7,12 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.markdown import Markdown
 
 from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
 from roborak.cli.shared import EXIT_ERROR, EXIT_OK
 from roborak.render import markdown as markdown_render
+from roborak.render import rich_report
 
 
 def describe(
@@ -67,7 +67,15 @@ def describe(
         if result.walkthrough is None:
             console.print("[yellow]Nothing to describe.[/]")
         else:
-            console.print(Markdown(markdown_render.render(result)))
+            # The terminal form, for the same reason ``review`` uses it: the
+            # published one is HTML that rich drops, headings and all.
+            console.print(
+                rich_report.ReportMarkdown(
+                    markdown_render.render(
+                        result, form=markdown_render.Form.TERMINAL, repo=session.repo
+                    )
+                )
+            )
         if markdown_out is not None:
             console.print(f"[dim]written to {markdown_out}[/]")
 
