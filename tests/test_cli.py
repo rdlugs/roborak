@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from roborak.cli.main import app
@@ -589,6 +590,136 @@ def test_config_show_names_an_explicit_config_file(repo: Path, tmp_path: Path):
     shown = runner.invoke(app, ["config", "show", "-C", str(repo), "--config", str(explicit)])
     assert shown.exit_code == EXIT_OK
     assert str(explicit) in unwrapped(shown.output)
+
+
+# -- setup wizard ----------------------------------------------------------
+
+
+@pytest.fixture
+def wizard(monkeypatch):
+    """Make the wizard answerable, and keep the real environment out of it."""
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd._is_interactive", lambda: True)
+    # A real gh session or an exported token would silently skip a prompt and
+    # shift every later answer in the scripted input.
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd.get_token", lambda *a, **k: None)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITLAB_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_setup_writes_a_config_that_round_trips(wizard, repo: Path, user_config: Path):
+    from roborak.core.config import load_config
+
+    result = runner.invoke(
+        app,
+        ["setup"],
+        # destination, model, api key, gitlab token, github token
+        input="1\nanthropic/claude-opus-5\nsk-ant-secret\n\n\n",
+    )
+    assert result.exit_code == EXIT_OK, result.output
+    assert user_config.is_file()
+
+    config = load_config(repo)
+    assert config.llm.model == "anthropic/claude-opus-5"
+    assert config.llm.api_keys["anthropic"].get_secret_value() == "sk-ant-secret"
+
+
+def test_setup_writes_only_the_answered_keys(wizard, user_config: Path):
+    runner.invoke(app, ["setup"], input="1\n\nsk-ant-secret\n\n\n")
+    written = yaml.safe_load(user_config.read_text())
+
+    # A full dump would carry every section; defaults must stay live instead.
+    assert set(written) == {"version", "llm"}
+    assert set(written["llm"]) == {"model", "api_keys"}
+
+
+def test_setup_skips_the_key_when_the_environment_has_one(wizard, monkeypatch, user_config: Path):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+    # No key answer in the input at all: destination, model, two forge skips.
+    result = runner.invoke(app, ["setup"], input="1\n\n\n\n")
+    assert result.exit_code == EXIT_OK, result.output
+    assert "api_keys" not in yaml.safe_load(user_config.read_text())["llm"]
+
+
+def test_setup_secures_the_user_config(wizard, user_config: Path):
+    runner.invoke(app, ["setup"], input="1\n\nsk-ant-secret\n\n\n")
+    assert user_config.stat().st_mode & 0o077 == 0
+
+
+def test_setup_secures_a_project_config_too(wizard, repo: Path, user_config: Path):
+    """`config init` keys the mode off --global; here it must follow the content."""
+    result = runner.invoke(app, ["setup", "-C", str(repo)], input="2\n\nsk-ant-secret\n\n\n")
+    assert result.exit_code == EXIT_OK, result.output
+    written = repo / ".roborak.yaml"
+    assert written.is_file()
+    assert written.stat().st_mode & 0o077 == 0
+
+
+def test_setup_warns_when_a_secret_file_is_not_gitignored(wizard, repo: Path, user_config: Path):
+    result = runner.invoke(app, ["setup", "-C", str(repo)], input="2\n\nsk-ant-secret\n\n\n")
+    assert "git does not ignore it" in flatten(result.output)
+
+    (repo / ".roborak.yaml").unlink()
+    (repo / ".gitignore").write_text(".roborak.yaml\n")
+    second = runner.invoke(app, ["setup", "-C", str(repo)], input="2\n\nsk-ant-secret\n\n\n")
+    assert "git does not ignore it" not in flatten(second.output)
+
+
+def test_setup_refuses_to_overwrite_without_force(wizard, user_config: Path):
+    assert runner.invoke(app, ["setup"], input="1\n\nsk-ant\n\n\n").exit_code == EXIT_OK
+    user_config.write_text("version: 1\n# hand-edited\n")
+
+    second = runner.invoke(app, ["setup"], input="1\n\nsk-ant\n\n\n")
+    assert second.exit_code == EXIT_ERROR
+    assert "# hand-edited" in user_config.read_text(), "must not clobber a real config"
+
+    forced = runner.invoke(app, ["setup", "--force"], input="1\n\nsk-ant\n\n\n")
+    assert forced.exit_code == EXIT_OK
+    assert "# hand-edited" not in user_config.read_text()
+
+
+def test_setup_aborts_without_writing_anything(wizard, user_config: Path):
+    """Input running out is an EOF mid-wizard, the same event as a Ctrl-C."""
+    result = runner.invoke(app, ["setup"], input="1\n")
+    assert result.exit_code == EXIT_OK
+    assert "aborted" in flatten(result.output)
+    assert not user_config.exists()
+
+
+def test_setup_normalises_a_self_hosted_host(wizard, user_config: Path):
+    runner.invoke(
+        app,
+        ["setup"],
+        # destination, model, key, gitlab token, gitlab host, github token
+        input="1\n\nsk-ant\nglpat-x\nhttps://gitlab.acme.com/\n\n",
+    )
+    written = yaml.safe_load(user_config.read_text())
+    assert written["forge"]["hosts"]["gitlab"] == "gitlab.acme.com"
+    assert written["forge"]["tokens"]["gitlab"] == "glpat-x"
+
+
+def test_setup_reprompts_on_a_host_that_is_a_url_path(wizard, user_config: Path):
+    result = runner.invoke(
+        app,
+        ["setup"],
+        input="1\n\nsk-ant\nglpat-x\ngitlab.acme.com/group\ngitlab.acme.com\n\n",
+    )
+    assert result.exit_code == EXIT_OK, result.output
+    assert "must be a domain" in flatten(result.output)
+    assert yaml.safe_load(user_config.read_text())["forge"]["hosts"]["gitlab"] == "gitlab.acme.com"
+
+
+def test_setup_without_a_terminal_exits_instead_of_hanging(user_config: Path):
+    """CliRunner fails the tty test naturally, exactly as a CI runner does."""
+    result = runner.invoke(app, ["setup"], input="1\n")
+    assert result.exit_code == EXIT_ERROR
+    assert "needs a terminal" in flatten(result.output)
+    assert not user_config.exists()
+
+
+def test_help_lists_the_setup_command():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == EXIT_OK
+    assert "setup" in flatten(result.output)
 
 
 # -- the end-of-review prompt ----------------------------------------------

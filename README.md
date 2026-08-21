@@ -137,6 +137,7 @@ uv run roborak ask "why is this locked?"    # a question answered from the diff
 uv run roborak rules init                   # scaffold .roborak/rules/ with an example
 uv run roborak rules list                   # what roborak will apply here
 uv run roborak rules test <rule.md> <file>  # validate a rule and check its scope
+uv run roborak setup                        # guided first run: model, key, forge tokens
 uv run roborak config init                  # write a commented .roborak.yaml
 uv run roborak config init --global         # …or ~/.config/roborak/config.yaml, mode 600
 uv run roborak config show                  # the effective config, all layers merged
@@ -300,6 +301,12 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 project config > `~/.config/roborak/config.yaml` > defaults. `config init` writes
 the first, `config init --global` the second; both get the same commented template,
 which ships inside the package rather than being read out of a source checkout.
+
+`roborak setup` is the guided path to the same files: it asks for a model, a
+credential for it, and optional forge tokens, then writes *only* those keys — a
+sparse file, so every other default stays live across upgrades. It chmods 600
+whatever it writes that holds secrets, wherever it wrote it. `config init` remains
+the manual path, and the full annotated file to edit.
 
 ```yaml
 version: 1
