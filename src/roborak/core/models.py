@@ -254,7 +254,7 @@ class FileSummary(BaseModel):
 
 
 class Walkthrough(BaseModel):
-    """The ``describe`` output — CodeRabbit's walkthrough comment."""
+    """The ``describe`` output — a walkthrough of the change as a whole."""
 
     title: str | None = None
     overview: str = ""

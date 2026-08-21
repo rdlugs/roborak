@@ -1,8 +1,8 @@
 """Findings as instructions for another agent to act on.
 
-CodeRabbit calls this ``--prompt-only``: plain text, one problem statement per
-finding, with everything needed to make the fix and nothing else. The output is
-meant to be piped straight into a coding agent.
+``--prompt-only`` emits plain text, one problem statement per finding, with
+everything needed to make the fix and nothing else. The output is meant to be
+piped straight into a coding agent.
 """
 
 from __future__ import annotations

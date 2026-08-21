@@ -1,4 +1,4 @@
-"""The review as markdown, in the shape CodeRabbit posts.
+"""The review as markdown, in the shape a forge comment takes.
 
 One renderer serves both ``--markdown out.md`` and the comment ``--post``
 publishes, so what you preview locally is what reviewers see. They differ only in
@@ -50,9 +50,9 @@ from roborak.render.prompt_only import (
 
 FINGERPRINT_PREFIX = "roborak:v1"
 FINGERPRINT_V2_PREFIX = "roborak:v2"
-"""Marks a rendered finding with its identity, the way CodeRabbit's
-``cr-comment:v1`` marker does. Invisible to a reader, but it means a published
-review carries a record of itself that does not depend on local state."""
+"""Marks a rendered finding with its identity. Invisible to a reader, but it
+means a published review carries a record of itself that does not depend on
+local state."""
 REVIEW_MARKER = "roborak:review"
 
 LOGO_URL = "https://raw.githubusercontent.com/rdlugs/roborak/main/assets/roborak_128.png"
@@ -271,7 +271,7 @@ def _bucket_section(
 
 
 def _findings_block(findings: list[Finding], *, form: Form, repo: Path | None, full: bool) -> str:
-    """Findings within one file, rule-separated the way CodeRabbit separates them."""
+    """Findings within one file, separated by a rule."""
     return "\n\n---\n\n".join(
         finding_markdown(finding, form=form, repo=repo, full=full) for finding in findings
     )

@@ -1,8 +1,8 @@
 """Load a team's own review standards.
 
-Rules are markdown with YAML frontmatter, in the spirit of Kodus' Kody Rules: a
-sentence of plain language beats a regex for anything a linter cannot already
-catch, and it stays readable to the people who have to agree with it.
+Rules are markdown with YAML frontmatter: a sentence of plain language beats a
+regex for anything a linter cannot already catch, and it stays readable to the
+people who have to agree with it.
 
     ---
     id: no-raw-sql

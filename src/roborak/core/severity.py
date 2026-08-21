@@ -1,9 +1,9 @@
 """Vocabulary for findings.
 
-The enums here deliberately merge the three tools roborak models itself on:
-``Severity``/``Category`` follow Kodus, ``Kind``/``Effort`` follow CodeRabbit's
-comment taxonomy. Every value is lowercase so it round-trips through YAML, JSON
-and the LLM prompt without normalisation.
+A finding is described along four axes: ``Severity`` and ``Category`` say how
+much it matters and what domain it belongs to, ``Kind`` and ``Effort`` say what
+sort of comment it is and what fixing it will cost. Every value is lowercase so
+it round-trips through YAML, JSON and the LLM prompt without normalisation.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class Category(StrEnum):
 
 
 class Kind(StrEnum):
-    """What sort of comment this is, in CodeRabbit's sense."""
+    """What sort of comment this is: a problem, a suggestion, or an aside."""
 
     POTENTIAL_ISSUE = "potential_issue"
     REFACTOR_SUGGESTION = "refactor_suggestion"
@@ -72,7 +72,7 @@ SEVERITY_STYLE: dict[Severity, str] = {
     Severity.INFO: "dim",
 }
 
-# The badge vocabulary every renderer draws from, after CodeRabbit's: a finding
+# The badge vocabulary every renderer draws from: a finding
 # announces its category, how much it matters, and what fixing it will cost, in
 # that order. Kept here beside the enums so the four surfaces cannot drift.
 CATEGORY_LABEL: dict[Category, str] = {

@@ -1,8 +1,8 @@
 """Machine-readable output.
 
 ``--json`` is the full result; ``--agent`` is the same data shaped for another
-agent to act on, matching what CodeRabbit's ``--agent`` mode provides: enough to
-locate and fix each finding without re-reading the diff.
+agent to act on: enough to locate and fix each finding without re-reading the
+diff.
 """
 
 from __future__ import annotations

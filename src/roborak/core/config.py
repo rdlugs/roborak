@@ -2,8 +2,8 @@
 
 Precedence, highest first: CLI flags, environment (``ROBORAK_*``), the project's
 ``.roborak.yaml``, the user's ``~/.config/roborak/config.yaml``, then defaults.
-The shape follows Kodus' config so the concepts are familiar: categories, a
-severity floor, path ignores, and a static-analysis section.
+The shape is four sections: categories, a severity floor, path ignores, and a
+static-analysis section.
 """
 
 from __future__ import annotations

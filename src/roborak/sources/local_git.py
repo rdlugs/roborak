@@ -1,7 +1,7 @@
 """Local git as a change source.
 
-Covers the scopes CodeRabbit's CLI exposes: everything tracked (the default),
-committed only, uncommitted only, and a branch compared against a base.
+Covers four scopes: everything tracked (the default), committed only,
+uncommitted only, and a branch compared against a base.
 """
 
 from __future__ import annotations

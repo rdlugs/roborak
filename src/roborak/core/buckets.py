@@ -1,12 +1,11 @@
 """Which channel a finding belongs on.
 
-CodeRabbit's routing, which roborak follows: a finding that points at a changed
-line and is worth interrupting for goes inline on the diff, where the author is
-already looking. A nitpick is folded into the summary instead, so that the small
-stuff cannot drown the review. And one that cannot be anchored is *reported* in
-the summary rather than discarded -- roborak used to count those as failures and
-show them only in the terminal, which meant a reviewer reading the merge request
-never learned they existed.
+A finding that points at a changed line and is worth interrupting for goes inline on the
+diff, where the author is already looking. A nitpick is folded into the summary instead,
+so that the small stuff cannot drown the review. And one that cannot be anchored is
+*reported* in the summary rather than discarded -- roborak used to count those as
+failures and show them only in the terminal, which meant a reviewer reading the merge
+request never learned they existed.
 
 Bucketing lives here, above both ``render`` and ``publish``, because all four
 surfaces have to agree on it: what the terminal groups under a heading is what
