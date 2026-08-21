@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,23 @@ from roborak.cli.main import app
 from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
 
 runner = CliRunner()
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def flatten(output: str) -> str:
+    """Rich styles and wraps CLI output; assert against the flattened text.
+
+    Typer colours ``--help`` under GITHUB_ACTIONS and highlights the leading dash
+    of a switch separately, so a literal ``--base`` is never in the raw output.
+    """
+    return " ".join(_ANSI.sub("", output).split())
+
+
+def unwrapped(output: str) -> str:
+    """Rich hard-wraps at the terminal width, splitting long paths mid-token."""
+    return output.replace("\n", "")
 
 
 @pytest.fixture
@@ -31,27 +49,28 @@ def repo(tmp_path: Path, monkeypatch) -> Path:
 def test_help_lists_the_review_command():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == EXIT_OK
-    assert "review" in result.output
+    assert "review" in flatten(result.output)
 
 
 def test_review_help_documents_the_scope_flags():
     result = runner.invoke(app, ["review", "--help"])
     assert result.exit_code == EXIT_OK
+    help_text = flatten(result.output)
     for flag in ("--base", "--uncommitted", "--committed", "--no-llm", "--fail-on"):
-        assert flag in result.output
+        assert flag in help_text
 
 
 def test_no_llm_on_a_clean_tree_reports_nothing(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "No changes to review" in result.output
+    assert "No changes to review" in flatten(result.output)
 
 
 def test_no_llm_with_changes_exits_clean(repo: Path):
     (repo / "app.py").write_text("def f():\n    return 2\n")
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "No findings" in result.output
+    assert "No findings" in flatten(result.output)
 
 
 def test_not_a_repo_is_an_error(tmp_path: Path):
@@ -59,7 +78,7 @@ def test_not_a_repo_is_an_error(tmp_path: Path):
     plain.mkdir()
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(plain)])
     assert result.exit_code == EXIT_ERROR
-    assert "not a git repository" in result.output
+    assert "not a git repository" in flatten(result.output)
 
 
 def test_missing_credentials_is_reported_before_any_call(repo: Path, monkeypatch):
@@ -68,7 +87,7 @@ def test_missing_credentials_is_reported_before_any_call(repo: Path, monkeypatch
         app, ["review", "--uncommitted", "-C", str(repo), "-m", "anthropic/claude-sonnet-5"]
     )
     assert result.exit_code == EXIT_ERROR
-    assert "ANTHROPIC_API_KEY" in result.output
+    assert "ANTHROPIC_API_KEY" in flatten(result.output)
 
 
 def test_conflicting_scope_flags_are_rejected(repo: Path):
@@ -76,7 +95,7 @@ def test_conflicting_scope_flags_are_rejected(repo: Path):
         app, ["review", "--committed", "--uncommitted", "--no-llm", "-C", str(repo)]
     )
     assert result.exit_code == EXIT_ERROR
-    assert "mutually exclusive" in result.output
+    assert "mutually exclusive" in flatten(result.output)
 
 
 def test_bad_config_is_reported(repo: Path):
@@ -194,13 +213,13 @@ def test_markdown_report_is_written(repo: Path, tmp_path: Path):
 def test_mr_and_pr_are_mutually_exclusive(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--mr", "1", "--pr", "2"])
     assert result.exit_code == EXIT_ERROR
-    assert "mutually exclusive" in result.output
+    assert "mutually exclusive" in flatten(result.output)
 
 
 def test_post_without_a_forge_target_is_refused(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--post"])
     assert result.exit_code == EXIT_ERROR
-    assert "nowhere to post" in result.output
+    assert "nowhere to post" in flatten(result.output)
 
 
 def test_missing_forge_token_is_reported(repo: Path, monkeypatch):
@@ -208,16 +227,16 @@ def test_missing_forge_token_is_reported(repo: Path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--mr", "298"])
     assert result.exit_code == EXIT_ERROR
-    assert "GITLAB_TOKEN" in result.output
+    assert "GITLAB_TOKEN" in flatten(result.output)
     # The config file is the other way out, so the error has to mention it.
-    assert "forge.tokens.gitlab" in result.output
+    assert "forge.tokens.gitlab" in flatten(result.output)
 
 
 def test_config_show_reports_a_configured_forge_host(repo: Path):
     (repo / ".roborak.yaml").write_text("forge:\n  hosts:\n    gitlab: gitlab.acme.com\n")
     result = runner.invoke(app, ["config", "show", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "gitlab.acme.com" in result.output
+    assert "gitlab.acme.com" in flatten(result.output)
 
 
 def test_a_configured_host_names_the_forge_for_issue_lookup(repo: Path, monkeypatch):
@@ -230,21 +249,21 @@ def test_a_configured_host_names_the_forge_for_issue_lookup(repo: Path, monkeypa
     )
     unconfigured = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--issue", "24"])
     assert unconfigured.exit_code == EXIT_ERROR
-    assert "Could not tell which forge" in unconfigured.output
+    assert "Could not tell which forge" in flatten(unconfigured.output)
 
     (repo / ".roborak.yaml").write_text("forge:\n  hosts:\n    gitlab: git.corp.example\n")
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(repo), "--issue", "24"])
     # The domain is now recognisable, so the run gets as far as needing a token.
     assert result.exit_code == EXIT_ERROR
-    assert "needs a gitlab token" in result.output
+    assert "needs a gitlab token" in flatten(result.output)
 
 
 def test_config_show_redacts_a_forge_token(repo: Path):
     (repo / ".roborak.yaml").write_text("forge:\n  tokens:\n    gitlab: glpat-secret\n")
     result = runner.invoke(app, ["config", "show", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "glpat-secret" not in result.output
-    assert "gitlab" in result.output
+    assert "glpat-secret" not in flatten(result.output)
+    assert "gitlab" in flatten(result.output)
 
 
 def test_unparseable_mr_reference_is_reported(repo: Path, monkeypatch):
@@ -265,7 +284,7 @@ def test_every_command_has_help(command):
 def test_commands_are_registered():
     result = runner.invoke(app, ["--help"])
     for command in ("review", "describe", "improve", "ask"):
-        assert command in result.output
+        assert command in flatten(result.output)
 
 
 def test_ask_requires_a_question():
@@ -282,26 +301,26 @@ def test_rules_init_list_and_test_round_trip(repo: Path):
 
     listed = runner.invoke(app, ["rules", "list", "-C", str(repo)])
     assert listed.exit_code == EXIT_OK
-    assert "no-raw-sql" in listed.output
+    assert "no-raw-sql" in flatten(listed.output)
 
     rule_file = repo / ".roborak" / "rules" / "no-raw-sql.md"
     checked = runner.invoke(app, ["rules", "test", str(rule_file), "app/svc.py"])
     assert checked.exit_code == EXIT_OK
-    assert "parses cleanly" in checked.output
-    assert "applies to" in checked.output
+    assert "parses cleanly" in flatten(checked.output)
+    assert "applies to" in flatten(checked.output)
 
 
 def test_rules_init_refuses_to_overwrite(repo: Path):
     runner.invoke(app, ["rules", "init", "-C", str(repo)])
     second = runner.invoke(app, ["rules", "init", "-C", str(repo)])
     assert second.exit_code == EXIT_ERROR
-    assert "not overwriting" in second.output
+    assert "not overwriting" in flatten(second.output)
 
 
 def test_rules_list_with_no_rules(repo: Path):
     result = runner.invoke(app, ["rules", "list", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "No rules found" in result.output
+    assert "No rules found" in flatten(result.output)
 
 
 def test_rules_test_reports_a_broken_rule(repo: Path, tmp_path: Path):
@@ -318,7 +337,7 @@ def test_config_init_and_show(repo: Path):
 
     shown = runner.invoke(app, ["config", "show", "-C", str(repo)])
     assert shown.exit_code == EXIT_OK
-    assert "severity_floor" in shown.output
+    assert "severity_floor" in flatten(shown.output)
 
 
 def test_config_init_refuses_to_overwrite_without_force(repo: Path):
@@ -337,14 +356,14 @@ def test_config_init_refuses_to_overwrite_without_force(repo: Path):
 def test_issue_flag_is_offered_by_every_command(command):
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == EXIT_OK
-    assert "--issue" in result.output
+    assert "--issue" in flatten(result.output)
 
 
 @pytest.mark.parametrize("command", ["review", "describe", "improve", "ask"])
 def test_discussion_opt_out_is_offered_by_every_change_command(command):
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == EXIT_OK
-    assert "--no-discussions" in result.output
+    assert "--no-discussions" in flatten(result.output)
 
 
 def test_issue_without_a_recognisable_forge_fails_clearly(repo: Path, monkeypatch):
@@ -353,7 +372,7 @@ def test_issue_without_a_recognisable_forge_fails_clearly(repo: Path, monkeypatc
     monkeypatch.setattr("roborak.cli.shared.detect_provider", lambda *a, **k: None)
     result = runner.invoke(app, ["review", "--no-llm", "--issue", "42", "-C", str(repo)])
     assert result.exit_code == EXIT_ERROR
-    assert "full issue URL" in result.output
+    assert "full issue URL" in flatten(result.output)
 
 
 def test_issue_without_a_token_fails_before_any_fetch(repo: Path, monkeypatch):
@@ -370,7 +389,7 @@ def test_issue_without_a_token_fails_before_any_fetch(repo: Path, monkeypatch):
         ],
     )
     assert result.exit_code == EXIT_ERROR
-    assert "GITHUB_TOKEN" in result.output
+    assert "GITHUB_TOKEN" in flatten(result.output)
 
 
 def _stub_issue():
@@ -420,7 +439,7 @@ def test_a_linked_pull_request_becomes_the_review_target(repo: Path, monkeypatch
     )
     assert result.exit_code == EXIT_OK, result.output
     assert seen["number"] == 57
-    assert "pull request #57" in result.output
+    assert "pull request #57" in flatten(result.output)
 
 
 def test_no_linked_change_falls_back_to_the_local_diff(repo: Path, monkeypatch):
@@ -441,8 +460,8 @@ def test_no_linked_change_falls_back_to_the_local_diff(repo: Path, monkeypatch):
         ],
     )
     assert result.exit_code == EXIT_OK, result.output
-    assert "No findings" in result.output
-    assert "against #42" in result.output
+    assert "No findings" in flatten(result.output)
+    assert "against #42" in flatten(result.output)
 
 
 def test_a_stated_target_stops_the_issue_choosing_one(repo: Path, monkeypatch):
@@ -488,15 +507,10 @@ def test_post_with_an_unlinked_issue_is_refused(repo: Path, monkeypatch):
         ],
     )
     assert result.exit_code == EXIT_ERROR
-    assert "no linked change" in result.output
+    assert "no linked change" in flatten(result.output)
 
 
 # -- config init --global --------------------------------------------------
-
-
-def unwrapped(output: str) -> str:
-    """Rich hard-wraps at the terminal width, splitting long paths mid-token."""
-    return output.replace("\n", "")
 
 
 @pytest.fixture
@@ -583,8 +597,9 @@ def test_config_show_names_an_explicit_config_file(repo: Path, tmp_path: Path):
 def test_the_new_flags_are_documented():
     result = runner.invoke(app, ["review", "--help"])
     assert result.exit_code == EXIT_OK
+    help_text = flatten(result.output)
     for flag in ("--no-post", "--no-walkthrough"):
-        assert flag in result.output
+        assert flag in help_text
 
 
 def test_a_non_tty_is_never_prompted(repo: Path):
@@ -592,7 +607,7 @@ def test_a_non_tty_is_never_prompted(repo: Path):
     (repo / "app.py").write_text("def f():\n    return 2\n")
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)])
     assert result.exit_code == EXIT_OK
-    assert "Save this review" not in result.output
+    assert "Save this review" not in flatten(result.output)
 
 
 def _make_interactive(monkeypatch):
@@ -637,9 +652,9 @@ def test_a_local_review_offers_to_save_the_report(repo: Path, monkeypatch):
     )
 
     assert result.exit_code == EXIT_OK, result.output
-    assert "Save this review" in result.output
+    assert "Save this review" in flatten(result.output)
     # A local diff has nowhere to post, so posting is never offered.
-    assert "[p] post" not in result.output
+    assert "[p] post" not in flatten(result.output)
     assert out.is_file()
     assert "Returns the wrong value" in out.read_text()
 
@@ -653,7 +668,7 @@ def test_declining_the_save_writes_nothing(repo: Path, monkeypatch):
         app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)], input="n\n"
     )
     assert result.exit_code == EXIT_OK
-    assert "Save this review" in result.output
+    assert "Save this review" in flatten(result.output)
     assert not list(repo.glob("*.md"))
 
 
@@ -680,7 +695,7 @@ def test_a_clean_review_is_not_offered_at_all(repo: Path, monkeypatch):
         app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)], input="n\n"
     )
     assert result.exit_code == EXIT_OK
-    assert "Save this review" not in result.output
+    assert "Save this review" not in flatten(result.output)
 
 
 def test_no_post_suppresses_the_offer(repo: Path, monkeypatch):
@@ -691,7 +706,7 @@ def test_no_post_suppresses_the_offer(repo: Path, monkeypatch):
         app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--no-post"], input="n\n"
     )
     assert result.exit_code == EXIT_OK
-    assert "Save this review" not in result.output
+    assert "Save this review" not in flatten(result.output)
 
 
 def test_markdown_already_written_is_not_offered_again(repo: Path, monkeypatch):
@@ -706,7 +721,7 @@ def test_markdown_already_written_is_not_offered_again(repo: Path, monkeypatch):
     )
     assert result.exit_code == EXIT_OK
     assert out.is_file()
-    assert "Save this review" not in result.output
+    assert "Save this review" not in flatten(result.output)
 
 
 def test_json_mode_is_never_prompted(repo: Path, monkeypatch):
@@ -855,8 +870,8 @@ def test_the_prompt_previews_what_it_would_post(repo: Path, monkeypatch):
 
     assert result.exit_code == EXIT_OK, result.output
     assert "Post to gitlab.com acme/web !298?" in unwrapped(result.output)
-    assert "the report above, as a comment" in result.output
-    assert "1 inline comment(s)" in result.output
+    assert "the report above, as a comment" in flatten(result.output)
+    assert "1 inline comment(s)" in flatten(result.output)
     assert built == {"post_inline": True, "post_summary": True, "published": True}
 
 
@@ -882,8 +897,8 @@ def test_the_prompt_can_save_a_forge_review_instead_of_posting(repo: Path, monke
     )
 
     assert result.exit_code == EXIT_OK, result.output
-    assert "[p] post" in result.output
-    assert "[s] save as .md" in result.output
+    assert "[p] post" in flatten(result.output)
+    assert "[s] save as .md" in flatten(result.output)
     assert "published" not in built
     assert out.is_file()
     assert "SQL injection" in out.read_text()
@@ -921,7 +936,7 @@ def test_no_summary_posts_the_threads_without_the_report(repo: Path, monkeypatch
     )
 
     assert result.exit_code == EXIT_OK, result.output
-    assert "the report above, as a comment" not in result.output
+    assert "the report above, as a comment" not in flatten(result.output)
     assert built["post_inline"] is True
     assert built["post_summary"] is False
 
@@ -984,7 +999,7 @@ def test_every_bucket_reaches_the_reader(repo: Path, monkeypatch):
     assert "**Nowhere near the diff.**" in report
 
     # Only the anchorable one would also become an inline thread.
-    assert "1 inline comment(s)" in result.output
+    assert "1 inline comment(s)" in flatten(result.output)
 
 
 # -- the report is the output ----------------------------------------------
@@ -1062,6 +1077,6 @@ def test_panels_restores_the_rich_view(repo: Path, monkeypatch):
         app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--panels"]
     )
     assert result.exit_code == EXIT_OK, result.output
-    assert "<summary>" not in result.output, "the panels are not the report"
-    assert "Returns the wrong value" in result.output
-    assert "🎯 Functional Correctness" in result.output
+    assert "<summary>" not in flatten(result.output), "the panels are not the report"
+    assert "Returns the wrong value" in flatten(result.output)
+    assert "🎯 Functional Correctness" in flatten(result.output)
