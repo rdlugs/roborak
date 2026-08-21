@@ -86,6 +86,10 @@ def review(
         bool,
         typer.Option("--panels", help="Show rich panels with code context instead of the report."),
     ] = False,
+    full: Annotated[
+        bool,
+        typer.Option("--full", help="Add the agent prompts and review info the terminal hides."),
+    ] = False,
     no_llm: Annotated[
         bool,
         typer.Option("--no-llm", help="Static analysis only; makes no model calls."),
@@ -183,6 +187,8 @@ def review(
         config.output.confirm_post = False
     if panels:
         config.output.panels = True
+    if full:
+        config.output.full = True
 
     static_findings: list[Finding] = []
     if config.static.enabled and session.changeset.origin == "local":
@@ -235,6 +241,7 @@ def review(
         prompt_only_mode=prompt_only,
         markdown_path=markdown_out,
         panels=config.output.panels,
+        full=config.output.full,
     )
 
     if not post:

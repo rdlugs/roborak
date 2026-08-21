@@ -76,10 +76,12 @@ output:
   # At the end of an interactive review, offer to publish the result. Only ever
   # asked on a terminal -- a script or a CI job is never prompted.
   confirm_post: true
-  # Print rich panels instead of the markdown report. The panels show each
-  # finding's code in context, which the report cannot -- but the report is what
-  # gets published, so the panels are not what you are about to post.
+  # Print rich panels instead of the report -- one finding to a bordered panel.
+  # Neither is what gets published; the report is.
   panels: false
+  # Show what the terminal report leaves out: the agent prompt under each finding
+  # and the review-info tree. Both are written for a machine to read.
+  full: false
 
 ignore_paths:
   - "**/*.lock"

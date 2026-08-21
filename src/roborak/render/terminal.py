@@ -1,8 +1,10 @@
-"""The default human-facing output.
+"""The panel view, behind ``--panels``.
 
-Shaped after CodeRabbit's CLI report: findings grouped severity-first with the
-offending code in context and a committable fix underneath, then a one-line
-summary the reader can act on.
+Findings grouped severity-first, each in a bordered panel with the offending code
+in context and a committable fix underneath, then a one-line summary the reader
+can act on. The default terminal output is the report -- see
+``render.rich_report`` -- and this is the older, denser view kept beside it for
+the reader who wants one finding at a time.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from roborak.core.severity import (
     Kind,
     Severity,
 )
+from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 
 SEVERITY_ICON = {
@@ -36,8 +39,6 @@ SEVERITY_ICON = {
     Severity.MINOR: "•",
     Severity.INFO: "·",
 }
-
-CONTEXT_LINES = 3
 
 
 def render(result: ReviewResult, console: Console, repo: Path) -> None:
@@ -184,9 +185,10 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
 
     parts: list[RenderableType] = [heading, tail]
 
-    snippet = None if finding.kind is Kind.REQUIREMENT_GAP else _code_snippet(finding, repo)
-    if snippet is not None:
-        parts += [Text(""), snippet]
+    # A gap has no line to show; every other finding gets its code in context.
+    code = None if finding.kind is Kind.REQUIREMENT_GAP else snippet.for_finding(finding, repo)
+    if code is not None:
+        parts += [Text(""), code]
 
     parts += [Text(""), Text(finding.body.strip())]
 
@@ -213,30 +215,6 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
         subtitle_align="left",
         border_style=style,
         padding=(0, 1),
-    )
-
-
-def _code_snippet(finding: Finding, repo: Path) -> Syntax | None:
-    """Show the flagged lines in context, read from the working tree."""
-    path = repo / finding.file
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    start = max(1, finding.start_line - CONTEXT_LINES)
-    end = min(len(lines), finding.end_line + CONTEXT_LINES)
-    if start > len(lines):
-        return None
-
-    return Syntax(
-        "\n".join(lines[start - 1 : end]),
-        lexer_for(finding.file),
-        theme="ansi_dark",
-        line_numbers=True,
-        start_line=start,
-        highlight_lines=set(range(finding.start_line, finding.end_line + 1)),
-        word_wrap=False,
     )
 
 
@@ -271,3 +249,4 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
             f"{', '.join(result.skipped_files[:5])}"
             f"{' …' if len(result.skipped_files) > 5 else ''}[/]"
         )
+    console.print("[dim]🤖 reviewed by roborak[/]")

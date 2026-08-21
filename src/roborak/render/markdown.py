@@ -9,11 +9,21 @@ everything.
 The structure is GitHub-flavored markdown rather than plain: collapsible
 ``<details>`` sections are what keep a review with thirty nitpicks in it from
 burying the two findings that matter.
+
+``Form.TERMINAL`` is the same document for a reader who cannot fold a section.
+Nothing there can collapse, so the sections written for a machine -- the agent
+prompts, the review-info tree -- are left out instead of opened out, and a
+one-line footer carries what a reader would otherwise lose. ``full=True`` puts
+them back. Every finding, with its badges, its body and its fix, is in both
+forms: the terminal may show less *about* the run, never less of the review.
 """
 
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Iterable
+from enum import StrEnum
+from pathlib import Path
 
 from roborak.core.buckets import (
     BUCKET_PLAIN,
@@ -30,6 +40,7 @@ from roborak.core.severity import (
     Kind,
     Severity,
 )
+from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.prompt_only import (
     AGENT_PREAMBLE,
@@ -44,25 +55,67 @@ FINGERPRINT_V2_PREFIX = "roborak:v2"
 review carries a record of itself that does not depend on local state."""
 REVIEW_MARKER = "roborak:review"
 
+LOGO_URL = "https://raw.githubusercontent.com/rdlugs/roborak/main/assets/roborak_128.png"
+"""Where a published report finds the icon.
+
+Pinned to ``main`` rather than a tag, because a comment posted a year ago should
+still render. Absolute because the comment lives on a forge that has no idea where
+this repository's files are.
+"""
+
+
+class Form(StrEnum):
+    """Who the document is being rendered for."""
+
+    PUBLISHED = "published"
+    """``<details>`` HTML: ``--markdown``, ``--post``, and a redirected stdout."""
+
+    TERMINAL = "terminal"
+    """Headings, and only the sections a person reading a terminal wants."""
+
+
+CONTEXT_FENCE = "roborak-context"
+"""Info string of the fence carrying a finding's surrounding code.
+
+``roborak-context <snippet start> <flagged from> <flagged to> <path>``, with the
+raw lines as the body. ``render.rich_report`` expands it into a gutter-numbered,
+highlighted block. It is the one thing in a rendered document that is not
+meaningful markdown, which is only tolerable because ``Form.TERMINAL`` is never
+written to a file and never published -- see ``render()``.
+"""
+
+
 # Sections that are collapsed by default. Everything else is a banner or a table
 # the reader should not have to open.
 _COLLAPSED = (Bucket.ACTIONABLE, Bucket.REQUIREMENT_GAP, Bucket.NITPICK)
 
 
-def render(result: ReviewResult, *, collapsible: bool = True) -> str:
+def render(
+    result: ReviewResult,
+    *,
+    form: Form = Form.PUBLISHED,
+    repo: Path | None = None,
+    full: bool = False,
+) -> str:
     """The whole review, as one document.
 
-    There is deliberately no way to render a subset. This is what the terminal
-    shows, what ``--markdown`` writes and what ``--post`` publishes as the
-    comment, and the only way three surfaces cannot disagree about a review is
-    for there to be one rendering of it.
+    There is deliberately no way to render a subset of the *findings*. This is
+    what the terminal shows, what ``--markdown`` writes and what ``--post``
+    publishes as the comment, and the only way three surfaces cannot disagree
+    about a review is for there to be one rendering of it.
 
-    ``collapsible=False`` opens the ``<details>`` sections out into headings.
-    A terminal cannot fold a section, and ``rich.Markdown`` drops HTML silently
-    -- which would take every section heading with it and leave the reader bare
-    lists with no idea what they were. Same document, same order, same words;
-    only the way a section folds changes.
+    ``Form.TERMINAL`` opens the ``<details>`` sections out into headings, because
+    a terminal cannot fold one and ``rich.Markdown`` drops HTML silently -- which
+    would take every section heading with it and leave the reader bare lists with
+    no idea what they were. It also leaves out the sections written for a machine
+    rather than a reader, since opened out they bury the review; ``full=True``
+    restores them. ``repo`` lets each finding carry the lines it points at, read
+    from the working tree.
     """
+    collapsible = form is Form.PUBLISHED
+    # Everything a machine reads: published in full, folded away where a reader
+    # would have to scroll past it, and back on demand.
+    machine_sections = collapsible or full
     grouped = group(result)
 
     sections = [_header(result)]
@@ -84,15 +137,21 @@ def render(result: ReviewResult, *, collapsible: bool = True) -> str:
         # The banner first: a finding nobody can anchor is the one most easily
         # lost, so it is the one thing here that is not collapsed.
         if outside := grouped.get(Bucket.OUTSIDE_DIFF):
-            sections.append(_outside_diff_callout(outside, collapsible=collapsible))
+            sections.append(_bucket_section_with_callout(outside, form=form, repo=repo, full=full))
         for bucket in _COLLAPSED:
             if findings := grouped.get(bucket):
-                sections.append(_bucket_section(bucket, findings, collapsible=collapsible))
-        sections.append(_global_agent_prompt(grouped, collapsible=collapsible))
+                sections.append(_bucket_section(bucket, findings, form=form, repo=repo, full=full))
+        if machine_sections:
+            sections.append(_global_agent_prompt(grouped, collapsible=collapsible))
 
-    sections.append(f"<!-- {REVIEW_MARKER} -->")
+    if form is Form.PUBLISHED:
+        sections.append(f"<!-- {REVIEW_MARKER} -->")
     sections.append("---")
-    sections.append(_review_info(result, collapsible=collapsible))
+    if machine_sections:
+        sections.append(_review_info(result, collapsible=collapsible))
+    else:
+        sections.append(_terminal_footer(result, hid_sections=bool(grouped)))
+    sections.append(_signature(form=form))
 
     return "\n\n".join(section for section in sections if section) + "\n"
 
@@ -173,28 +232,32 @@ def _severity_table(grouped: dict[Bucket, list[Finding]]) -> str:
 # -- buckets ---------------------------------------------------------------
 
 
-def _outside_diff_callout(findings: list[Finding], *, collapsible: bool) -> str:
+def _bucket_section_with_callout(
+    findings: list[Finding], *, form: Form, repo: Path | None, full: bool
+) -> str:
     """The one section that opens itself, wrapped in a GitHub warning callout."""
-    inner = _bucket_section(Bucket.OUTSIDE_DIFF, findings, collapsible=collapsible)
+    inner = _bucket_section(Bucket.OUTSIDE_DIFF, findings, form=form, repo=repo, full=full)
     note = (
         "Some comments are outside the diff and can't be posted inline due to platform limitations."
     )
-    if not collapsible:
+    if form is Form.TERMINAL:
         # rich shows `[!CAUTION]` as literal text, and quoting a section this
         # long is a wall of bar. The heading already carries the warning badge.
         return f"> {note}\n\n{inner}"
     return _callout("CAUTION", f"{note}\n\n{inner}")
 
 
-def _bucket_section(bucket: Bucket, findings: list[Finding], *, collapsible: bool) -> str:
+def _bucket_section(
+    bucket: Bucket, findings: list[Finding], *, form: Form, repo: Path | None, full: bool
+) -> str:
     files = by_file(findings)
     blocks = [
         _details(
             f"{path} ({len(items)})",
-            _findings_block(items, collapsible=collapsible),
+            _findings_block(items, form=form, repo=repo, full=full),
             nested=True,
             level=3,
-            collapsible=collapsible,
+            collapsible=form is Form.PUBLISHED,
         )
         for path, items in files.items()
     ]
@@ -203,19 +266,24 @@ def _bucket_section(bucket: Bucket, findings: list[Finding], *, collapsible: boo
         "\n\n".join(blocks),
         nested=True,
         level=2,
-        collapsible=collapsible,
+        collapsible=form is Form.PUBLISHED,
     )
 
 
-def _findings_block(findings: list[Finding], *, collapsible: bool) -> str:
+def _findings_block(findings: list[Finding], *, form: Form, repo: Path | None, full: bool) -> str:
     """Findings within one file, rule-separated the way CodeRabbit separates them."""
     return "\n\n---\n\n".join(
-        finding_markdown(finding, collapsible=collapsible) for finding in findings
+        finding_markdown(finding, form=form, repo=repo, full=full) for finding in findings
     )
 
 
 def finding_markdown(
-    finding: Finding, *, suggestion_syntax: str = "suggestion", collapsible: bool = True
+    finding: Finding,
+    *,
+    suggestion_syntax: str = "suggestion",
+    form: Form = Form.PUBLISHED,
+    repo: Path | None = None,
+    full: bool = False,
 ) -> str:
     """One finding, as it appears in a report *and* as an inline review comment.
 
@@ -225,19 +293,13 @@ def finding_markdown(
     language the forge renders as a one-click apply -- GitLab wants a line-range
     spec appended, which the caller supplies.
     """
-    badges = " | ".join(
-        f"_{label}_"
-        for label in (
-            CATEGORY_LABEL[finding.category],
-            SEVERITY_LABEL[finding.severity],
-            EFFORT_LABEL[finding.effort],
-        )
-    )
-    # A requirement gap's line is nominal; printing a range would imply an anchor
-    # it does not have.
-    lead = badges if finding.kind is Kind.REQUIREMENT_GAP else f"`{_span(finding)}`: {badges}"
+    collapsible = form is Form.PUBLISHED
+    lines = [_lead(finding, form=form), "", f"**{finding.title.rstrip('.')}.**"]
 
-    lines = [lead, "", f"**{finding.title.rstrip('.')}.**", "", finding.body.strip()]
+    if context := _code_context(finding, repo, form=form):
+        lines += ["", context]
+
+    lines += ["", finding.body.strip()]
 
     if finding.suggestion:
         # A forge turns ```suggestion into a one-click apply. A terminal has no
@@ -246,25 +308,69 @@ def finding_markdown(
         fence = suggestion_syntax if collapsible else lexer_for(finding.file)
         lines += ["", f"```{fence}", finding.suggestion.rstrip(), "```"]
 
-    lines += [
-        "",
-        _details(
-            "🤖 Prompt for AI Agents",
-            _fenced(_agent_prompt(finding)),
-            level=4,
-            collapsible=collapsible,
-        ),
-    ]
-    lines += [
-        "",
-        f"<!-- {FINGERPRINT_PREFIX}:{finding.fingerprint} -->",
-        f"<!-- {FINGERPRINT_V2_PREFIX}:{finding.fingerprint_v2} -->",
-    ]
+    if collapsible or full:
+        lines += [
+            "",
+            _details(
+                "🤖 Prompt for AI Agents",
+                _fenced(_agent_prompt(finding)),
+                level=4,
+                collapsible=collapsible,
+            ),
+        ]
+    if collapsible:
+        # A published review carries a record of itself. A rendered one is never
+        # read back, and rich drops the markers anyway -- leaving three blank
+        # lines under every finding where the identity used to be.
+        lines += [
+            "",
+            f"<!-- {FINGERPRINT_PREFIX}:{finding.fingerprint} -->",
+            f"<!-- {FINGERPRINT_V2_PREFIX}:{finding.fingerprint_v2} -->",
+        ]
 
     if source := _source_note(finding):
         lines += ["", source]
 
     return "\n".join(lines)
+
+
+def _lead(finding: Finding, *, form: Form) -> str:
+    """The badge line: category, then severity, then what the fix will cost.
+
+    A requirement gap's line is nominal, so it names the file and no range --
+    printing one would imply an anchor it does not have.
+    """
+    labels = (
+        CATEGORY_LABEL[finding.category],
+        SEVERITY_LABEL[finding.severity],
+        EFFORT_LABEL[finding.effort],
+    )
+    where = finding.file if finding.kind is Kind.REQUIREMENT_GAP else finding.location
+
+    if form is Form.TERMINAL:
+        # A heading, so ``rich_report`` can colour the whole line by the severity
+        # it names, and the full ``path:line`` rather than a bare span: the file
+        # is three headings up the screen, and this is the form an editor opens.
+        return f"##### {' · '.join(labels)} · {where}"
+
+    badges = " | ".join(f"_{label}_" for label in labels)
+    return badges if finding.kind is Kind.REQUIREMENT_GAP else f"`{_span(finding)}`: {badges}"
+
+
+def _code_context(finding: Finding, repo: Path | None, *, form: Form) -> str:
+    """The lines the finding points at, for a reader who has them on disk.
+
+    Terminal only: a forge shows the diff beside the comment already, and a
+    published report that pasted the code back in would be repeating it.
+    """
+    if form is not Form.TERMINAL or repo is None or finding.kind is Kind.REQUIREMENT_GAP:
+        return ""
+    found = snippet.read(finding, repo)
+    if found is None:
+        return ""
+    code, start = found
+    info = f"{CONTEXT_FENCE} {start} {finding.start_line} {finding.end_line} {finding.file}"
+    return f"```{info}\n{code}\n```"
 
 
 def _span(finding: Finding) -> str:
@@ -394,6 +500,77 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
     if not blocks:
         return ""
     return _details("ℹ️ Review info", "\n\n".join(blocks), level=2, collapsible=collapsible)
+
+
+def _signature(*, form: Form) -> str:
+    """Who reviewed this.
+
+    The one thing in the document that names its author where a reader will see
+    it -- the fingerprint comments say the same thing, but only to a machine. It
+    is the last section either form emits, which also means a published review can
+    no longer end on a bare ``---`` when ``_review_info`` has nothing to say.
+
+    ``Form.PUBLISHED`` gets the icon. The terminal form says the same thing in the
+    characters it has: ``rich.Markdown`` drops HTML silently, and a terminal could
+    not show a PNG anyway.
+    """
+    if form is Form.PUBLISHED:
+        return (
+            f'<sub><img src="{LOGO_URL}" width="14" align="top"> Reviewed by <b>roborak</b></sub>'
+        )
+    return "_🤖 Reviewed by roborak_"
+
+
+def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
+    """What ``_review_info`` says, in the space a reader will actually read.
+
+    The run's own metadata compresses to one line. What the review could *not*
+    cover does not: an omitted file, a skipped file and an error are the three
+    things a reader must never lose to a section being folded away, so they are
+    the three things ``--full`` is not needed to see.
+    """
+    lines: list[str] = []
+
+    facts: list[str] = []
+    if result.changeset is not None:
+        facts.append(f"source {result.changeset.origin}")
+    if result.issue is not None:
+        facts.append(f"against {result.issue.reference}")
+    if facts:
+        lines.append(f"_{' · '.join(facts)}_")
+
+    if result.coverage:
+        lines.append(
+            f"**{len(result.coverage)} file(s) not fully reviewed:** "
+            + _listed(
+                f"`{item.path}` ({item.reason.value.replace('_', ' ')})" for item in result.coverage
+            )
+        )
+    elif result.skipped_files:
+        lines.append(
+            f"**{len(result.skipped_files)} file(s) skipped (context budget):** "
+            + _listed(f"`{path}`" for path in result.skipped_files)
+        )
+
+    if result.errors:
+        lines.append("**Errors:**\n" + "\n".join(f"* {error}" for error in result.errors))
+
+    if hid_sections:
+        lines.append("_`--full` adds the agent prompts and the review info._")
+
+    return "\n\n".join(lines)
+
+
+FOOTER_LIST_LIMIT = 5
+"""How many names the footer prints before it stops and counts the rest. The
+review-info tree lists them all; a footer that did would stop being a footer."""
+
+
+def _listed(names: Iterable[str]) -> str:
+    shown = list(names)
+    head = ", ".join(shown[:FOOTER_LIST_LIMIT])
+    rest = len(shown) - FOOTER_LIST_LIMIT
+    return f"{head} and {rest} more" if rest > 0 else head
 
 
 # -- markup helpers --------------------------------------------------------

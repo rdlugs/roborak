@@ -15,13 +15,12 @@ from typing import NoReturn
 
 import typer
 from rich.console import Console
-from rich.markdown import Markdown
 
 from roborak.core.config import Config, ForgeConfig, load_config
 from roborak.core.models import ChangeSet, Issue, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
 from roborak.llm.client import LLMClient, missing_credentials
-from roborak.render import json_out, markdown, prompt_only, terminal
+from roborak.render import json_out, markdown, prompt_only, rich_report, terminal
 from roborak.sources.base import SourceError
 from roborak.sources.forge import (
     Provider,
@@ -338,6 +337,7 @@ def emit(
     prompt_only_mode: bool = False,
     markdown_path: Path | None = None,
     panels: bool = False,
+    full: bool = False,
 ) -> None:
     """Write the result to whichever surfaces were asked for.
 
@@ -366,8 +366,9 @@ def emit(
         terminal.render(result, console, session.repo)
     elif stdout_is_a_terminal():
         # A person is reading: render it, with the collapsible sections opened
-        # out into headings so nothing is lost to rich dropping the HTML.
-        Console().print(Markdown(markdown.render(result, collapsible=False)))
+        # out into headings so nothing is lost to rich dropping the HTML, and
+        # the ones written for a machine left out rather than opened out.
+        rich_report.print_report(result, session.repo, full=full)
     else:
         # Being captured. Plain print, not console.print: rich would read
         # `[...]` as markup and hard-wrap the lines, and `roborak review >
