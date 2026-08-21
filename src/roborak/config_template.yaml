@@ -55,6 +55,8 @@ review:
   # With --issue, let the model report requirements the change does not implement,
   # as findings of kind `requirement_gap`. Ignored without --issue.
   check_requirements: true
+  # Include unresolved human MR/PR discussion as bounded, untrusted model context.
+  include_discussions: true
 
 static:
   enabled: true

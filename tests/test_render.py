@@ -18,6 +18,7 @@ from roborak.core.models import (
     Finding,
     Issue,
     LLMCallUsage,
+    ReviewComment,
     ReviewResult,
     Walkthrough,
 )
@@ -92,7 +93,10 @@ def make_result(*, walkthrough: bool = False) -> ReviewResult:
 
 
 def test_json_is_valid_and_sorted_by_severity():
-    payload = json.loads(json_out.render(make_result()))
+    result = make_result()
+    assert result.changeset is not None
+    result.changeset.discussions = [ReviewComment(author="sam", body="Private context")]
+    payload = json.loads(json_out.render(result))
     assert payload["schema_version"] == json_out.SCHEMA_VERSION
     assert payload["summary"] == {
         "total": 2,
@@ -103,6 +107,21 @@ def test_json_is_valid_and_sorted_by_severity():
     assert payload["model"] == "test/model"
     assert payload["skipped_files"] == ["generated/big.ts"]
     assert payload["changeset"]["head_ref"] == "feature"
+    assert "discussions" not in payload["changeset"]
+
+
+def test_json_keeps_model_usage_metadata():
+    result = make_result()
+    result.add_usage(
+        LLMCallUsage(purpose="review", model="test/model", prompt_tokens=10, completion_tokens=5)
+    )
+
+    payload = json.loads(json_out.render(result))
+
+    assert payload["model"] == "test/model"
+    assert payload["models_used"] == ["test/model"]
+    assert payload["tokens_used"] == 15
+    assert payload["usage"][0]["total_tokens"] == 15
 
 
 def test_json_findings_carry_provenance():
@@ -191,7 +210,8 @@ def test_markdown_structure():
     assert "| 🔴 Critical | 1 |" in text
     assert "**SQL injection.**" in text
     assert "```suggestion" in text
-    assert "test/model" in text
+    assert "test/model" not in text
+    assert "<!-- roborak:review -->" in text
 
 
 def test_markdown_buckets_findings_into_collapsible_sections():
@@ -262,9 +282,15 @@ def test_outside_diff_findings_get_a_caution_banner():
 
 
 def test_markdown_review_info():
-    text = markdown.render(make_result())
+    result = make_result()
+    result.add_usage(
+        LLMCallUsage(purpose="review", model="test/model", prompt_tokens=10, completion_tokens=5)
+    )
+    text = markdown.render(result)
     info = text[text.index("Review info") :]
-    assert "**Model**: `test/model`" in info
+    assert "**Model**" not in info
+    assert "Model usage" not in info
+    assert "test/model" not in info
     assert "📒 Files selected for processing (2)" in info
     assert "* `app/auth.py`" in info
     assert "🚧 Files skipped (context budget) (1)" in info
@@ -281,6 +307,17 @@ def test_markdown_walkthrough_and_diagram():
     assert "sequenceDiagram" in text
     assert "review effort 3/5" in text
     assert "`feature` `security`" in text
+
+
+def test_markdown_renders_a_general_mermaid_flow():
+    result = make_result(walkthrough=True)
+    assert result.walkthrough is not None
+    result.walkthrough.sequence_diagram = "flowchart TD\n  Boot --> Routes"
+
+    text = markdown.render(result)
+
+    assert "### Flow" in text
+    assert "```mermaid\nflowchart TD" in text
 
 
 def test_markdown_escapes_pipes_in_table_cells():
@@ -418,6 +455,7 @@ def test_terminal_header_says_what_was_reviewed():
     assert "Add session lookup" in text
     assert "feature → main" in text
     assert "2 file(s) changed" in text
+    assert "test/model" not in text
 
 
 def test_terminal_header_carries_the_walkthrough():

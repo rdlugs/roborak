@@ -12,7 +12,7 @@ from roborak.context.ast_context import symbol_context
 from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
 from roborak.core.config import Config
-from roborak.core.models import ChangedFile, ChangeSet, Finding, Issue
+from roborak.core.models import ChangedFile, ChangeSet, Finding, Issue, ReviewComment
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -108,6 +108,7 @@ def build_ask_prompt(
             title=_escape_untrusted(changeset.title),
             repo_context=_escape_untrusted(repo_context),
             issue=_safe_issue(issue),
+            discussions=_safe_discussions(changeset.discussions),
             files=_file_dicts(changeset),
         ),
     )
@@ -208,6 +209,7 @@ def _review_user(
         description=_escape_untrusted(changeset.description),
         repo_context=_escape_untrusted(repo_context),
         issue=_safe_issue(issue),
+        discussions=_safe_discussions(changeset.discussions),
         rules=[
             {key: _escape_untrusted(value) for key, value in rule.items()}
             if isinstance(rule, dict)
@@ -263,3 +265,16 @@ def _safe_issue(issue: Issue | None) -> Issue | None:
             "comments": [_escape_untrusted(comment) for comment in issue.comments],
         }
     )
+
+
+def _safe_discussions(comments: list[ReviewComment]) -> list[ReviewComment]:
+    return [
+        comment.model_copy(
+            update={
+                "author": _escape_untrusted(comment.author),
+                "body": _escape_untrusted(comment.body),
+                "path": _escape_untrusted(comment.path) or None,
+            }
+        )
+        for comment in comments
+    ]

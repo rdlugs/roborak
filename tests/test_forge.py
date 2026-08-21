@@ -634,7 +634,8 @@ def test_summary_markdown_carries_what_could_not_go_inline():
     body = summary_markdown(result)
     assert "| Severity | Count |" in body
     assert "Outside diff range comments (1)" in body
-    assert "**Model**: `test/model`" in body
+    assert "**Model**" not in body
+    assert "Model usage" not in body
 
 
 def test_summary_markdown_when_clean():

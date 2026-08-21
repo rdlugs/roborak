@@ -13,13 +13,15 @@ not what the diff contains: "sessions are now cached for 5 minutes" beats
 - Name real behavioural consequences: new endpoints, changed defaults, altered
   error handling, anything a caller would notice.
 
-# The sequence diagram
+# The flow diagram
 
-Include `sequence_diagram` ONLY when the change alters a flow between two or more
-components (service to service, request path, queue consumer, auth handshake) and
-a picture genuinely helps. Most changes do not qualify — omit it rather than
-drawing something trivial. When you do include one, use valid mermaid
-`sequenceDiagram` syntax and keep it under 12 lines.
+Include `flow_diagram` whenever the change alters a meaningful flow. This includes
+routing or dispatch order, middleware chains, request paths, service-to-service
+calls, queue consumers, authentication handshakes, and control flow whose ordering
+or branching matters to the reviewer. Use valid Mermaid syntax and keep it under
+12 lines. Choose `flowchart` for routing, ordering, and branching, or
+`sequenceDiagram` for interactions over time. Omit it only when the change has no
+meaningful flow to explain; do not draw a diagram for a simple isolated edit.
 
 # Output
 
@@ -33,8 +35,8 @@ labels: [<up to 4 of: feature, bugfix, refactor, performance, security, tests, d
 file_summaries:
   - path: <path exactly as given>
     summary: <one line, under 100 chars, what changed in this file>
-sequence_diagram: |
-  sequenceDiagram
+flow_diagram: |
+  flowchart TD
     ...
 ```
 

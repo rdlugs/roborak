@@ -22,6 +22,10 @@ def improve(
     ] = None,
     base: Annotated[str | None, typer.Option("--base", "-b", help="Base ref.")] = None,
     uncommitted: Annotated[bool, typer.Option("--uncommitted")] = False,
+    no_discussions: Annotated[
+        bool,
+        typer.Option("--no-discussions", help="Do not use existing MR/PR comments as context."),
+    ] = False,
     model: Annotated[str | None, typer.Option("--model", "-m")] = None,
     max_findings: Annotated[int | None, typer.Option("--max-findings")] = None,
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
@@ -47,6 +51,7 @@ def improve(
         issue=issue,
         base=base,
         uncommitted=uncommitted,
+        no_discussions=no_discussions,
         config_path=config_path,
         model=model,
         quiet_status=as_json or agent or prompt_only,

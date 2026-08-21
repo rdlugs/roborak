@@ -91,6 +91,7 @@ def start(
     committed: bool = False,
     uncommitted: bool = False,
     include_untracked: bool = False,
+    no_discussions: bool = False,
     config_path: Path | None = None,
     model: str | None = None,
     no_llm: bool = False,
@@ -177,6 +178,7 @@ def start(
             committed=committed,
             uncommitted=uncommitted,
             include_untracked=include_untracked,
+            include_discussions=config.review.include_discussions and not no_discussions,
             quiet=quiet_status,
         )
     except SourceError as exc:
@@ -306,6 +308,7 @@ def _load_changeset(
     committed: bool,
     uncommitted: bool,
     include_untracked: bool,
+    include_discussions: bool,
     quiet: bool,
 ) -> ChangeSet:
     if provider is not None:
@@ -314,6 +317,7 @@ def _load_changeset(
         source = GitLabSource if provider == "gitlab" else GitHubSource
         instance = source(target=target, token=token)
         instance.max_recovered_file_bytes = max_recovered_file_bytes
+        instance.include_discussions = include_discussions
         if quiet:
             return instance.load()
         with console.status(f"[dim]fetching {label}…[/]", spinner="dots"):

@@ -271,5 +271,3 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
             f"{', '.join(result.skipped_files[:5])}"
             f"{' …' if len(result.skipped_files) > 5 else ''}[/]"
         )
-    if result.model:
-        console.print(f"[dim]model: {result.model}[/]")

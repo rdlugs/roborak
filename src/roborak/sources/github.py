@@ -17,6 +17,7 @@ from urllib.parse import quote
 from roborak.context.diff import detect_language, parse_diff
 from roborak.core.models import ChangedFile, ChangeSet, ForgeRef, Hunk
 from roborak.sources.base import SourceError
+from roborak.sources.discussion import load_change_discussions
 from roborak.sources.forge import ForgeClient, Target
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class GitHubSource:
     target: Target
     token: str
     max_recovered_file_bytes: int = 1_048_576
+    include_discussions: bool = True
 
     def load(self) -> ChangeSet:
         base = f"/repos/{self.target.project}/pulls/{self.target.number}"
@@ -59,6 +61,11 @@ class GitHubSource:
                 for entry in entries
                 if isinstance(entry, dict)
             ]
+            discussions = (
+                load_change_discussions(client, self.target, head_sha=head_sha)
+                if self.include_discussions
+                else []
+            )
 
         return ChangeSet(
             files=files,
@@ -69,6 +76,7 @@ class GitHubSource:
             base_ref=(pull.get("base") or {}).get("ref"),
             head_ref=(pull.get("head") or {}).get("ref"),
             origin="github",
+            discussions=discussions,
             forge_ref=ForgeRef(
                 provider="github",
                 host=self.target.host,

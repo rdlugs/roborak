@@ -42,6 +42,7 @@ FINGERPRINT_V2_PREFIX = "roborak:v2"
 """Marks a rendered finding with its identity, the way CodeRabbit's
 ``cr-comment:v1`` marker does. Invisible to a reader, but it means a published
 review carries a record of itself that does not depend on local state."""
+REVIEW_MARKER = "roborak:review"
 
 # Sections that are collapsed by default. Everything else is a banner or a table
 # the reader should not have to open.
@@ -89,6 +90,7 @@ def render(result: ReviewResult, *, collapsible: bool = True) -> str:
                 sections.append(_bucket_section(bucket, findings, collapsible=collapsible))
         sections.append(_global_agent_prompt(grouped, collapsible=collapsible))
 
+    sections.append(f"<!-- {REVIEW_MARKER} -->")
     sections.append("---")
     sections.append(_review_info(result, collapsible=collapsible))
 
@@ -321,8 +323,6 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
     changeset = result.changeset
 
     config_lines: list[str] = []
-    if result.model:
-        config_lines.append(f"**Model**: `{result.model}`")
     if changeset is not None:
         config_lines.append(f"**Source**: {changeset.origin}")
     if result.issue is not None:
@@ -376,21 +376,6 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             _details(
                 f"🚧 Files skipped (context budget) ({len(result.skipped_files)})",
                 listed,
-                level=3,
-                collapsible=collapsible,
-            )
-        )
-
-    if result.usage:
-        models = ", ".join(result.models_used)
-        total_cost = sum(call.cost_usd or 0.0 for call in result.usage)
-        cost = f" · Cost: ${total_cost:.4f}" if total_cost else ""
-        blocks.append(
-            _details(
-                "📊 Model usage",
-                f"Status: **{result.status.value}**  \n"
-                f"Models: {models}  \n"
-                f"Calls: {len(result.usage)} · Tokens: {result.tokens_used}{cost}",
                 level=3,
                 collapsible=collapsible,
             )
