@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -95,7 +96,9 @@ class StaticRunner:
                 cwd=self.repo,
                 capture_output=True,
                 text=True,
-                env=_safe_environment(),
+                encoding="utf-8",
+                errors="replace",
+                env=_safe_environment("/tmp" if sandboxed else None),
                 timeout=self.config.timeout_seconds,
                 check=False,
             )
@@ -204,14 +207,20 @@ _SAFE_ENV = {
 }
 
 
-def _safe_environment() -> dict[str, str]:
-    """Static tools get runtime plumbing, never the caller's credentials."""
+def _safe_environment(tmpdir: str | None = None) -> dict[str, str]:
+    """Static tools get runtime plumbing, never the caller's credentials.
+
+    ``tmpdir`` is the scratch directory the tool is pointed at. It defaults to the
+    platform's own -- Windows has no ``/tmp`` -- but the sandbox passes ``/tmp``
+    explicitly, because that is what ``--tmpfs /tmp`` puts inside it.
+    """
+    scratch = tmpdir or tempfile.gettempdir()
     env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV}
     env.update(
         {
-            "HOME": "/tmp",
-            "TMPDIR": "/tmp",
-            "XDG_CACHE_HOME": "/tmp/roborak-static-cache",
+            "HOME": scratch,
+            "TMPDIR": scratch,
+            "XDG_CACHE_HOME": str(Path(scratch) / "roborak-static-cache"),
         }
     )
     return env

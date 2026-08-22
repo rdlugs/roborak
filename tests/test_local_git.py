@@ -51,7 +51,7 @@ def test_not_a_repo_raises(tmp_path: Path):
 
 def test_uncommitted_edit_is_picked_up(repo: Path):
     path = repo / "app" / "core.py"
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     lines.insert(10, "inserted = True")
     path.write_text("\n".join(lines) + "\n")
 
@@ -124,7 +124,7 @@ def test_line_numbers_match_the_working_tree(repo: Path):
     off-by-one in the parser cannot hide here.
     """
     path = repo / "app" / "core.py"
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     lines.insert(3, "early = 1")
     lines[20] = "changed_line = 'x'"
     del lines[30]
@@ -160,7 +160,7 @@ def test_line_numbers_match_the_working_tree(repo: Path):
 
 def test_added_lines_are_exactly_the_plus_lines(repo: Path):
     path = repo / "app" / "core.py"
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     lines.insert(5, "one = 1")
     lines.insert(20, "two = 2")
     path.write_text("\n".join(lines) + "\n")

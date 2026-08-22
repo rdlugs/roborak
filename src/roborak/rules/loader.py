@@ -75,6 +75,8 @@ def load_rules_at_ref(repo: Path, rules_dir: str, ref: str) -> list[Rule] | None
             cwd=repo,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -91,6 +93,8 @@ def load_rules_at_ref(repo: Path, rules_dir: str, ref: str) -> list[Rule] | None
                 cwd=repo,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )

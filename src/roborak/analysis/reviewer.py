@@ -429,6 +429,8 @@ def load_repo_context(repo: Path, base_ref: str | None = None) -> str:
                     cwd=repo,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=5,
                     check=False,
                 )

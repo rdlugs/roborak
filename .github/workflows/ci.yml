@@ -16,13 +16,16 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
-      # Report both interpreters; one failing tells you nothing about the other.
+      # Report every leg; one failing tells you nothing about the others.
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13"]
+        # Every interpreter we claim to support, on every OS we claim to run on.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14"]
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7

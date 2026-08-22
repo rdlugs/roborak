@@ -8,8 +8,10 @@ runner is additionally exercised against a real ruff install.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -260,6 +262,23 @@ def test_static_subprocess_environment_drops_credentials(monkeypatch):
     assert "AWS_SECRET_ACCESS_KEY" not in env
 
 
+def test_static_scratch_directory_follows_the_platform():
+    """Windows has no /tmp; a hardcoded one hands every linter a bad cache dir."""
+    env = _safe_environment()
+    scratch = tempfile.gettempdir()
+    assert env["HOME"] == scratch
+    assert env["TMPDIR"] == scratch
+    assert env["XDG_CACHE_HOME"] == str(Path(scratch) / "roborak-static-cache")
+
+
+def test_sandboxed_static_run_keeps_the_tmpfs_path():
+    """The sandbox mounts --tmpfs /tmp, so inside it /tmp is the only scratch there is."""
+    env = _safe_environment("/tmp")
+    assert env["HOME"] == "/tmp"
+    assert env["TMPDIR"] == "/tmp"
+    assert env["XDG_CACHE_HOME"] == str(Path("/tmp") / "roborak-static-cache")
+
+
 def test_auto_static_analysis_refuses_unsandboxed_ci(repo: Path, monkeypatch, caplog):
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("roborak.static.runner.shutil.which", lambda name: None)
@@ -372,3 +391,37 @@ def test_local_binary_is_preferred_over_a_global_one(repo: Path):
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
     assert EslintAdapter().find_binary(repo) == str(binary)
+
+
+def test_windows_discovery_probes_scripts_and_suffixes(monkeypatch, repo: Path):
+    """Virtualenvs put entry points in Scripts, reachable only through a suffix."""
+    monkeypatch.setattr("roborak.static.adapters.base._WINDOWS", True)
+    candidates = {str(path) for path in RuffAdapter().local_paths(repo)}
+    assert str(repo / ".venv" / "Scripts" / "ruff.exe") in candidates
+    assert str(repo / "node_modules" / ".bin" / "ruff.cmd") in candidates
+    assert str(repo / ".venv" / "bin" / "ruff") not in candidates
+
+
+def test_posix_discovery_is_unchanged(monkeypatch, repo: Path):
+    monkeypatch.setattr("roborak.static.adapters.base._WINDOWS", False)
+    assert RuffAdapter().local_paths(repo) == [
+        repo / "node_modules" / ".bin" / "ruff",
+        repo / "vendor" / "bin" / "ruff",
+        repo / ".venv" / "bin" / "ruff",
+    ]
+
+
+def test_find_binary_falls_back_to_path(monkeypatch, repo: Path):
+    """Nothing project-local: whatever is on PATH is still better than nothing."""
+    monkeypatch.setattr("roborak.static.adapters.base.shutil.which", lambda name: "/usr/bin/eslint")
+    assert EslintAdapter().find_binary(repo) == "/usr/bin/eslint"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows carries no executable bit")
+def test_a_non_executable_local_file_is_not_mistaken_for_the_tool(monkeypatch, repo: Path):
+    local = repo / "node_modules" / ".bin"
+    local.mkdir(parents=True)
+    (local / "eslint").write_text("not executable\n")
+    (local / "eslint").chmod(0o644)
+    monkeypatch.setattr("roborak.static.adapters.base.shutil.which", lambda name: None)
+    assert EslintAdapter().find_binary(repo) is None
