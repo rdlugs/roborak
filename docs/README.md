@@ -53,8 +53,12 @@ Cloudflare Pages, from this repository, on push to `main`:
 |---|---|
 | Root directory | `docs` |
 | Build command | `npm ci && npm run build` |
-| Output directory | `docs/dist` |
+| Output directory | `dist` |
 | Environment | `NODE_VERSION=20` |
+
+Both paths the build uses are relative to the root directory, not to the
+repository: with a root directory of `docs`, the output directory is `dist`, and
+`docs/dist` would be looked for at `docs/docs/dist`.
 
 `public/_headers` sets the CSP and cache headers, and `public/_redirects` rewrites
 every path to `index.html` so deep links reach the router instead of a 404. Pages
