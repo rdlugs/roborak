@@ -1,0 +1,97 @@
+# roborak configuration. Every key is optional; the values shown are the defaults.
+# Precedence: CLI flags > ROBORAK_* env vars > this file (when it is the project's
+# .roborak.yaml) > ~/.config/roborak/config.yaml > built-in defaults.
+version: 1
+
+llm:
+  model: anthropic/claude-sonnet-5
+  # Tried in order if the primary model fails.
+  fallback_models: []
+  temperature: 0.2
+  max_tokens: 8000
+  # Prompt token ceiling. Omit to derive it from the model's context window.
+  context_budget: null
+  # Per-provider API keys, overriding the provider's environment variable. These
+  # are real secrets: keep this file out of version control, or put them in
+  # ~/.config/roborak/config.yaml instead. `roborak config show` redacts them.
+  api_keys: {}
+  #   anthropic: sk-ant-...
+  #   openai: sk-...
+  # Endpoint override for every call: an OpenAI-compatible proxy, an Azure
+  # deployment, or a local Ollama. Setting it skips the missing-key check.
+  api_base: null
+
+forge:
+  # Per-provider tokens for --mr/--pr/--issue, overriding GITLAB_TOKEN and
+  # GITHUB_TOKEN. Real secrets, like llm.api_keys: keep this file out of version
+  # control, or put them in ~/.config/roborak/config.yaml instead.
+  # ROBORAK_GITLAB_TOKEN / ROBORAK_GITHUB_TOKEN still win over what is set here.
+  tokens: {}
+  #   gitlab: glpat-...
+  #   github: ghp_...
+  # Where each provider lives, for a self-hosted instance. Only used when the
+  # repository's git remote does not already answer that, so a domain set here
+  # never overrides a checkout whose remote points somewhere else. https is
+  # assumed; give a scheme only for a plain-http instance. URL paths are not
+  # supported -- pass a full URL to --mr/--pr for a one-off.
+  hosts: {}
+  #   gitlab: gitlab.acme.com
+  #   github: http://gh.local:8080
+  # Maximum forge-truncated file size to fetch when reconstructing a patch.
+  max_recovered_file_bytes: 1048576
+
+review:
+  categories: [security, bug, performance, logic]
+  # Findings below this are not reported.
+  severity_floor: minor
+  max_findings: 25
+  # Emit exact replacement code the reviewer can commit as-is.
+  committable_suggestions: true
+  # Drop findings the model was not reasonably sure about.
+  min_confidence: 0.5
+  # Allow findings on lines this change did not touch. Off by default: untouched
+  # code is not what the author asked about, and it is the main source of noise.
+  full_file: false
+  # With --issue, let the model report requirements the change does not implement,
+  # as findings of kind `requirement_gap`. Ignored without --issue.
+  check_requirements: true
+  # Include unresolved human MR/PR discussion as bounded, untrusted model context.
+  include_discussions: true
+
+static:
+  enabled: true
+  # auto runs directly for local work and sandboxed in CI; trusted explicitly
+  # allows direct CI execution; off disables static tools.
+  execution: auto
+  # null autodetects whatever is on PATH.
+  tools: null
+  timeout_seconds: 90
+  # Pass static findings to the model as evidence rather than reporting them raw.
+  feed_to_llm: true
+
+output:
+  # Spend a second model call on an overview of the change. It is what fills the
+  # summary comment `--post` publishes; turn it off to halve the cost of a run.
+  walkthrough: true
+  # At the end of an interactive review, offer to publish the result. Only ever
+  # asked on a terminal -- a script or a CI job is never prompted.
+  confirm_post: true
+  # Print rich panels instead of the report -- one finding to a bordered panel.
+  # Neither is what gets published; the report is.
+  panels: false
+  # Show what the terminal report leaves out: the agent prompt under each finding
+  # and the review-info tree. Both are written for a machine to read.
+  full: false
+
+ignore_paths:
+  - "**/*.lock"
+  - "**/*.min.js"
+  - "**/vendor/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+
+rules_dir: .roborak/rules
+
+# Extra prompt guidance per language, for stack-specific conventions.
+language_instructions: {}
+  # php: "Laravel 10 with the repository pattern; controllers stay thin."

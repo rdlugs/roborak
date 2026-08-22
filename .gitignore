@@ -1,0 +1,40 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# roborak: review state is per-machine; rules under .roborak/rules/ are not.
+.roborak/state.json
+.roborak/*.tmp
+
+# The working config is per-checkout; .roborak.yaml.example is the tracked one.
+.roborak.yaml
+.roborak.yml
+
+# Credentials. Forge tokens come from the environment; API keys may also sit in
+# .roborak.yaml, which is one more reason that file is ignored above.
+.env
+.env.*
+!.env.example
+
+# Test and type-check caches
+.coverage
+.coverage.*
+coverage.xml
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+eval-results.json
+evals/eval-results.json
+
+# Editor and OS cruft
+.idea/
+.vscode/
+.DS_Store

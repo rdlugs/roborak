@@ -1,0 +1,30 @@
+- {id: sql-injection, path: a.py, before: "q = 'ok'", after: "q = 'SELECT * FROM users WHERE id=' + user", expected_category: security, expected_line: 1}
+- {id: shell-injection, path: a.py, before: "pass", after: "os.system('ls ' + name)", expected_category: security, expected_line: 1}
+- {id: eval-input, path: a.py, before: "pass", after: "result = eval(request.body)", expected_category: security, expected_line: 1}
+- {id: path-traversal, path: a.py, before: "pass", after: "return open('/data/' + request.args['name']).read()", expected_category: security, expected_line: 1}
+- {id: missing-authz, path: a.py, before: "pass", after: "return db.users.get(request.args['id'])", expected_category: security, expected_line: 1}
+- {id: divide-zero, path: a.py, before: "return total", after: "return total / count", expected_category: bug, expected_line: 1}
+- {id: none-deref, path: a.py, before: "return user", after: "return find_user(id).name", expected_category: bug, expected_line: 1}
+- {id: wrong-comparison, path: a.py, before: "return age >= 18", after: "return age > 18", expected_category: logic, expected_line: 1}
+- {id: endless-loop, path: a.py, before: "return items", after: "while items:\n    process(items[0])", expected_category: bug, expected_line: 1}
+- {id: n-plus-one, path: a.py, before: "return users", after: "return [db.orders.for_user(u.id) for u in users]", expected_category: performance, expected_line: 1}
+- {id: quadratic-membership, path: a.py, before: "return items", after: "return [x for x in items if x in list(other)]", expected_category: performance, expected_line: 1}
+- {id: swallowed-error, path: a.py, before: "return save(x)", after: "try:\n    return save(x)\nexcept Exception:\n    return None", expected_category: bug, expected_line: 1}
+- {id: mutable-default, path: a.py, before: "def f(items): pass", after: "def f(items=[]):\n    items.append(1)", expected_category: bug, expected_line: 1}
+- {id: off-by-one, path: a.py, before: "return values[n - 1]", after: "return values[n]", expected_category: bug, expected_line: 1}
+- {id: missing-await, path: a.py, before: "return await fetch()", after: "return fetch()", expected_category: bug, expected_line: 1}
+- {id: clean-rename, path: a.py, before: "value = 1", after: "count = 1", expected_category: null, expected_line: null}
+- {id: clean-guard, path: a.py, before: "return user.name", after: "return user.name if user else None", expected_category: null, expected_line: null}
+- {id: clean-binding, path: a.py, before: "db.execute('x=' + x)", after: "db.execute('x=?', (x,))", expected_category: null, expected_line: null}
+- {id: clean-cache, path: a.py, before: "return load()", after: "return cache.get('x') or load()", expected_category: null, expected_line: null}
+- {id: clean-timeout, path: a.py, before: "http.get(url)", after: "http.get(url, timeout=5)", expected_category: null, expected_line: null}
+- {id: clean-constant, path: a.py, before: "limit = 5", after: "limit = 10", expected_category: null, expected_line: null}
+- {id: clean-log, path: a.py, before: "return result", after: "logger.info('done')\nreturn result", expected_category: null, expected_line: null}
+- {id: clean-type, path: a.py, before: "def f(x): return x", after: "def f(x: int) -> int: return x", expected_category: null, expected_line: null}
+- {id: clean-test, path: test_a.py, before: "assert f(1)", after: "assert f(1)\nassert not f(0)", expected_category: null, expected_line: null}
+- {id: clean-doc, path: README.md, before: "# App", after: "# App\n\nRun with uv.", expected_category: null, expected_line: null}
+- {id: clean-sort, path: a.py, before: "return values", after: "return sorted(values)", expected_category: null, expected_line: null}
+- {id: clean-copy, path: a.py, before: "return data", after: "return data.copy()", expected_category: null, expected_line: null}
+- {id: clean-context, path: a.py, before: "open(path).read()", after: "with open(path) as f:\n    return f.read()", expected_category: null, expected_line: null}
+- {id: clean-enum, path: a.py, before: "state = 'on'", after: "state = State.ON", expected_category: null, expected_line: null}
+- {id: clean-message, path: a.py, before: "raise ValueError()", after: "raise ValueError('invalid id')", expected_category: null, expected_line: null}
