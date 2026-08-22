@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 
 from roborak.analysis.reviewer import Reviewer
@@ -14,9 +16,9 @@ from roborak.cli import shared
 from roborak.cli.shared import fail
 from roborak.cli.shared import is_interactive as _is_interactive
 from roborak.core.buckets import Bucket, group
-from roborak.core.models import Finding, ReviewResult, ReviewStatus
+from roborak.core.models import Finding, ReviewResult, ReviewStatus, Walkthrough
 from roborak.core.severity import Severity
-from roborak.publish.base import PublishReport, remote_fingerprints
+from roborak.publish.base import PublishReport, RemoteState, SummaryRef, remote_state
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
 from roborak.render import markdown
@@ -212,12 +214,32 @@ def review(
     with console.status(f"[dim]{status}[/]", spinner="dots"):
         result = reviewer.review(session.changeset)
 
-    if config.output.walkthrough and session.llm is not None and not session.changeset.is_empty:
-        with console.status("[dim]writing the overview…[/]", spinner="dots"):
-            result.walkthrough = reviewer.walkthrough(session.changeset)
-        reviewer.apply_usage(result)
+    publishing = post and session.target is not None and session.token is not None
+    remote: RemoteState | None = None
+    if publishing:
+        assert session.target is not None and session.token is not None
+        remote = _remote_state(console, session.target, session.token, result, repost=repost)
+        if remote is None:
+            publishing = False
 
-    if post and session.target is not None and session.token is not None:
+    overview = _overview_plan(
+        session,
+        remote,
+        no_summary=no_summary,
+        repost=repost,
+        publishing=publishing,
+    )
+
+    if config.output.walkthrough and session.llm is not None and not session.changeset.is_empty:
+        if overview.generate:
+            with console.status("[dim]writing the overview…[/]", spinner="dots"):
+                result.walkthrough = reviewer.walkthrough(session.changeset)
+            reviewer.apply_usage(result)
+        else:
+            result.walkthrough = overview.cached
+
+    if publishing:
+        assert session.target is not None and session.token is not None and remote is not None
         _publish(
             console,
             session.repo,
@@ -225,8 +247,10 @@ def review(
             session.token,
             result,
             post_inline=True,
-            post_summary=not no_summary,
+            post_summary=overview.post_summary,
             repost=repost,
+            remote=remote,
+            overview=overview,
         )
 
     shared.emit(
@@ -263,6 +287,93 @@ def _seen_fingerprints(repo: Path, target: Target, *, repost: bool) -> frozenset
     return frozenset(store.get(key).fingerprints)
 
 
+@dataclass
+class _Overview:
+    """What to do about the change narrative on this run.
+
+    Regenerating it costs a model call and, until now, appended a second copy of
+    a summary the merge request already carried. When the shape of the change has
+    not moved, neither has the story, so both are avoidable.
+    """
+
+    generate: bool = True
+    post_summary: bool = False
+    ref: SummaryRef | None = None
+    refreshed: bool = False
+    cached: Walkthrough | None = None
+    kept: bool = False
+    """The published overview still holds and is being left exactly as it is."""
+
+
+def _remote_state(
+    console: Console,
+    target: Target,
+    token: str,
+    result: ReviewResult,
+    *,
+    repost: bool,
+) -> RemoteState | None:
+    """What the merge request already says, or ``None`` if we could not find out.
+
+    Not knowing is not the same as there being nothing: posting on top of an
+    unread thread duplicates every comment, so a failure here stops the publish.
+    """
+    if repost:
+        return RemoteState()
+    try:
+        return remote_state(target, token)
+    except SourceError as exc:
+        result.status = ReviewStatus.PARTIAL
+        result.errors.append(f"could not discover existing review comments: {exc}")
+        console.print(f"[bold red]could not post review[/] {exc}")
+        return None
+
+
+def _overview_plan(
+    session: shared.Session,
+    remote: RemoteState | None,
+    *,
+    no_summary: bool,
+    repost: bool,
+    publishing: bool,
+) -> _Overview:
+    """Decide whether this run has to narrate the change again."""
+    if not publishing or no_summary or remote is None:
+        return _Overview(generate=True, post_summary=publishing and not no_summary)
+
+    ref = remote.summary
+    if ref is None or repost:
+        return _Overview(generate=True, post_summary=True, ref=None if repost else ref)
+
+    digest = session.changeset.flow_digest
+    if not digest or ref.flow != digest:
+        return _Overview(generate=True, post_summary=True, ref=ref, refreshed=True)
+
+    cached = _cached_walkthrough(session)
+    return _Overview(
+        generate=False,
+        post_summary=cached is not None,
+        ref=ref,
+        cached=cached,
+        kept=cached is None,
+    )
+
+
+def _cached_walkthrough(session: shared.Session) -> Walkthrough | None:
+    """The overview an earlier run wrote here, if this machine still has it."""
+    assert session.target is not None
+    target = session.target
+    key = review_key(target.provider, target.host, target.project, target.number)
+    record = StateStore(session.repo).get(key)
+    if record.last_walkthrough is None or record.last_flow_digest != session.changeset.flow_digest:
+        return None
+    try:
+        return Walkthrough.model_validate(record.last_walkthrough)
+    except ValidationError:
+        log.debug("cached overview no longer matches the schema; regenerating on the next change")
+        return None
+
+
 def _publish(
     console: Console,
     repo: Path,
@@ -273,18 +384,16 @@ def _publish(
     post_inline: bool,
     post_summary: bool,
     repost: bool,
+    remote: RemoteState | None = None,
+    overview: _Overview | None = None,
 ) -> None:
     store = StateStore(repo)
     key = review_key(target.provider, target.host, target.project, target.number)
-    seen = _seen_fingerprints(repo, target, repost=repost)
-    if not repost:
-        try:
-            seen = frozenset({*seen, *remote_fingerprints(target, token)})
-        except SourceError as exc:
-            result.status = ReviewStatus.PARTIAL
-            result.errors.append(f"could not discover existing review comments: {exc}")
-            console.print(f"[bold red]could not post review[/] {exc}")
+    if remote is None:
+        remote = _remote_state(console, target, token, result, repost=repost)
+        if remote is None:
             return
+    seen = frozenset({*_seen_fingerprints(repo, target, repost=repost), *remote.fingerprints})
 
     publisher_cls = GitLabPublisher if target.provider == "gitlab" else GitHubPublisher
     publisher = publisher_cls(
@@ -293,6 +402,8 @@ def _publish(
         post_inline=post_inline,
         post_summary=post_summary,
         seen_fingerprints=seen,
+        summary_ref=overview.ref if overview else remote.summary,
+        summary_refreshed=bool(overview and overview.refreshed),
     )
 
     try:
@@ -304,14 +415,22 @@ def _publish(
         result.errors.append(f"could not post review: {exc}")
         return
 
-    store.record(key, report.posted, result.changeset.head_sha if result.changeset else "")
-    _report_publish(console, report)
+    store.record(
+        key,
+        report.posted,
+        result.changeset.head_sha if result.changeset else "",
+        flow_digest=result.changeset.flow_digest if result.changeset else "",
+        walkthrough=result.walkthrough.model_dump() if result.walkthrough else None,
+    )
+    _report_publish(console, report, kept_overview=bool(overview and overview.kept))
     if report.failed:
         result.status = ReviewStatus.PARTIAL
         result.errors.append(f"could not post {len(report.failed)} inline comment(s)")
 
 
-def _report_publish(console: Console, report: PublishReport) -> None:
+def _report_publish(
+    console: Console, report: PublishReport, *, kept_overview: bool = False
+) -> None:
     console.print()
     if report.posted:
         console.print(f"[green]posted[/] {len(report.posted)} inline comment(s)")
@@ -324,8 +443,12 @@ def _report_publish(console: Console, report: PublishReport) -> None:
         console.print(f"[yellow]could not post {len(report.failed)} comment(s):[/]")
         for finding, reason in report.failed[:5]:
             console.print(f"  [dim]{finding.location}: {reason}[/]")
-    if report.summary_posted:
+    if report.summary_updated:
+        console.print("[green]updated[/] the existing summary comment")
+    elif report.summary_posted:
         console.print("[green]posted[/] summary comment")
+    elif kept_overview:
+        console.print("[dim]overview unchanged; kept the existing summary comment[/]")
 
 
 DEFAULT_REPORT_NAME = "roborak-review.md"

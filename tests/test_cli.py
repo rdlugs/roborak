@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from roborak import __version__
 from roborak.cli.main import app
 from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
+from roborak.publish.base import RemoteState
 
 runner = CliRunner()
 
@@ -1049,7 +1050,7 @@ def _mr_session(monkeypatch):
 
     monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
     monkeypatch.setattr(
-        "roborak.cli.commands.review.remote_fingerprints", lambda target, token: frozenset()
+        "roborak.cli.commands.review.remote_state", lambda target, token: RemoteState()
     )
 
     class FakeSource:
@@ -1082,9 +1083,21 @@ def _mr_session(monkeypatch):
     built: dict[str, object] = {}
 
     class FakePublisher:
-        def __init__(self, *, target, token, post_inline, post_summary, seen_fingerprints):
+        def __init__(
+            self,
+            *,
+            target,
+            token,
+            post_inline,
+            post_summary,
+            seen_fingerprints,
+            summary_ref=None,
+            summary_refreshed=False,
+        ):
             built["post_inline"] = post_inline
             built["post_summary"] = post_summary
+            built["summary_ref"] = summary_ref
+            built["summary_refreshed"] = summary_refreshed
 
         def publish(self, result):
             from roborak.publish.base import PublishReport
@@ -1107,7 +1120,13 @@ def test_the_prompt_previews_what_it_would_post(repo: Path, monkeypatch):
     assert "Post to gitlab.com acme/web !298?" in unwrapped(result.output)
     assert "the report above, as a comment" in flatten(result.output)
     assert "1 inline comment(s)" in flatten(result.output)
-    assert built == {"post_inline": True, "post_summary": True, "published": True}
+    assert built == {
+        "post_inline": True,
+        "post_summary": True,
+        "published": True,
+        "summary_ref": None,
+        "summary_refreshed": False,
+    }
 
 
 def test_posting_sends_the_report_and_the_inline_threads(repo: Path, monkeypatch):
@@ -1159,7 +1178,13 @@ def test_post_skips_the_prompt_entirely(repo: Path, monkeypatch):
 
     assert result.exit_code == EXIT_OK, result.output
     assert "Post to gitlab.com" not in unwrapped(result.output)
-    assert built == {"post_inline": True, "post_summary": True, "published": True}
+    assert built == {
+        "post_inline": True,
+        "post_summary": True,
+        "published": True,
+        "summary_ref": None,
+        "summary_refreshed": False,
+    }
 
 
 def test_no_summary_posts_the_threads_without_the_report(repo: Path, monkeypatch):
@@ -1325,3 +1350,127 @@ def test_panels_restores_the_rich_view(repo: Path, monkeypatch):
     assert "<summary>" not in flatten(result.output), "the panels are not the report"
     assert "Returns the wrong value" in flatten(result.output)
     assert "🎯 Functional Correctness" in flatten(result.output)
+
+
+# --- deciding whether the overview has to be written again ----------------------
+
+
+def _overview_session(repo: Path):
+    """The three things the overview decision reads off a session."""
+    from types import SimpleNamespace
+
+    from roborak.context.diff import parse_diff
+    from roborak.core.models import ChangeSet
+    from roborak.sources.forge import Target
+
+    changeset = ChangeSet(files=parse_diff(MR_DIFF), origin="gitlab", head_sha="head333")
+    return SimpleNamespace(
+        changeset=changeset,
+        repo=repo,
+        target=Target("gitlab", "gitlab.com", "acme/web", 298),
+    )
+
+
+def _plan(session, remote, **kwargs):
+    from roborak.cli.commands.review import _overview_plan
+
+    options = {"no_summary": False, "repost": False, "publishing": True, **kwargs}
+    return _overview_plan(session, remote, **options)
+
+
+def test_a_first_post_writes_the_overview(repo: Path):
+    from roborak.publish.base import RemoteState
+
+    plan = _plan(_overview_session(repo), RemoteState())
+    assert plan.generate and plan.post_summary and plan.ref is None
+
+
+def test_an_unmoved_change_does_not_pay_for_a_second_overview(repo: Path):
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    session = _overview_session(repo)
+    remote = RemoteState(
+        summary=SummaryRef(edit_path="/notes/9", method="PUT", flow=session.changeset.flow_digest)
+    )
+    plan = _plan(session, remote)
+
+    assert not plan.generate
+    assert not plan.post_summary  # nothing cached locally, so the comment is left alone
+    assert plan.kept
+
+
+def test_an_unmoved_change_reuses_the_overview_this_machine_still_has(repo: Path):
+    from roborak.core.models import Walkthrough
+    from roborak.publish.base import RemoteState, SummaryRef
+    from roborak.state.store import StateStore, review_key
+
+    session = _overview_session(repo)
+    key = review_key("gitlab", "gitlab.com", "acme/web", 298)
+    StateStore(repo).record(
+        key,
+        [],
+        "head333",
+        flow_digest=session.changeset.flow_digest,
+        walkthrough=Walkthrough(overview="Looks up a session row.").model_dump(),
+    )
+
+    remote = RemoteState(
+        summary=SummaryRef(edit_path="/notes/9", method="PUT", flow=session.changeset.flow_digest)
+    )
+    plan = _plan(session, remote)
+
+    assert not plan.generate
+    assert plan.post_summary and not plan.kept
+    assert plan.cached is not None
+    assert plan.cached.overview == "Looks up a session row."
+
+
+def test_a_moved_change_is_narrated_again_over_the_old_comment(repo: Path):
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    remote = RemoteState(
+        summary=SummaryRef(edit_path="/notes/9", method="PUT", flow="0" * 16),
+    )
+    plan = _plan(_overview_session(repo), remote)
+
+    assert plan.generate and plan.refreshed
+    assert plan.ref is not None and plan.post_summary
+
+
+def test_an_overview_posted_before_the_marker_existed_is_refreshed_once(repo: Path):
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    remote = RemoteState(summary=SummaryRef(edit_path="/notes/9", method="PUT", flow=""))
+    plan = _plan(_overview_session(repo), remote)
+
+    assert plan.generate and plan.refreshed and plan.ref is not None
+
+
+def test_repost_forces_a_fresh_overview(repo: Path):
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    session = _overview_session(repo)
+    remote = RemoteState(
+        summary=SummaryRef(edit_path="/notes/9", method="PUT", flow=session.changeset.flow_digest)
+    )
+    plan = _plan(session, remote, repost=True)
+
+    assert plan.generate and plan.post_summary
+    assert plan.ref is None  # a fresh overview goes up beside the old one
+
+
+def test_no_summary_leaves_the_overview_pass_exactly_as_it_was(repo: Path):
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    session = _overview_session(repo)
+    remote = RemoteState(
+        summary=SummaryRef(edit_path="/notes/9", method="PUT", flow=session.changeset.flow_digest)
+    )
+    plan = _plan(session, remote, no_summary=True)
+
+    assert plan.generate and not plan.post_summary
+
+
+def test_a_local_review_has_no_published_overview_to_reuse(repo: Path):
+    plan = _plan(_overview_session(repo), None, publishing=False)
+    assert plan.generate and not plan.post_summary

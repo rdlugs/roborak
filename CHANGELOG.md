@@ -12,6 +12,20 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- **An overview is written once per shape of a change.** `review --post` used to
+  spend a model call narrating the change on every run and append the result as a
+  new summary comment, so a re-reviewed merge request collected near-identical
+  overviews and paid for each one. The published summary now carries a digest of
+  its changed files and hunk headers: if the diff in front of roborak has the same
+  shape, the model is not asked again and the existing comment is left alone. If
+  it has moved, the overview is rewritten and that comment is edited in place
+  rather than duplicated, with a line saying which commit it now describes.
+  `--repost` still forces a fresh overview, `--no-walkthrough` still skips the
+  pass entirely, and local reviews are unaffected.
+  A published overview is only reused when the forge attests to who wrote it: the
+  publishing account, or -- for a CI token that cannot name itself -- a bot
+  account. A comment in which someone pasted the markers by hand is ignored.
+
 - **`setup` asks with the arrow keys.** Where the config goes and which model to
   use are now lists you move through with ↑/↓ and Enter, instead of a number to
   type and a provider-prefixed string to remember. Every list ends with

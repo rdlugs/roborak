@@ -17,10 +17,11 @@ from roborak.core.buckets import can_anchor
 from roborak.core.models import ChangeSet, Finding, ForgeRef, ReviewResult
 from roborak.publish.base import (
     PublishReport,
+    SummaryRef,
     finding_markdown,
     inline_findings,
+    publish_summary,
     summarised_findings,
-    summary_markdown,
 )
 from roborak.sources.base import SourceError
 from roborak.sources.forge import ForgeClient, Target
@@ -35,6 +36,12 @@ class GitLabPublisher:
     post_inline: bool = True
     post_summary: bool = True
     seen_fingerprints: frozenset[str] = frozenset()
+    summary_ref: SummaryRef | None = None
+    """An overview an earlier run published, to edit rather than duplicate."""
+
+    summary_refreshed: bool = False
+    """Whether the overview being published is a new narration of a change that
+    has moved, which the edited comment says out loud."""
 
     def publish(self, result: ReviewResult) -> PublishReport:
         report = PublishReport()
@@ -51,8 +58,14 @@ class GitLabPublisher:
             report.summarised.extend(summarised_findings(result))
 
             if self.post_summary:
-                client.post(f"{base}/notes", {"body": summary_markdown(result)})
-                report.summary_posted = True
+                publish_summary(
+                    client,
+                    result,
+                    report,
+                    post_path=f"{base}/notes",
+                    ref=self.summary_ref,
+                    refreshed=self.summary_refreshed,
+                )
 
         return report
 

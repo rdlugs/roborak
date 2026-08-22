@@ -54,6 +54,9 @@ FINGERPRINT_V2_PREFIX = "roborak:v2"
 means a published review carries a record of itself that does not depend on
 local state."""
 REVIEW_MARKER = "roborak:review"
+FLOW_MARKER_PREFIX = "roborak:flow"
+"""Stamps the published summary with the shape of the change it narrates, so a
+later run can tell whether the overview still holds without asking the model."""
 
 LOGO_URL = "https://raw.githubusercontent.com/rdlugs/roborak/main/assets/roborak_128.png"
 """Where a published report finds the icon.
@@ -140,6 +143,8 @@ def render(
 
     if form is Form.PUBLISHED:
         sections.append(f"<!-- {REVIEW_MARKER} -->")
+        if result.changeset is not None and (flow := result.changeset.flow_digest):
+            sections.append(f"<!-- {FLOW_MARKER_PREFIX}:{flow} -->")
     sections.append("---")
     if machine_sections:
         sections.append(_review_info(result, collapsible=collapsible))
