@@ -92,8 +92,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # --check-url skips what PyPI already has, so a run that failed partway
+      # through the upload can simply be re-run.
       - name: Publish
-        run: uv publish --trusted-publishing always
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/
 
       - name: Create the GitHub Release
         env:
