@@ -173,9 +173,14 @@ def remote_state(target: Target, token: str) -> RemoteState:
     One pass for both. The payloads that carry the fingerprints are the same ones
     that carry the summary's id, and fetching them twice would double the cost of
     every ``--post`` run.
+
+    When more than one overview survives the ownership test, the newest one wins.
+    Traversal order is not recency: GitLab hands back notes newest-first, and the
+    GitHub sweep reads every review after every issue comment whatever their
+    timestamps say.
     """
     bodies: list[str] = []
-    candidates: list[SummaryRef] = []
+    candidates: list[tuple[datetime, int, SummaryRef]] = []
 
     with ForgeClient(target, token) as client:
         viewer = _viewer(client)
@@ -208,7 +213,7 @@ def remote_state(target: Target, token: str) -> RemoteState:
 
     return RemoteState(
         fingerprints=frozenset(identity for body in bodies for identity in fingerprints_in(body)),
-        summary=candidates[-1] if candidates else None,
+        summary=max(candidates, key=lambda found: found[:2])[2] if candidates else None,
     )
 
 
@@ -242,7 +247,8 @@ def _viewer(client: ForgeClient) -> str:
     Only a refusal counts as unanswerable. A timeout, a rate limit or a 5xx is
     the forge failing to answer a question it would have answered, and letting
     that weaken the ownership test would hand any bot account the markers on a
-    bad afternoon. Those propagate.
+    bad afternoon. Those propagate -- and so does an answer that came back but
+    carried no name, which is a broken forge, not a token that may not ask.
     """
     try:
         who = client.get("/user")
@@ -251,10 +257,28 @@ def _viewer(client: ForgeClient) -> str:
             raise
         log.debug("the publishing token may not name itself (%s); trusting the marker", exc)
         return ""
-    if not isinstance(who, dict):
-        return ""
     key = "username" if client.target.provider == "gitlab" else "login"
-    return str(who.get(key) or "")
+    name = str(who.get(key) or "") if isinstance(who, dict) else ""
+    if not name:
+        msg = "the forge answered /user without naming the publishing token"
+        raise SourceError(msg)
+    return name
+
+
+def _written_at(item: dict[str, Any]) -> datetime:
+    """When the forge says the comment appeared, or the epoch when it will not.
+
+    GitHub stamps a review with ``submitted_at`` and every other comment with
+    ``created_at``; GitLab notes carry ``created_at``. A payload that gives
+    neither sorts below anything that does, so it is chosen only when it is the
+    single candidate.
+    """
+    stamp = item.get("submitted_at") or item.get("created_at")
+    try:
+        when = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=UTC)
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _author(item: dict[str, Any]) -> str:
@@ -266,7 +290,7 @@ def _author(item: dict[str, Any]) -> str:
 
 
 def _offer(
-    candidates: list[SummaryRef],
+    candidates: list[tuple[datetime, int, SummaryRef]],
     item: dict[str, Any],
     edit_root: str,
     method: str,
@@ -296,9 +320,13 @@ def _offer(
         return
     found = _FLOW_RE.search(body)
     candidates.append(
-        SummaryRef(
-            edit_path=f"{edit_root}/{identifier}",
-            method=method,
-            flow=found.group(1) if found else "",
+        (
+            _written_at(item),
+            len(candidates),
+            SummaryRef(
+                edit_path=f"{edit_root}/{identifier}",
+                method=method,
+                flow=found.group(1) if found else "",
+            ),
         )
     )
