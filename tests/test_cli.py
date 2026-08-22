@@ -786,7 +786,7 @@ def test_setup_aborts_when_the_selector_is_cancelled(picker, monkeypatch, user_c
     assert not user_config.exists()
 
 
-def test_select_appends_the_escape_hatch_and_maps_cancel_to_abort(monkeypatch):
+def test_select_appends_the_escape_hatch_and_maps_both_exits_to_abort(monkeypatch):
     """The two things `_select` owns, tested without a terminal."""
     import questionary
 
@@ -799,6 +799,8 @@ def test_select_appends_the_escape_hatch_and_maps_cancel_to_abort(monkeypatch):
             self._answer = answer
 
         def ask(self):
+            if isinstance(self._answer, BaseException):
+                raise self._answer
             return self._answer
 
     def fake_select(label, choices, **kwargs):
@@ -814,7 +816,13 @@ def test_select_appends_the_escape_hatch_and_maps_cancel_to_abort(monkeypatch):
     seen["answer"] = OTHER
     assert _select("Where?", [questionary.Choice(title="~/x", value="user")]) == OTHER
 
+    # Ctrl-C: questionary swallows it and hands back None.
     seen["answer"] = None
+    with pytest.raises(Aborted):
+        _select("Where?", [questionary.Choice(title="~/x", value="user")])
+
+    # A stdin that ends: prompt_toolkit raises, and questionary does not catch it.
+    seen["answer"] = EOFError()
     with pytest.raises(Aborted):
         _select("Where?", [questionary.Choice(title="~/x", value="user")])
 

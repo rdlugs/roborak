@@ -70,12 +70,16 @@ def _select(label: str, choices: list[questionary.Choice]) -> str:
     """Ask one closed-set question with the arrow keys.
 
     Every list ends with an escape hatch, because a curated list must never be a
-    ceiling. ``questionary`` reports Ctrl-C and a closed stdin the same way --
-    ``ask()`` returns ``None`` -- which becomes the same ``Aborted`` the
-    line-based prompts raise, so the caller has one thing to catch.
+    ceiling. ``questionary`` reports the two ways out differently -- Ctrl-C comes
+    back as ``None``, a stdin that ends raises ``EOFError`` -- and both become the
+    same ``Aborted`` the line-based prompts raise, so the caller has one thing to
+    catch.
     """
     choices = [*choices, questionary.Choice(title="Other (type it in)…", value=OTHER)]
-    answer = questionary.select(label, choices=choices, qmark="?", style=SELECT_STYLE).ask()
+    try:
+        answer = questionary.select(label, choices=choices, qmark="?", style=SELECT_STYLE).ask()
+    except (EOFError, KeyboardInterrupt):
+        raise Aborted from None
     if answer is None:
         raise Aborted
     return str(answer)
