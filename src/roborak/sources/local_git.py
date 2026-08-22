@@ -163,13 +163,14 @@ def is_git_repo(path: Path) -> bool:
     Asked before a source is chosen: a directory that is not one is reviewed
     whole file by file rather than refused.
     """
-    return (
-        subprocess.run(
+    try:
+        result = subprocess.run(
             ("git", "rev-parse", "--git-dir"),
             cwd=path,
             capture_output=True,
             text=True,
             check=False,
-        ).returncode
-        == 0
-    )
+        )
+    except OSError:
+        return False
+    return result.returncode == 0

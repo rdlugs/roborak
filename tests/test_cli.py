@@ -93,6 +93,13 @@ def test_a_plain_directory_is_reviewed_file_by_file(tmp_path: Path):
     assert json.loads(result.stdout)["changeset"]["origin"] == "paths"
 
 
+def test_a_missing_directory_is_reported_as_a_source_error(tmp_path: Path):
+    missing = tmp_path / "missing"
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(missing)])
+    assert result.exit_code == EXIT_ERROR
+    assert "does not exist" in flatten(result.output)
+
+
 def test_a_git_repository_still_reviews_the_diff(repo: Path):
     """The fallback must not capture the case it was never meant to."""
     (repo / "app.py").write_text("def f():\n    return 2\n")

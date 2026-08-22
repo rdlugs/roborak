@@ -101,8 +101,14 @@ class PathsSource:
         Anything past ``max_files`` is recorded rather than dropped: a truncated
         review that says so is honest, one that does not is a lie about coverage.
         """
+
+        def raise_walk_error(error: OSError) -> None:
+            raise SourceError(f"Could not scan {error.filename or self.root}: {error}") from error
+
         found: list[str] = []
-        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
+        for dirpath, dirnames, filenames in os.walk(
+            self.root, followlinks=False, onerror=raise_walk_error
+        ):
             here = Path(dirpath)
             dirnames[:] = sorted(
                 name
@@ -133,6 +139,7 @@ class PathsSource:
             size = path.stat().st_size
         except OSError as exc:
             log.debug("skipping %s: %s", relative, exc)
+            changeset.omitted_files.append(relative)
             return None
 
         if size > self.max_file_bytes:
@@ -144,6 +151,7 @@ class PathsSource:
             raw = path.read_bytes()
         except OSError as exc:
             log.debug("skipping %s: %s", relative, exc)
+            changeset.omitted_files.append(relative)
             return None
 
         if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:

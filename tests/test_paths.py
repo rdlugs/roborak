@@ -93,6 +93,40 @@ def test_an_oversized_file_is_reported_as_omitted(tree: Path):
     assert "huge.py" in changeset.omitted_files
 
 
+def test_a_file_removed_after_the_walk_is_reported_as_omitted(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+):
+    source = PathsSource(root=tree)
+    eligible_paths = source._eligible_paths
+
+    def remove_file_after_walk(changeset):
+        paths = eligible_paths(changeset)
+        (tree / "README.md").unlink()
+        return paths
+
+    monkeypatch.setattr(source, "_eligible_paths", remove_file_after_walk)
+    changeset = source.load()
+
+    assert changeset.file_by_path("README.md") is None
+    assert "README.md" in changeset.omitted_files
+
+
+def test_a_file_read_failure_is_reported_as_omitted(tree: Path, monkeypatch: pytest.MonkeyPatch):
+    denied = tree / "README.md"
+    read_bytes = Path.read_bytes
+
+    def deny_read(path: Path):
+        if path == denied:
+            raise PermissionError("not permitted")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", deny_read)
+    changeset = PathsSource(root=tree).load()
+
+    assert changeset.file_by_path("README.md") is None
+    assert "README.md" in changeset.omitted_files
+
+
 def test_the_file_cap_omits_the_surplus_instead_of_hiding_it(tree: Path):
     for index in range(5):
         (tree / f"mod{index}.py").write_text("x = 1\n", encoding="utf-8")
@@ -128,6 +162,21 @@ def test_an_unreadable_directory_is_an_error(tmp_path: Path):
     try:
         with pytest.raises(SourceError, match="not readable"):
             PathsSource(root=locked).load()
+    finally:
+        locked.chmod(0o755)
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or os.geteuid() == 0,
+    reason="permission bits do not stop root, and mean something else on Windows",
+)
+def test_an_unreadable_nested_directory_is_an_error(tree: Path):
+    locked = tree / "locked"
+    locked.mkdir()
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(SourceError, match="Could not scan"):
+            PathsSource(root=tree).load()
     finally:
         locked.chmod(0o755)
 
