@@ -27,6 +27,7 @@ wheels/
 # Cloudflare Pages from source, so it is never committed.
 node_modules/
 docs/dist/
+docs/.vite/
 
 # Test and type-check caches
 .coverage
