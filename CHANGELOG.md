@@ -23,6 +23,30 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   `Website` job in CI type-checks the site, builds it, and checks the bundle
   carries its content.
 
+### Fixed
+
+- **`review --post` no longer falls silent on a clean review.** Reusing a
+  published overview depended on `.roborak/state.json`, which never leaves the
+  machine that wrote it. Any other checkout — a colleague's, or CI, which starts
+  empty every run — found no local copy and switched the summary off; a review
+  with no inline comments then had nothing left to post, and exited without a
+  comment, a success line or an error. With findings it was quieter but still
+  wrong: the inline threads went out while the summary kept the previous run's
+  verdict. The published comment now carries the overview it renders, so any
+  machine can read it back and the summary is always published. When no copy
+  can be recovered — a comment predating the marker, or a payload that no longer
+  parses — the overview is narrated again rather than edited off the comment
+  that still carries it.
+
+### Security
+
+- **A carried overview cannot inflate without bound.** The overview travels
+  compressed on a comment anyone with write access can edit, where a few
+  kilobytes could otherwise stand for far more once expanded. A marker past the
+  8 KiB the encoder already enforced is rejected before decoding, and the
+  decompressor stops at 1 MiB. A payload wanting more room reads as absent, like
+  any other unreadable marker.
+
 ## [0.3.0] - 2026-08-22
 
 ### Changed
