@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from roborak.context.diff import detect_language, parse_diff
-from roborak.core.models import ChangedFile, ChangeSet, Hunk
+from roborak.context.diff import detect_language, parse_diff, whole_file_hunk
+from roborak.core.models import ChangedFile, ChangeSet
 from roborak.sources.base import SourceError
 
 
@@ -85,7 +85,7 @@ class LocalGitSource:
                     change_type="added",
                     language=detect_language(rel),
                     new_content=content,
-                    hunks=_synthetic_hunk(content),
+                    hunks=whole_file_hunk(content),
                 )
             )
         return out
@@ -132,7 +132,7 @@ class LocalGitSource:
         return self._git_quiet("log", "-1", "--pretty=%s").strip() or None
 
     def _ensure_repo(self) -> None:
-        if self._run("git", "rev-parse", "--git-dir").returncode != 0:
+        if not is_git_repo(self.repo):
             raise SourceError(f"{self.repo} is not a git repository.")
 
     def _git(self, *args: str) -> str:
@@ -157,19 +157,19 @@ class LocalGitSource:
         )
 
 
-def _synthetic_hunk(content: str) -> list[Hunk]:
-    """Build the hunk an untracked file *would* have if git had diffed it."""
-    lines = content.splitlines()
-    if not lines:
-        return []
-    hunk = Hunk(
-        old_start=0,
-        old_lines=0,
-        new_start=1,
-        new_lines=len(lines),
-        content="\n".join(f"+{line}" for line in lines),
+def is_git_repo(path: Path) -> bool:
+    """Whether ``path`` sits inside a git working tree.
+
+    Asked before a source is chosen: a directory that is not one is reviewed
+    whole file by file rather than refused.
+    """
+    return (
+        subprocess.run(
+            ("git", "rev-parse", "--git-dir"),
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode
+        == 0
     )
-    for index, _ in enumerate(lines, start=1):
-        hunk.line_map[index] = index + 1
-        hunk.added_lines.add(index)
-    return [hunk]

@@ -34,7 +34,8 @@ from roborak.sources.forge import (
 from roborak.sources.github import GitHubSource
 from roborak.sources.gitlab import GitLabSource
 from roborak.sources.issue import load_issue, resolve_linked_change
-from roborak.sources.local_git import LocalGitSource, Scope
+from roborak.sources.local_git import LocalGitSource, Scope, is_git_repo
+from roborak.sources.paths import PathsSource
 
 log = logging.getLogger(__name__)
 
@@ -189,6 +190,7 @@ def start(
             uncommitted=uncommitted,
             include_untracked=include_untracked,
             include_discussions=config.review.include_discussions and not no_discussions,
+            ignore_paths=config.ignore_paths,
             quiet=quiet_status,
         )
     except SourceError as exc:
@@ -317,6 +319,7 @@ def _load_changeset(
     uncommitted: bool,
     include_untracked: bool,
     include_discussions: bool,
+    ignore_paths: list[str],
     quiet: bool,
 ) -> ChangeSet:
     if provider is not None:
@@ -331,10 +334,66 @@ def _load_changeset(
         with console.status(f"[dim]fetching {label}…[/]", spinner="dots"):
             return instance.load()
 
+    if not is_git_repo(repo):
+        return _load_paths(
+            console,
+            repo,
+            ignore_paths=ignore_paths,
+            base=base,
+            committed=committed,
+            uncommitted=uncommitted,
+            include_untracked=include_untracked,
+            quiet=quiet,
+        )
+
     scope = Scope.COMMITTED if committed else Scope.UNCOMMITTED if uncommitted else Scope.ALL
     return LocalGitSource(
         repo=repo, scope=scope, base=base, include_untracked=include_untracked
     ).load()
+
+
+GIT_ONLY_FLAGS = ("--base", "--committed", "--uncommitted", "--include-untracked")
+
+
+def _load_paths(
+    console: Console,
+    repo: Path,
+    *,
+    ignore_paths: list[str],
+    base: str | None,
+    committed: bool,
+    uncommitted: bool,
+    include_untracked: bool,
+    quiet: bool,
+) -> ChangeSet:
+    """Review a plain directory, whole file by file.
+
+    Reached only when there is no repository to diff. The flags that name a diff
+    have no meaning here, so they are refused rather than quietly reinterpreted:
+    a user who asked for their uncommitted work should not be handed every file
+    in the tree instead.
+    """
+    stated = [
+        flag
+        for flag, given in zip(
+            GIT_ONLY_FLAGS,
+            (base is not None, committed, uncommitted, include_untracked),
+            strict=True,
+        )
+        if given
+    ]
+    if stated:
+        raise SourceError(
+            f"{repo} is not a git repository, so {', '.join(stated)} has nothing to compare. "
+            "Drop it to review every file in the directory instead."
+        )
+
+    source = PathsSource(root=repo, ignore_paths=ignore_paths)
+    if quiet:
+        return source.load()
+    console.print(f"[dim]no git repository; reviewing every file under {repo}[/]")
+    with console.status("[dim]reading files…[/]", spinner="dots"):
+        return source.load()
 
 
 def emit(
