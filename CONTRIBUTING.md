@@ -126,7 +126,8 @@ catch.
 
 ## Pull requests
 
-1. Branch off `main`.
+1. Branch off `main`. Outside contributors work from a fork — direct branch
+   creation in this repository is restricted to admins.
 2. Keep the change focused; a refactor and a behaviour change in one PR are two
    reviews for whoever reads it.
 3. Commit messages: imperative mood, sentence case, no type prefix — e.g. `Add an
@@ -134,12 +135,21 @@ catch.
 4. Run the checks above, and update `README.md` when you change a flag, a config
    key, or an exit code.
 5. Open the PR against `main`. CI must be green on every leg — three operating
-   systems by three Python versions.
+   systems by three Python versions — and all nine are required checks, so a red
+   one blocks the merge. `main` takes no direct pushes and keeps a linear
+   history, so PRs land squashed or rebased.
 
 Dogfooding is encouraged: `uv run roborak review --base main` on your own branch
 before you ask anyone else to read it.
 
 ## Releasing
+
+**Releases are cut by the maintainer only.** Tag creation is restricted to repo
+admins by a ruleset, and PyPI trusts exactly one workflow in one repository to
+publish, so a tag pushed by anyone else neither creates a release nor reaches
+PyPI. Please do not bump `version` in a PR — it is the maintainer's step, and a
+version already published can never be reused. If you think a release is due,
+say so in an issue.
 
 Releases are cut from a tag and published to PyPI by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). There is no

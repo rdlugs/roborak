@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/roborak_256.png" alt="roborak" width="128" height="128">
+<img src="https://raw.githubusercontent.com/rdlugs/roborak/main/assets/roborak_256.png" alt="roborak" width="128" height="128">
 
 # roborak
 
@@ -10,13 +10,13 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 
 [![PyPI](https://img.shields.io/pypi/v/roborak?logo=pypi&logoColor=white)](https://pypi.org/project/roborak/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-434%20passing-2ea44f)](#development)
+[![CI](https://github.com/rdlugs/roborak/actions/workflows/ci.yml/badge.svg)](https://github.com/rdlugs/roborak/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![Providers](https://img.shields.io/badge/LLM-any%20LiteLLM%20model-8A2BE2)](https://docs.litellm.ai/docs/providers)
 [![Forges](https://img.shields.io/badge/forges-GitLab%20%7C%20GitHub-FC6D26?logo=gitlab&logoColor=white)](#tokens)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/rdlugs/roborak/blob/main/LICENSE.md)
 
-[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [Security](SECURITY.md) · [License](LICENSE.md)
+[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [Security](https://github.com/rdlugs/roborak/blob/main/SECURITY.md) · [License](https://github.com/rdlugs/roborak/blob/main/LICENSE.md)
 
 </div>
 
@@ -419,7 +419,7 @@ Three decisions carry most of the weight:
 ## Development
 
 ```bash
-uv run pytest              # 434 tests
+uv run pytest              # 502 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak
@@ -431,11 +431,11 @@ cases, writes token and quality metrics, and enforces the nightly recall,
 false-positive, anchoring, and parse-success gates.
 
 Conventions, invariants and the PR checklist are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](https://github.com/rdlugs/roborak/blob/main/CONTRIBUTING.md).
 
 ## License
 
-MIT — see [LICENSE.md](LICENSE.md).
+MIT — see [LICENSE.md](https://github.com/rdlugs/roborak/blob/main/LICENSE.md).
 
 <div align="center">
 <br>
