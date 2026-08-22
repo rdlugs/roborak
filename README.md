@@ -450,6 +450,12 @@ false-positive, anchoring, and parse-success gates.
 Conventions, invariants and the PR checklist are in
 [CONTRIBUTING.md](https://github.com/rdlugs/roborak/blob/main/CONTRIBUTING.md).
 
+## Documentation
+
+Full documentation lives at **[roborak.pages.dev](https://roborak.pages.dev)** —
+install, every command and flag, configuration reference, custom rules and CI
+recipes.
+
 ## License
 
 MIT — see [LICENSE.md](https://github.com/rdlugs/roborak/blob/main/LICENSE.md).
