@@ -27,6 +27,26 @@ export default function Quickstart() {
         ].join("\n")}
       />
 
+      <H3>A directory without git</H3>
+      <CodeBlock
+        shell
+        code={[
+          "roborak review -C /path/to/codebase      # every file, reviewed whole",
+          "roborak review -C /path/to/codebase/src  # or just one subtree",
+        ].join("\n")}
+      />
+      <P>
+        A directory that is not a git repository has no baseline to diff against, so roborak
+        reviews every eligible file whole instead of refusing. The walk never descends into
+        dependency, build-output, cache or VCS directories — <Code>node_modules</Code>,{" "}
+        <Code>vendor</Code>, <Code>dist</Code>, <Code>build</Code>, <Code>target</Code>,{" "}
+        <Code>__pycache__</Code>, <Code>.venv</Code>, <Code>.git</Code> and friends — and it
+        honours the configured <Code>ignore_paths</Code>. Binary files and anything over 512 KiB
+        are reported as omissions rather than reviewed, and static analysis still runs. The flags
+        that name a diff (<Code>--base</Code>, <Code>--committed</Code>, <Code>--uncommitted</Code>,{" "}
+        <Code>--include-untracked</Code>) have nothing to compare here and are refused.
+      </P>
+
       <H3>Turning halves of the pipeline off</H3>
       <CodeBlock
         shell

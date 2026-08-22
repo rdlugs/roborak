@@ -33,7 +33,14 @@ log = logging.getLogger(__name__)
 def review(
     repo: Annotated[
         Path | None,
-        typer.Option("--dir", "-C", help="Repository to review.", show_default="cwd"),
+        typer.Option(
+            "--dir",
+            "-C",
+            help=(
+                "Repository to review, or any directory: one without git is reviewed file by file."
+            ),
+            show_default="cwd",
+        ),
     ] = None,
     mr: Annotated[
         str | None,
@@ -192,7 +199,7 @@ def review(
         config.output.full = True
 
     static_findings: list[Finding] = []
-    if config.static.enabled and session.changeset.origin == "local":
+    if config.static.enabled and session.changeset.origin in {"local", "paths"}:
         with console.status("[dim]running static analysis…[/]", spinner="dots"):
             static_findings = StaticRunner(repo=session.repo, config=config.static).run(
                 session.changeset

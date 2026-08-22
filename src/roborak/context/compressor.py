@@ -61,7 +61,7 @@ def filter_files(changeset: ChangeSet, ignore_paths: list[str]) -> ChangeSet:
     for file in changeset.files:
         if file.is_binary:
             continue
-        if _matches_any(file.path, ignore_paths):
+        if matches_any(file.path, ignore_paths):
             log.debug("ignoring %s (matches ignore_paths)", file.path)
             continue
         if not file.hunks and file.new_content is None:
@@ -126,7 +126,8 @@ def _interest(file: ChangedFile) -> tuple[int, int]:
     return (_LANGUAGE_PRIORITY.get(file.language, 5), len(file.added_lines))
 
 
-def _matches_any(path: str, patterns: list[str]) -> bool:
+def matches_any(path: str, patterns: list[str]) -> bool:
+    """Whether a repo-relative path matches any ignore-style glob."""
     for pattern in patterns:
         if fnmatch.fnmatch(path, pattern):
             return True

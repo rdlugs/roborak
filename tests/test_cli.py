@@ -83,10 +83,35 @@ def test_no_llm_with_changes_exits_clean(repo: Path):
     assert "No findings" in flatten(result.output)
 
 
-def test_not_a_repo_is_an_error(tmp_path: Path):
+def test_a_plain_directory_is_reviewed_file_by_file(tmp_path: Path):
+    """The point of the fallback: no repository, no baseline, still a review."""
     plain = tmp_path / "plain"
     plain.mkdir()
-    result = runner.invoke(app, ["review", "--no-llm", "-C", str(plain)])
+    (plain / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(app, ["review", "--no-llm", "--json", "-C", str(plain)])
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout)["changeset"]["origin"] == "paths"
+
+
+def test_a_missing_directory_is_reported_as_a_source_error(tmp_path: Path):
+    missing = tmp_path / "missing"
+    result = runner.invoke(app, ["review", "--no-llm", "-C", str(missing)])
+    assert result.exit_code == EXIT_ERROR
+    assert "does not exist" in flatten(result.output)
+
+
+def test_a_git_repository_still_reviews_the_diff(repo: Path):
+    """The fallback must not capture the case it was never meant to."""
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(app, ["review", "--no-llm", "--json", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout)["changeset"]["origin"] == "local"
+
+
+def test_git_only_flags_are_refused_outside_a_repository(tmp_path: Path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(plain)])
     assert result.exit_code == EXIT_ERROR
     assert "not a git repository" in flatten(result.output)
 

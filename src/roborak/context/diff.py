@@ -277,3 +277,26 @@ def _trim_numbered(
         out.append(numbered[index])
         previous = index
     return out
+
+
+def whole_file_hunk(content: str) -> list[Hunk]:
+    """Build the hunk a whole file *would* have if git had diffed it as an addition.
+
+    Two callers need it: untracked files, which ``git diff`` never reports, and
+    path review, where there is no diff at all. Both want every line treated as
+    added, so the prompt renders the file and findings anchor anywhere in it.
+    """
+    lines = content.splitlines()
+    if not lines:
+        return []
+    hunk = Hunk(
+        old_start=0,
+        old_lines=0,
+        new_start=1,
+        new_lines=len(lines),
+        content="\n".join(f"+{line}" for line in lines),
+    )
+    for index, _ in enumerate(lines, start=1):
+        hunk.line_map[index] = index + 1
+        hunk.added_lines.add(index)
+    return [hunk]

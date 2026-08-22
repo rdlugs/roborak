@@ -107,6 +107,25 @@ uv run roborak review --panels              # one finding to a panel, not the re
 uv run roborak review > review.md           # piped: the raw markdown, chrome on stderr
 ```
 
+**Directories without git**
+
+Point `-C` at a directory that is not a git repository and roborak reviews every
+file in it whole, rather than refusing for want of a baseline — useful for
+extracted archives, generated trees, vendor handoffs and other version-control
+systems.
+
+```bash
+uv run roborak review -C /path/to/codebase   # every file, reviewed whole
+uv run roborak review -C /path/to/codebase/src   # or just one subtree
+```
+
+The walk never descends into dependency, build-output, cache or VCS directories
+(`node_modules`, `vendor`, `dist`, `build`, `target`, `__pycache__`, `.venv`,
+`.git` and friends), and it also honours the configured `ignore_paths`. Binary
+files and anything over 512 KiB are reported as omissions rather than reviewed.
+Static analysis still runs; the flags that name a diff (`--base`, `--committed`,
+`--uncommitted`, `--include-untracked`) do not apply and are refused.
+
 **Forges**
 
 ```bash

@@ -10,6 +10,24 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Added
+
+- **Reviewing a directory that is not a git repository.** `roborak review -C
+  <dir>` used to exit with `<dir> is not a git repository`, so an extracted
+  archive, a generated tree, a vendor handoff or a Mercurial checkout could only
+  be reviewed by running `git init` and fabricating a baseline first. There is no
+  baseline to diff against in those cases, so the new `PathsSource` reviews every
+  eligible file whole instead — the `paths` origin the IR has always declared.
+  The walk prunes dependency, build-output, cache and VCS directories before
+  descending into them and honours the configured `ignore_paths`; binary files,
+  files over 512 KiB and anything past the 2000-file cap are reported as
+  omissions rather than dropped in silence. Static analysis runs, since a
+  directory is checked out even without git metadata, and every output mode
+  (`--json`, `--agent`, `--prompt-only`, `--markdown`) works unchanged. The flags
+  that name a diff — `--base`, `--committed`, `--uncommitted`,
+  `--include-untracked` — have nothing to compare against there and are refused
+  rather than quietly reinterpreted.
+
 ## [0.3.1] - 2026-08-23
 
 ### Added

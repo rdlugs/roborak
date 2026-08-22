@@ -3,7 +3,7 @@ import type { FlagGroup } from "../components/cmd";
 const TARGETING: FlagGroup = {
   title: "What to review",
   flags: [
-    { name: "--dir, -C", arg: "path", help: "Repository to review. Defaults to the current directory." },
+    { name: "--dir, -C", arg: "path", help: "Repository to review, or any directory: one without git is reviewed file by file. Defaults to the current directory." },
     { name: "--mr", arg: "str", help: "GitLab merge request: an iid or a full URL." },
     { name: "--pr", arg: "str", help: "GitHub pull request: a number or a full URL." },
     { name: "--issue", arg: "str", help: "Issue this change should solve: a number or a URL." },
