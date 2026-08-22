@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from roborak.core.buckets import SUMMARY_BUCKETS, Bucket, group
-from roborak.core.models import Finding, ReviewResult
+from roborak.core.models import Finding, ReviewResult, Walkthrough
 from roborak.core.severity import Kind
 from roborak.render import markdown
 from roborak.sources.base import SourceError
@@ -134,6 +134,9 @@ def publish_summary(
 _MARKER_RE = re.compile(r"<!--\s*roborak:v[12]:([0-9a-f]{16})\s*-->")
 _SUMMARY_MARKER = f"<!-- {markdown.REVIEW_MARKER} -->"
 _FLOW_RE = re.compile(rf"<!--\s*{markdown.FLOW_MARKER_PREFIX}:([0-9a-f]{{16}})\s*-->")
+_WALKTHROUGH_RE = re.compile(
+    rf"<!--\s*{markdown.WALKTHROUGH_MARKER_PREFIX}:([A-Za-z0-9+/=]+)\s*-->"
+)
 
 
 def fingerprints_in(text: str) -> set[str]:
@@ -157,6 +160,13 @@ class SummaryRef:
     """The change shape the published overview narrates, empty if it predates
     the marker. An empty digest never matches, so such a comment is refreshed
     once and carries a digest from then on."""
+
+    walkthrough: Walkthrough | None = None
+    """The overview this comment renders, read back from the comment itself.
+
+    The local state directory holds the same thing, but only on the machine
+    that published it. This copy is what lets any other machine -- or CI, which
+    never has that directory -- reuse the narrative instead of dropping it."""
 
 
 @dataclass(frozen=True)
@@ -319,6 +329,7 @@ def _offer(
     elif not is_bot(item.get("user") or item.get("author"), provider=provider):
         return
     found = _FLOW_RE.search(body)
+    carried = _WALKTHROUGH_RE.search(body)
     candidates.append(
         (
             _written_at(item),
@@ -327,6 +338,7 @@ def _offer(
                 edit_path=f"{edit_root}/{identifier}",
                 method=method,
                 flow=found.group(1) if found else "",
+                walkthrough=markdown.decode_walkthrough(carried.group(1)) if carried else None,
             ),
         )
     )

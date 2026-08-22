@@ -887,6 +887,161 @@ def test_remote_state_finds_the_summary_review_on_github(monkeypatch):
     assert state.summary.edit_path == "/repos/acme/web/pulls/42/reviews/55"
 
 
+def test_a_published_overview_survives_the_round_trip_through_its_comment():
+    """The marker is the whole point: it is what a second machine reads."""
+    from roborak.core.models import FileSummary, Walkthrough
+    from roborak.render.markdown import decode_walkthrough, encode_walkthrough
+
+    walkthrough = Walkthrough(
+        title="Publish empty reviews",
+        overview="Sends the summary through even when nothing was found.",
+        file_summaries=[FileSummary(path="app/auth.py", summary="Guards the session lookup.")],
+        sequence_diagram="flowchart TD\n  A --> B",
+        labels=["bugfix"],
+        estimated_effort=3,
+    )
+
+    recovered = decode_walkthrough(encode_walkthrough(walkthrough))
+
+    assert recovered == walkthrough
+
+
+def test_an_overview_marker_never_closes_the_comment_it_rides_in():
+    """A raw JSON overview could contain ``-->`` and end the marker early."""
+    from roborak.core.models import Walkthrough
+    from roborak.render.markdown import encode_walkthrough
+
+    token = encode_walkthrough(Walkthrough(overview="a --> b, and <!-- not a marker -->"))
+
+    assert "-->" not in token and "<!--" not in token
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "not base64!", "bm90IGpzb24=", "eyJ0aXRsZSI6IFtdfQ=="],
+    ids=["absent", "unreadable", "not-json", "wrong-schema"],
+)
+def test_an_unreadable_overview_marker_reads_as_no_overview(token):
+    """Anything we cannot trust is re-narrated rather than published wrong."""
+    from roborak.render.markdown import decode_walkthrough
+
+    assert decode_walkthrough(token) is None
+
+
+def test_an_overview_too_large_to_ride_along_is_left_behind():
+    """The comment has a size limit; the copy gives way before the review does."""
+    import secrets
+
+    from roborak.core.models import Walkthrough
+    from roborak.render.markdown import MAX_WALKTHROUGH_MARKER, encode_walkthrough
+
+    incompressible = Walkthrough(overview=secrets.token_hex(MAX_WALKTHROUGH_MARKER))
+
+    assert encode_walkthrough(incompressible) == "", "dropped rather than truncated"
+
+
+def test_a_zip_bomb_in_the_marker_never_gets_room_to_expand():
+    """The token comes off a comment anyone can edit, so the decoder bounds it."""
+    import base64
+    import zlib
+
+    from roborak.render.markdown import MAX_WALKTHROUGH_PAYLOAD, decode_walkthrough
+
+    bomb = base64.b64encode(zlib.compress(b"\0" * (MAX_WALKTHROUGH_PAYLOAD * 4), 9)).decode()
+
+    assert len(bomb) < 8192, "a few kilobytes standing for many megabytes"
+    assert decode_walkthrough(bomb) is None
+
+
+def test_an_oversized_marker_is_rejected_before_it_is_decoded():
+    """Nothing honest reaches the encoder's ceiling, so nothing past it is read."""
+    from roborak.render.markdown import MAX_WALKTHROUGH_MARKER, decode_walkthrough
+
+    assert decode_walkthrough("A" * (MAX_WALKTHROUGH_MARKER + 4)) is None
+
+
+def test_a_realistic_overview_is_a_small_fraction_of_the_comment_budget():
+    """Prose deflates well, so carrying it costs the review almost nothing."""
+    from roborak.core.models import FileSummary, Walkthrough
+    from roborak.render.markdown import MAX_WALKTHROUGH_MARKER, encode_walkthrough
+
+    big = Walkthrough(
+        title="A pull request touching a great many files",
+        overview="word " * 200,
+        file_summaries=[
+            FileSummary(path=f"src/pkg/module_{i}/file_{i}.py", summary="sentence " * 15)
+            for i in range(40)
+        ],
+        sequence_diagram="flowchart TD\n" + "\n".join(f"  N{i} --> N{i + 1}" for i in range(60)),
+        labels=["bugfix", "tests"],
+        estimated_effort=5,
+    )
+
+    assert 0 < len(encode_walkthrough(big)) < MAX_WALKTHROUGH_MARKER // 4
+
+
+def test_remote_state_reads_the_overview_back_off_the_published_review(monkeypatch):
+    """What #23 came down to: this is the copy CI can actually reach."""
+    from roborak.core.models import Walkthrough
+    from roborak.publish.base import remote_state
+
+    target = Target("github", "github.com", "acme/web", 42)
+    result = make_result()
+    result.walkthrough = Walkthrough(overview="Looks up a session row.")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(403, text="job tokens may not")
+        if request.url.path.endswith("/pulls/42/reviews"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 55,
+                        "body": summary_body(result),
+                        "user": {"login": "roborak-bot", "type": "Bot"},
+                    }
+                ],
+            )
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    summary = remote_state(target, "tok").summary
+
+    assert summary is not None and summary.walkthrough is not None
+    assert summary.walkthrough.overview == "Looks up a session row."
+
+
+def test_a_review_published_without_an_overview_carries_no_marker(monkeypatch):
+    """--no-llm never had an overview; it must not claim an empty one."""
+    from roborak.publish.base import remote_state
+
+    target = Target("github", "github.com", "acme/web", 42)
+    result = make_result()
+    result.walkthrough = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(403, text="job tokens may not")
+        if request.url.path.endswith("/pulls/42/reviews"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 55,
+                        "body": summary_body(result),
+                        "user": {"login": "roborak-bot", "type": "Bot"},
+                    }
+                ],
+            )
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    summary = remote_state(target, "tok").summary
+
+    assert summary is not None and summary.walkthrough is None
+
+
 def test_remote_state_finds_the_summary_as_a_github_issue_comment(monkeypatch):
     from roborak.publish.base import remote_state
 

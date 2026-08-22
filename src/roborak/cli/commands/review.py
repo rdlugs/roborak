@@ -301,8 +301,6 @@ class _Overview:
     ref: SummaryRef | None = None
     refreshed: bool = False
     cached: Walkthrough | None = None
-    kept: bool = False
-    """The published overview still holds and is being left exactly as it is."""
 
 
 def _remote_state(
@@ -349,18 +347,26 @@ def _overview_plan(
     if not digest or ref.flow != digest:
         return _Overview(generate=True, post_summary=True, ref=ref, refreshed=True)
 
-    cached = _cached_walkthrough(session)
+    cached = _cached_walkthrough(session) or ref.walkthrough
+    # Nothing to reuse means nothing to render the overview from, and a summary
+    # published without one would edit the narrative off the comment that still
+    # carries it. Re-narrating costs a model call; dropping the overview costs
+    # the reader the review. This is reached only by a comment published before
+    # the overview travelled with it, or one whose copy no longer parses.
     return _Overview(
-        generate=False,
-        post_summary=cached is not None,
+        generate=cached is None,
+        post_summary=True,
         ref=ref,
         cached=cached,
-        kept=cached is None,
     )
 
 
 def _cached_walkthrough(session: shared.Session) -> Walkthrough | None:
-    """The overview an earlier run wrote here, if this machine still has it."""
+    """The overview an earlier run wrote here, if this machine still has it.
+
+    Only ever a fast path. The published comment carries the same overview, so a
+    miss here is recoverable and never a reason to publish less of a review.
+    """
     assert session.target is not None
     target = session.target
     key = review_key(target.provider, target.host, target.project, target.number)
@@ -422,15 +428,13 @@ def _publish(
         flow_digest=result.changeset.flow_digest if result.changeset else "",
         walkthrough=result.walkthrough.model_dump() if result.walkthrough else None,
     )
-    _report_publish(console, report, kept_overview=bool(overview and overview.kept))
+    _report_publish(console, report)
     if report.failed:
         result.status = ReviewStatus.PARTIAL
         result.errors.append(f"could not post {len(report.failed)} inline comment(s)")
 
 
-def _report_publish(
-    console: Console, report: PublishReport, *, kept_overview: bool = False
-) -> None:
+def _report_publish(console: Console, report: PublishReport) -> None:
     console.print()
     if report.posted:
         console.print(f"[green]posted[/] {len(report.posted)} inline comment(s)")
@@ -447,8 +451,6 @@ def _report_publish(
         console.print("[green]updated[/] the existing summary comment")
     elif report.summary_posted:
         console.print("[green]posted[/] summary comment")
-    elif kept_overview:
-        console.print("[dim]overview unchanged; kept the existing summary comment[/]")
 
 
 DEFAULT_REPORT_NAME = "roborak-review.md"

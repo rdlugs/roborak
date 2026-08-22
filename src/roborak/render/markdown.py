@@ -20,10 +20,14 @@ forms: the terminal may show less *about* the run, never less of the review.
 
 from __future__ import annotations
 
+import base64
 import textwrap
+import zlib
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from roborak.core.buckets import (
     BUCKET_PLAIN,
@@ -32,7 +36,7 @@ from roborak.core.buckets import (
     by_file,
     group,
 )
-from roborak.core.models import Finding, ReviewResult
+from roborak.core.models import Finding, ReviewResult, Walkthrough
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
@@ -55,6 +59,16 @@ means a published review carries a record of itself that does not depend on
 local state."""
 REVIEW_MARKER = "roborak:review"
 FLOW_MARKER_PREFIX = "roborak:flow"
+WALKTHROUGH_MARKER_PREFIX = "roborak:walkthrough"
+"""Carries the structured overview along with the comment that renders it.
+
+The overview is reused rather than paid for again whenever the shape of the
+change has not moved, and until now the only copy lived in this machine's
+state directory. Any other machine -- a colleague's, or CI, which starts from
+an empty checkout every run -- had no way to reproduce the narrative, and so
+published a review without it or, on a clean run, published nothing at all.
+The comment the overview was rendered into is the one place every machine can
+already read, so it is where the overview travels."""
 """Stamps the published summary with the shape of the change it narrates, so a
 later run can tell whether the overview still holds without asking the model."""
 
@@ -145,6 +159,8 @@ def render(
         sections.append(f"<!-- {REVIEW_MARKER} -->")
         if result.changeset is not None and (flow := result.changeset.flow_digest):
             sections.append(f"<!-- {FLOW_MARKER_PREFIX}:{flow} -->")
+        if carried := encode_walkthrough(result.walkthrough):
+            sections.append(f"<!-- {WALKTHROUGH_MARKER_PREFIX}:{carried} -->")
     sections.append("---")
     if machine_sections:
         sections.append(_review_info(result, collapsible=collapsible))
@@ -609,3 +625,57 @@ def _wrap(text: str) -> str:
 def _escape_cell(text: str) -> str:
     """Keep a summary from breaking out of its table cell."""
     return " ".join(text.split()).replace("|", "\\|")
+
+
+MAX_WALKTHROUGH_MARKER = 8192
+"""Ceiling on the carried overview, in characters of encoded payload.
+
+The comment it rides in has a size limit of its own on every forge, and the
+overview is already spelled out in prose above it -- so the copy is what gives
+way when a very large review needs the room. Losing it costs one model call on
+the next run, which is the cheaper half of the trade."""
+
+
+MAX_WALKTHROUGH_PAYLOAD = 1 << 20
+"""Ceiling on what a marker is allowed to inflate to, in bytes.
+
+The token comes off a comment anyone can edit, and deflate lets a few kilobytes
+of it stand for gigabytes once expanded. Stopping the decompressor at a bound no
+honest overview comes near keeps a crafted marker from eating the process.
+Anything larger is treated as unreadable, the same as any other bad marker."""
+
+
+def encode_walkthrough(walkthrough: Walkthrough | None) -> str:
+    """The overview as one marker-safe token, or ``""`` when it cannot ride along.
+
+    Deflated first because the payload is prose, which compresses well and is
+    competing for the same comment budget as the rendering of itself. Base64
+    then keeps ``-->`` out of it, which a raw JSON overview could otherwise
+    contain and close the comment early with.
+    """
+    if walkthrough is None:
+        return ""
+    raw = walkthrough.model_dump_json(exclude_defaults=True).encode("utf-8")
+    token = base64.b64encode(zlib.compress(raw, 9)).decode("ascii")
+    return token if len(token) <= MAX_WALKTHROUGH_MARKER else ""
+
+
+def decode_walkthrough(token: str) -> Walkthrough | None:
+    """The overview a published comment carries, or ``None`` if it carries none.
+
+    Anything unreadable is treated as absent: a truncated marker, a payload from
+    a schema that has since moved on, or someone else's text in the same shape.
+    The caller then narrates the change again, which costs a model call but is
+    never wrong.
+    """
+    if not token or len(token) > MAX_WALKTHROUGH_MARKER:
+        return None
+    try:
+        packed = base64.b64decode(token.encode("ascii"), validate=True)
+        pump = zlib.decompressobj()
+        raw = pump.decompress(packed, MAX_WALKTHROUGH_PAYLOAD)
+        if pump.unconsumed_tail:
+            return None
+        return Walkthrough.model_validate_json(raw)
+    except (ValueError, zlib.error, ValidationError):
+        return None
