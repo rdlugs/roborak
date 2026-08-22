@@ -156,9 +156,14 @@ job mints a short-lived credential per run.
 4. `git tag vx.y.z && git push origin vx.y.z`.
 
 The job refuses to publish if the tag and the packaged version disagree, or if
-the changelog has no section for it. A tag ending in `rc` is marked a
-pre-release, which is the way to rehearse the whole path — a PyPI version number
-can never be reused, even after the file is deleted.
+the changelog has no section for it.
+
+Rehearse anything you are unsure of with a release candidate first: a PyPI
+version number can never be reused, even after the file is deleted. An `rc` is
+the same four steps with `version = "x.y.zrc1"` and a matching tag — the version
+has to be bumped for it too, since the tag must agree with the package. It needs
+no changelog entry of its own, because a prerelease reads the section for the
+version it precedes, and the GitHub Release is marked a pre-release.
 
 ## Reporting bugs
 
