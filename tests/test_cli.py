@@ -12,6 +12,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from roborak import __version__
 from roborak.cli.main import app
 from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
 
@@ -51,6 +52,13 @@ def test_help_lists_the_review_command():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == EXIT_OK
     assert "review" in flatten(result.output)
+
+
+def test_version_reports_the_installed_version():
+    """Eager, so it prints and exits instead of falling through to a bare ``review``."""
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == EXIT_OK
+    assert flatten(result.output) == f"roborak {__version__}"
 
 
 def test_review_help_documents_the_scope_flags():

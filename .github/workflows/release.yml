@@ -1,0 +1,106 @@
+name: Release
+
+# Tag a commit CI has already passed; this workflow does not re-run the matrix.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # A tag push makes one mistake easy, so fail on it before anything is
+      # published: PyPI never lets a version number be reused.
+      - name: Check the tag matches the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          packaged=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$tag" != "$packaged" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $packaged"
+            exit 1
+          fi
+          echo "Releasing $packaged"
+
+      - name: Build the package
+        run: uv build
+
+      - name: Check the built metadata renders
+        run: uvx twine check --strict dist/*
+
+      # A prerelease is a rehearsal for the version it precedes and ships no notes
+      # of its own, so v0.2.0rc1 reads the [0.2.0] section.
+      - name: Extract this version's changelog section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          base=$(printf '%s' "$version" | sed -E 's/(a|b|rc)[0-9]+$//')
+          awk -v tag="$base" '
+            $0 ~ "^## \\[" tag "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]: http/ { next }   # link-reference definitions
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::no CHANGELOG.md section for $base"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/
+            release-notes.md
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Registered with PyPI as the trusted publisher, so no token is stored here.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/roborak/
+    permissions:
+      id-token: write   # mint the OIDC token PyPI trades for an upload token
+      contents: write   # create the GitHub Release
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Publish
+        run: uv publish --trusted-publishing always
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            ${{ contains(github.ref_name, 'rc') && '--prerelease' || '' }}
