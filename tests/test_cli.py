@@ -1273,6 +1273,104 @@ def test_post_publishes_an_empty_changeset_exactly_once(repo: Path, monkeypatch)
     assert len(runs) == 1, runs
 
 
+def _gitlab_changeset(files: bool = True):
+    """The --mr 298 change, as the forge would hand it over."""
+    from roborak.context.diff import parse_diff
+    from roborak.core.models import ChangeSet, ForgeRef
+
+    return ChangeSet(
+        files=parse_diff(MR_DIFF) if files else [],
+        origin="gitlab",
+        head_sha="head333",
+        forge_ref=ForgeRef(
+            provider="gitlab",
+            host="gitlab.com",
+            project="acme/web",
+            number=298,
+            base_sha="base111",
+            start_sha="start222",
+            head_sha="head333",
+        ),
+    )
+
+
+def _install_gitlab_session(monkeypatch, published: list, *, files: bool = True) -> None:
+    """Wire a --mr run up to a publisher that records each run instead of posting."""
+    changeset = _gitlab_changeset(files)
+    monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
+
+    class FakeSource:
+        def __init__(self, target, token):
+            pass
+
+        def load(self):
+            return changeset
+
+    monkeypatch.setattr("roborak.cli.shared.GitLabSource", FakeSource)
+
+    class FakePublisher:
+        def __init__(
+            self,
+            *,
+            target,
+            token,
+            post_inline,
+            post_summary,
+            seen_fingerprints,
+            summary_ref=None,
+            summary_refreshed=False,
+        ):
+            self._run = {"post_inline": post_inline, "post_summary": post_summary}
+
+        def publish(self, result):
+            from roborak.publish.base import PublishReport
+
+            published.append(self._run)
+            return PublishReport()
+
+    monkeypatch.setattr("roborak.cli.commands.review.GitLabPublisher", FakePublisher)
+    _make_interactive(monkeypatch)
+
+
+def test_a_clean_rerun_from_another_machine_still_publishes(repo: Path, monkeypatch):
+    """#23 end to end: --post finished silently and left the review unrecorded.
+
+    A clean review has no inline comments, so the summary is the only thing it
+    has to say. An earlier run had published the overview, but its record of
+    that lives in this repo's state directory -- which the machine running now
+    does not have. That miss used to switch the summary off and post nothing.
+    """
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewResult, Walkthrough
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    monkeypatch.setattr(Reviewer, "review", lambda self, cs: ReviewResult(changeset=cs))
+
+    published: list[dict[str, object]] = []
+    _install_gitlab_session(monkeypatch, published)
+
+    def already_posted(target, token):
+        # The overview rides on the comment, which is all this machine can read.
+        return RemoteState(
+            summary=SummaryRef(
+                edit_path="/notes/9",
+                method="PUT",
+                flow=_gitlab_changeset().flow_digest,
+                walkthrough=Walkthrough(overview="Looks up a session row."),
+            )
+        )
+
+    monkeypatch.setattr("roborak.cli.commands.review.remote_state", already_posted)
+    assert not (repo / ".roborak" / "state.json").exists(), "no local record of the earlier run"
+
+    result = runner.invoke(app, ["review", "--no-llm", "--mr", MR_URL, "--post", "-C", str(repo)])
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert published == [{"post_inline": True, "post_summary": True}], (
+        "a clean review that publishes nothing is the bug"
+    )
+
+
 def test_no_summary_posts_the_threads_without_the_report(repo: Path, monkeypatch):
     built = _mr_session(monkeypatch)
     result = runner.invoke(
@@ -1472,6 +1570,33 @@ def test_a_first_post_writes_the_overview(repo: Path):
 
 
 def test_an_unmoved_change_does_not_pay_for_a_second_overview(repo: Path):
+    """The comment carries the overview, so an unmoved change reuses it for free."""
+    from roborak.core.models import Walkthrough
+    from roborak.publish.base import RemoteState, SummaryRef
+
+    session = _overview_session(repo)
+    remote = RemoteState(
+        summary=SummaryRef(
+            edit_path="/notes/9",
+            method="PUT",
+            flow=session.changeset.flow_digest,
+            walkthrough=Walkthrough(overview="Looks up a session row."),
+        )
+    )
+    plan = _plan(session, remote)
+
+    assert not plan.generate, "the published overview still holds; do not pay for it again"
+    assert plan.post_summary, "the verdict is this run's, even when the overview is not"
+    assert plan.cached is not None and plan.cached.overview == "Looks up a session row."
+
+
+def test_an_unmoved_change_publishes_the_verdict_from_a_machine_that_never_posted(repo: Path):
+    """The regression behind #23: a local cache miss silenced --post entirely.
+
+    ``.roborak/state.json`` never leaves the machine that wrote it, so CI and
+    every other checkout missed it. Switching the summary off there left a clean
+    review with no inline comments to post and nothing else to say.
+    """
     from roborak.publish.base import RemoteState, SummaryRef
 
     session = _overview_session(repo)
@@ -1480,9 +1605,9 @@ def test_an_unmoved_change_does_not_pay_for_a_second_overview(repo: Path):
     )
     plan = _plan(session, remote)
 
-    assert not plan.generate
-    assert not plan.post_summary  # nothing cached locally, so the comment is left alone
-    assert plan.kept
+    assert plan.post_summary, "a run that publishes nothing at all is the bug"
+    assert plan.generate, "nothing to reuse, so re-narrate rather than edit the overview away"
+    assert plan.ref is not None, "still an edit, never a second comment"
 
 
 def test_an_unmoved_change_reuses_the_overview_this_machine_still_has(repo: Path):
@@ -1506,7 +1631,7 @@ def test_an_unmoved_change_reuses_the_overview_this_machine_still_has(repo: Path
     plan = _plan(session, remote)
 
     assert not plan.generate
-    assert plan.post_summary and not plan.kept
+    assert plan.post_summary
     assert plan.cached is not None
     assert plan.cached.overview == "Looks up a session row."
 
