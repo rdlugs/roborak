@@ -175,6 +175,46 @@ has to be bumped for it too, since the tag must agree with the package. It needs
 no changelog entry of its own, because a prerelease reads the section for the
 version it precedes, and the GitHub Release is marked a pre-release.
 
+## Working on the website
+
+The documentation site lives in `docs/`: Vite, React Router and Tailwind, built
+to a single-page app and deployed to Cloudflare Pages from `main`. Node 20 or
+newer.
+
+```bash
+cd docs
+npm ci
+npm run dev          # local dev server
+npm run typecheck
+npm run build        # bundle to docs/dist
+npm run serve        # serve the build, exactly as Pages will
+```
+
+The route table is written out by hand in `docs/src/routes.tsx`, one entry per
+page under `docs/src/pages/`. Pages are written as a flat list of the components
+in `docs/src/components/` — `H1`, `P`, `CodeBlock`, `Callout`, `Table`, `Cmd` —
+which is what keeps ten hand-written pages looking like one site. The neon
+palette is defined once, in `docs/tailwind.config.js`.
+
+Content is *derived*, not invented. Each page tracks a source in this repository:
+
+| Page | Source of truth |
+|---|---|
+| Install, Quickstart, Tokens, Self-hosted | `README.md` |
+| Commands | the Typer `help=` strings in `src/roborak/cli/commands/` |
+| Configuration | `src/roborak/config_template.yaml` and `src/roborak/core/config.py` |
+| Custom rules, How it works, Static analysis | `README.md` |
+| Contributing | this file |
+
+When you change a flag, a config key or an exit code, update the page that quotes
+it in the same PR. A reference page that quietly disagrees with `--help` is worse
+than no page at all.
+
+The `Website` job in CI runs `npm ci`, `tsc --noEmit` and the production build,
+then greps the emitted bundle for copy that has to be there — a page dropped from
+the route table still builds cleanly, so a green build is not by itself evidence
+the page exists.
+
 ## Reporting bugs
 
 Open an issue with the command you ran, the roborak version, the Python version,

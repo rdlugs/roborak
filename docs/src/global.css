@@ -1,0 +1,96 @@
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/roboto-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url("/fonts/roboto-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    background-color: #05060a;
+    color-scheme: dark;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .neon-edge,
+  .neon-wash {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: var(--neon-a, 0);
+    transition: opacity 220ms ease-out;
+  }
+  .neon-edge {
+    padding: 1px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  .neon-glow {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 440px;
+    width: 440px;
+    margin: -220px 0 0 -220px;
+    border-radius: 9999px;
+    transform: var(--neon-t, translate3d(-9999px, -9999px, 0));
+    will-change: transform;
+  }
+
+  .neon-edge > .neon-glow {
+    background: radial-gradient(
+      closest-side,
+      rgb(var(--neon-c, 34 211 238) / 0.9),
+      rgb(var(--neon-c, 34 211 238) / 0)
+    );
+  }
+
+  .neon-wash > .neon-glow {
+    background: radial-gradient(
+      closest-side,
+      rgb(var(--neon-c, 34 211 238) / 0.1),
+      rgb(var(--neon-c, 34 211 238) / 0)
+    );
+  }
+}
