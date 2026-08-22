@@ -235,6 +235,9 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+_WINDOWS = os.name == "nt"
+
+
 def _warn_if_others_can_read_keys(path: Path, data: dict[str, Any]) -> None:
     """A file holding literal secrets has no business being readable by others.
 
@@ -243,7 +246,7 @@ def _warn_if_others_can_read_keys(path: Path, data: dict[str, Any]) -> None:
     carry no information there -- checking them reports every config as exposed,
     and ``chmod 600`` is not advice a Windows user can act on.
     """
-    if os.name == "nt":
+    if _WINDOWS:
         return
     llm = data.get("llm")
     forge = data.get("forge")

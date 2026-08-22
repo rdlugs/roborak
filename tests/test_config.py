@@ -173,8 +173,9 @@ def test_api_base_defaults_to_none_and_round_trips(tmp_path: Path, monkeypatch):
 def test_world_readable_key_file_warns(tmp_path: Path, monkeypatch, caplog):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     # Force the POSIX branch: a Windows st_mode is 0o666 regardless, which still
-    # trips the check, so the warning half of this is meaningful on both.
-    monkeypatch.setattr("roborak.core.config.os.name", "posix")
+    # trips the check, so the warning half of this is meaningful on both. Patch the
+    # module constant, never os.name -- that object is shared with every other module.
+    monkeypatch.setattr("roborak.core.config._WINDOWS", False)
     project = tmp_path / ".roborak.yaml"
     project.write_text("llm:\n  api_keys:\n    anthropic: sk-ant-exposed\n")
     project.chmod(0o644)
@@ -195,7 +196,7 @@ def test_world_readable_key_file_warns(tmp_path: Path, monkeypatch, caplog):
 def test_key_file_permissions_are_not_judged_on_windows(tmp_path: Path, monkeypatch, caplog):
     """Windows synthesises st_mode, so the POSIX check would flag every config."""
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
-    monkeypatch.setattr("roborak.core.config.os.name", "nt")
+    monkeypatch.setattr("roborak.core.config._WINDOWS", True)
     project = tmp_path / ".roborak.yaml"
     project.write_text("llm:\n  api_keys:\n    anthropic: sk-ant-exposed\n")
     project.chmod(0o644)
