@@ -786,3 +786,209 @@ def test_post_inline_false_publishes_only_the_summary(monkeypatch):
     assert report.summary_posted
     assert not any(path.endswith("/discussions") for path in posted)
     assert any(path.endswith("/notes") for path in posted)
+
+
+# --- reusing an overview that is already published ------------------------------
+
+
+def summary_body(result: ReviewResult) -> str:
+    """What an earlier run would have left on the merge request."""
+    return summary_markdown(result)
+
+
+def test_flow_digest_ignores_what_a_hunk_says_and_notices_where_it_is():
+    """The overview narrates the shape of a change, not its every character."""
+    result = make_result()
+    changeset = result.changeset
+    assert changeset is not None
+    original = changeset.flow_digest
+
+    changeset.files[0].hunks[0].content += "\n+# an afterthought"
+    assert changeset.flow_digest == original
+
+    changeset.files[0].hunks[0].new_start += 40
+    assert changeset.flow_digest != original
+
+
+def test_an_empty_changeset_has_no_flow_to_digest():
+    assert ChangeSet().flow_digest == ""
+
+
+def test_the_published_summary_carries_the_shape_it_describes():
+    result = make_result()
+    assert result.changeset is not None
+    assert f"<!-- roborak:flow:{result.changeset.flow_digest} -->" in summary_markdown(result)
+    assert "<!-- roborak:review -->" in summary_markdown(result)
+
+
+def test_remote_state_finds_the_summary_note_on_gitlab(monkeypatch):
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/notes"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": 7, "body": "a human said something"},
+                    {"id": 9, "body": summary_body(make_result())},
+                ],
+            )
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    state = remote_state(target, "tok")
+
+    assert state.summary is not None
+    assert state.summary.method == "PUT"
+    assert state.summary.edit_path.endswith("/merge_requests/298/notes/9")
+    assert make_result().changeset is not None
+    assert state.summary.flow == make_result().changeset.flow_digest
+    assert state.fingerprints  # the inline identities still come back
+
+
+def test_remote_state_finds_the_summary_review_on_github(monkeypatch):
+    from roborak.publish.base import remote_state
+
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/pulls/42/reviews"):
+            return httpx.Response(200, json=[{"id": 55, "body": summary_body(make_result())}])
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    state = remote_state(target, "tok")
+
+    assert state.summary is not None
+    assert state.summary.method == "PUT"
+    assert state.summary.edit_path == "/repos/acme/web/pulls/42/reviews/55"
+
+
+def test_remote_state_finds_the_summary_as_a_github_issue_comment(monkeypatch):
+    from roborak.publish.base import remote_state
+
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/issues/42/comments"):
+            return httpx.Response(200, json=[{"id": 31, "body": summary_body(make_result())}])
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    state = remote_state(target, "tok")
+
+    assert state.summary is not None
+    assert state.summary.method == "PATCH"
+    assert state.summary.edit_path == "/repos/acme/web/issues/comments/31"
+
+
+def test_remote_state_reports_no_summary_when_roborak_has_not_spoken(monkeypatch):
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    handler = lambda request: httpx.Response(200, json=[{"id": 1, "body": "looks good to me"}])  # noqa: E731
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    assert remote_state(target, "tok").summary is None
+
+
+def test_gitlab_edits_the_existing_summary_instead_of_appending_one(monkeypatch):
+    from roborak.publish.base import SummaryRef
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    sent: list[tuple[str, str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": 9})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+
+    ref = SummaryRef(edit_path="/projects/acme%2Fweb/merge_requests/298/notes/9", method="PUT")
+    report = GitLabPublisher(
+        target=target, token="tok", summary_ref=ref, summary_refreshed=True
+    ).publish(make_result())
+
+    assert report.summary_updated and report.summary_posted
+    edits = [(path, payload) for method, path, payload in sent if method == "PUT"]
+    assert len(edits) == 1
+    assert edits[0][0].endswith("/notes/9")
+    assert edits[0][1]["body"].startswith("_Overview refreshed for `head333`")
+    assert not any(path.endswith("/notes") for method, path, _ in sent if method == "POST")
+
+
+def test_github_edits_the_summary_and_keeps_the_inline_review_separate(monkeypatch):
+    from roborak.publish.base import SummaryRef
+
+    target = Target("github", "github.com", "acme/web", 42)
+    sent: list[tuple[str, str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": 55})
+
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+
+    ref = SummaryRef(edit_path="/repos/acme/web/pulls/42/reviews/55", method="PUT")
+    report = GitHubPublisher(target=target, token="tok", summary_ref=ref).publish(make_result())
+
+    assert report.summary_updated
+    reviews = [p for m, path, p in sent if m == "POST" and path.endswith("/reviews")]
+    assert len(reviews) == 1
+    assert reviews[0]["body"] == ""  # the overview is not repeated in the review
+    edits = [(path, p) for m, path, p in sent if m == "PUT"]
+    assert len(edits) == 1
+    assert edits[0][0] == "/repos/acme/web/pulls/42/reviews/55"
+    assert not edits[0][1]["body"].startswith("_Overview refreshed")
+
+
+def test_a_deleted_summary_comment_is_reposted_rather_than_lost(monkeypatch):
+    from roborak.publish.base import SummaryRef
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    sent: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.method, request.url.path))
+        if request.method == "PUT":
+            return httpx.Response(404, json={"message": "gone"})
+        return httpx.Response(200, json={"id": 1})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    ref = SummaryRef(edit_path="/projects/acme%2Fweb/merge_requests/298/notes/9", method="PUT")
+    report = GitLabPublisher(target=target, token="tok", summary_ref=ref).publish(make_result())
+
+    assert report.summary_posted
+    assert not report.summary_updated
+    assert ("POST", "/api/v4/projects/acme/web/merge_requests/298/notes") in sent
+
+
+def test_state_written_before_the_overview_cache_still_reads(tmp_path):
+    """Old state files predate the cache; they must not be thrown away."""
+    from roborak.state.store import STATE_DIR, STATE_FILE, StateStore
+
+    path = tmp_path / STATE_DIR / STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reviews": {"gitlab:gitlab.com:acme/web#298": {"fingerprints": ["abc123"]}},
+            }
+        )
+    )
+
+    record = StateStore(tmp_path).get("gitlab:gitlab.com:acme/web#298")
+    assert record.fingerprints == {"abc123"}
+    assert record.last_flow_digest == ""
+    assert record.last_walkthrough is None

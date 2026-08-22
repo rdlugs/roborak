@@ -28,21 +28,33 @@ class ReviewRecord:
     fingerprints: set[str] = field(default_factory=set)
     last_head_sha: str = ""
     last_reviewed_at: str = ""
+    last_flow_digest: str = ""
+    """Shape of the change the cached overview narrates."""
+
+    last_walkthrough: dict[str, object] | None = None
+    """The overview itself, so an unchanged change can be re-rendered without
+    paying for a second model call. Local, so a fresh CI checkout simply has
+    none and leaves the published comment alone instead."""
 
     def to_json(self) -> dict[str, object]:
         return {
             "fingerprints": sorted(self.fingerprints),
             "last_head_sha": self.last_head_sha,
             "last_reviewed_at": self.last_reviewed_at,
+            "last_flow_digest": self.last_flow_digest,
+            "last_walkthrough": self.last_walkthrough,
         }
 
     @classmethod
     def from_json(cls, data: dict[str, object]) -> ReviewRecord:
         raw = data.get("fingerprints")
+        cached = data.get("last_walkthrough")
         return cls(
             fingerprints=set(raw) if isinstance(raw, list) else set(),
             last_head_sha=str(data.get("last_head_sha") or ""),
             last_reviewed_at=str(data.get("last_reviewed_at") or ""),
+            last_flow_digest=str(data.get("last_flow_digest") or ""),
+            last_walkthrough=cached if isinstance(cached, dict) else None,
         )
 
 
@@ -71,7 +83,15 @@ class StateStore:
         entry = reviews.get(key) if isinstance(reviews, dict) else None
         return ReviewRecord.from_json(entry) if isinstance(entry, dict) else ReviewRecord()
 
-    def record(self, key: str, findings: list[Finding], head_sha: str) -> None:
+    def record(
+        self,
+        key: str,
+        findings: list[Finding],
+        head_sha: str,
+        *,
+        flow_digest: str = "",
+        walkthrough: dict[str, object] | None = None,
+    ) -> None:
         """Add this run's findings to what we have already said about ``key``."""
         data = self._load_all()
         reviews = data.setdefault("reviews", {})
@@ -87,6 +107,10 @@ class StateStore:
         }
         record.last_head_sha = head_sha
         record.last_reviewed_at = datetime.now(UTC).isoformat(timespec="seconds")
+        if flow_digest:
+            record.last_flow_digest = flow_digest
+        if walkthrough is not None:
+            record.last_walkthrough = walkthrough
         reviews[key] = record.to_json()
 
         try:

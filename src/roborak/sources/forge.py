@@ -302,6 +302,12 @@ class ForgeClient:
     def post(self, path: str, payload: dict[str, Any]) -> Any:
         return self._request("POST", path, json=payload)
 
+    def put(self, path: str, payload: dict[str, Any]) -> Any:
+        return self._request("PUT", path, json=payload)
+
+    def patch(self, path: str, payload: dict[str, Any]) -> Any:
+        return self._request("PATCH", path, json=payload)
+
     def get_raw(self, path: str, **params: Any) -> bytes:
         """Fetch a raw repository blob while retaining the normal error handling."""
         response = self._send("GET", path, params=params)

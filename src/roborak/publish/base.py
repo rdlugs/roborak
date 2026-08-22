@@ -6,14 +6,20 @@ carrying a committable suggestion block, in the syntax the forge understands.
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Protocol
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 from roborak.core.buckets import SUMMARY_BUCKETS, Bucket, group
 from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Kind
 from roborak.render import markdown
+from roborak.sources.base import SourceError
 from roborak.sources.forge import ForgeClient, Target
+
+log = logging.getLogger(__name__)
 
 
 class Publisher(Protocol):
@@ -33,6 +39,9 @@ class PublishReport:
         line to point at in the first place."""
 
         self.summary_posted = False
+        self.summary_updated = False
+        """An overview roborak had already published was edited in place rather
+        than a second one appended beside it."""
 
     @property
     def total_attempted(self) -> int:
@@ -77,38 +86,151 @@ def summary_markdown(result: ReviewResult) -> str:
     return markdown.render(result)
 
 
+def refreshed_summary_markdown(result: ReviewResult) -> str:
+    """The report, prefaced by a line saying the overview was re-narrated.
+
+    Editing a comment is silent -- a reader who saw the old overview has no way
+    to tell the new one apart from it. One line naming the commit it now
+    describes is what makes the update visible.
+    """
+    head = (result.changeset.head_sha if result.changeset else "") or ""
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+    where = f" for `{head[:8]}`" if head else ""
+    return f"_Overview refreshed{where} on {stamp}._\n\n{summary_markdown(result)}"
+
+
+def publish_summary(
+    client: ForgeClient,
+    result: ReviewResult,
+    report: PublishReport,
+    *,
+    post_path: str,
+    ref: SummaryRef | None,
+    refreshed: bool,
+) -> None:
+    """Put the overview where it belongs: over the old one, or beside nothing.
+
+    A failed edit falls back to posting fresh. A duplicated overview is noise; a
+    review whose overview silently vanished because someone deleted the comment
+    roborak was aiming at is a missing review.
+    """
+    if ref is not None:
+        body = refreshed_summary_markdown(result) if refreshed else summary_markdown(result)
+        try:
+            send = client.put if ref.method == "PUT" else client.patch
+            send(ref.edit_path, {"body": body})
+        except SourceError as exc:
+            log.warning("could not update the existing summary (%s); posting a new one", exc)
+        else:
+            report.summary_updated = True
+            report.summary_posted = True
+            return
+
+    client.post(post_path, {"body": summary_markdown(result)})
+    report.summary_posted = True
+
+
 _MARKER_RE = re.compile(r"<!--\s*roborak:v[12]:([0-9a-f]{16})\s*-->")
+_SUMMARY_MARKER = f"<!-- {markdown.REVIEW_MARKER} -->"
+_FLOW_RE = re.compile(rf"<!--\s*{markdown.FLOW_MARKER_PREFIX}:([0-9a-f]{{16}})\s*-->")
 
 
 def fingerprints_in(text: str) -> set[str]:
     return set(_MARKER_RE.findall(text))
 
 
-def remote_fingerprints(target: Target, token: str) -> frozenset[str]:
-    """Read identities already published, making remote state authoritative."""
+@dataclass(frozen=True)
+class SummaryRef:
+    """An overview roborak has already published, and how to edit it."""
+
+    edit_path: str
+    method: str
+    """``PUT`` or ``PATCH`` -- each forge surface takes only one of them."""
+
+    flow: str = ""
+    """The change shape the published overview narrates, empty if it predates
+    the marker. An empty digest never matches, so such a comment is refreshed
+    once and carries a digest from then on."""
+
+
+@dataclass(frozen=True)
+class RemoteState:
+    """What the merge request already says, so remote stays authoritative."""
+
+    fingerprints: frozenset[str] = frozenset()
+    summary: SummaryRef | None = None
+
+
+def remote_state(target: Target, token: str) -> RemoteState:
+    """Read what an earlier run published: inline identities and the overview.
+
+    One pass for both. The payloads that carry the fingerprints are the same ones
+    that carry the summary's id, and fetching them twice would double the cost of
+    every ``--post`` run.
+    """
     bodies: list[str] = []
+    candidates: list[SummaryRef] = []
+
     with ForgeClient(target, token) as client:
         if target.provider == "github":
             root = f"/repos/{target.project}"
-            payloads = [
-                *client.paginate(f"{root}/issues/{target.number}/comments"),
-                *client.paginate(f"{root}/pulls/{target.number}/comments"),
-                *client.paginate(f"{root}/pulls/{target.number}/reviews"),
+            surfaces = [
+                (f"{root}/issues/{target.number}/comments", f"{root}/issues/comments", "PATCH"),
+                (f"{root}/pulls/{target.number}/comments", None, ""),
+                (
+                    f"{root}/pulls/{target.number}/reviews",
+                    f"{root}/pulls/{target.number}/reviews",
+                    "PUT",
+                ),
             ]
-            bodies.extend(
-                str(item.get("body") or "") for item in payloads if isinstance(item, dict)
-            )
+            for path, edit_root, method in surfaces:
+                for item in client.paginate(path):
+                    body = _absorb(item, bodies)
+                    if body and edit_root:
+                        _offer(candidates, item, edit_root, method, body)
         else:
             base = f"/projects/{target.encoded_project}/merge_requests/{target.number}"
-            notes = client.paginate(f"{base}/notes")
-            discussions = client.paginate(f"{base}/discussions")
-            bodies.extend(str(item.get("body") or "") for item in notes if isinstance(item, dict))
-            for discussion in discussions:
+            for item in client.paginate(f"{base}/notes"):
+                if body := _absorb(item, bodies):
+                    _offer(candidates, item, f"{base}/notes", "PUT", body)
+            for discussion in client.paginate(f"{base}/discussions"):
                 if not isinstance(discussion, dict):
                     continue
-                bodies.extend(
-                    str(note.get("body") or "")
-                    for note in discussion.get("notes") or []
-                    if isinstance(note, dict)
-                )
-    return frozenset(identity for body in bodies for identity in fingerprints_in(body))
+                for note in discussion.get("notes") or []:
+                    _absorb(note, bodies)
+
+    return RemoteState(
+        fingerprints=frozenset(identity for body in bodies for identity in fingerprints_in(body)),
+        summary=candidates[-1] if candidates else None,
+    )
+
+
+def remote_fingerprints(target: Target, token: str) -> frozenset[str]:
+    """Read identities already published, making remote state authoritative."""
+    return remote_state(target, token).fingerprints
+
+
+def _absorb(item: Any, bodies: list[str]) -> str:
+    """Record one comment body and hand it back for the summary check."""
+    if not isinstance(item, dict):
+        return ""
+    body = str(item.get("body") or "")
+    bodies.append(body)
+    return body
+
+
+def _offer(
+    candidates: list[SummaryRef], item: dict[str, Any], edit_root: str, method: str, body: str
+) -> None:
+    """Note a body as roborak's overview, if that is what it is."""
+    identifier = item.get("id")
+    if _SUMMARY_MARKER not in body or not isinstance(identifier, int):
+        return
+    found = _FLOW_RE.search(body)
+    candidates.append(
+        SummaryRef(
+            edit_path=f"{edit_root}/{identifier}",
+            method=method,
+            flow=found.group(1) if found else "",
+        )
+    )

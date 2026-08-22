@@ -19,8 +19,10 @@ from roborak.core.buckets import can_anchor
 from roborak.core.models import ChangeSet, Finding, ReviewResult
 from roborak.publish.base import (
     PublishReport,
+    SummaryRef,
     finding_markdown,
     inline_findings,
+    publish_summary,
     summarised_findings,
     summary_markdown,
 )
@@ -37,6 +39,12 @@ class GitHubPublisher:
     post_inline: bool = True
     post_summary: bool = True
     seen_fingerprints: frozenset[str] = frozenset()
+    summary_ref: SummaryRef | None = None
+    """An overview an earlier run published, to edit rather than duplicate."""
+
+    summary_refreshed: bool = False
+    """Whether the overview being published is a new narration of a change that
+    has moved, which the edited comment says out loud."""
 
     def publish(self, result: ReviewResult) -> PublishReport:
         report = PublishReport()
@@ -62,33 +70,44 @@ class GitHubPublisher:
 
         report.summarised.extend(summarised_findings(result))
 
+        # An overview that already exists is edited on its own surface, so the
+        # review carries only the inline comments and never a second copy of it.
+        inline_only = self.summary_ref is not None or not self.post_summary
         payload: dict[str, Any] = {
-            "body": summary_markdown(result) if self.post_summary else "",
+            "body": "" if inline_only else summary_markdown(result),
             "event": "COMMENT",
             "comments": comments,
         }
         if changeset.forge_ref.head_sha:
             payload["commit_id"] = changeset.forge_ref.head_sha
 
-        if not comments and not self.post_summary:
+        if not comments and inline_only and not self.post_summary:
             return report
 
+        issue_comments = f"/repos/{self.target.project}/issues/{self.target.number}/comments"
         base = f"/repos/{self.target.project}/pulls/{self.target.number}/reviews"
         with ForgeClient(self.target, self.token) as client:
-            try:
-                client.post(base, payload)
-            except SourceError as exc:
-                log.warning("inline review rejected (%s); posting the summary only", exc)
-                report.failed.extend((f, str(exc)) for f in report.posted)
-                report.posted.clear()
-                if self.post_summary:
-                    client.post(
-                        f"/repos/{self.target.project}/issues/{self.target.number}/comments",
-                        {"body": summary_markdown(result)},
-                    )
-                    report.summary_posted = True
-            else:
-                report.summary_posted = self.post_summary
+            rejected: str | None = None
+            if comments or not inline_only:
+                try:
+                    client.post(base, payload)
+                except SourceError as exc:
+                    log.warning("inline review rejected (%s); posting the summary only", exc)
+                    rejected = str(exc)
+                    report.failed.extend((f, rejected) for f in report.posted)
+                    report.posted.clear()
+                else:
+                    report.summary_posted = self.post_summary and not inline_only
+
+            if self.post_summary and (self.summary_ref is not None or rejected is not None):
+                publish_summary(
+                    client,
+                    result,
+                    report,
+                    post_path=issue_comments,
+                    ref=self.summary_ref,
+                    refreshed=self.summary_refreshed,
+                )
 
         return report
 

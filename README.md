@@ -264,6 +264,13 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
   number already reported. A failed overview is logged, never fatal: a review
   without one is still a review, and must still exit clean. `--no-walkthrough`
   skips it.
+- **An overview is written once per shape of a change.** The published summary
+  carries a digest of its changed files and hunk headers. Re-posting to the same
+  merge request compares that digest against the diff in front of it: unmoved
+  means the story is unmoved, so the model is not asked again and the existing
+  comment stays put. When it has moved, the overview is rewritten and that same
+  comment is edited in place rather than a second one appended. `--repost`
+  forces a fresh overview, as it does for inline findings.
 - **Output modes** share one result object, so the terminal report, the markdown
   file, the JSON payload and the forge comment can never disagree. `--json`,
   `--agent` and `--prompt-only` write to stdout alone, so they stay pipeable.

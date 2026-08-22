@@ -190,6 +190,26 @@ class ChangeSet(BaseModel):
     def total_added_lines(self) -> int:
         return sum(len(f.added_lines) for f in self.files)
 
+    @property
+    def flow_digest(self) -> str:
+        """Identity of the *shape* of the change, for reusing a published overview.
+
+        Deliberately blind to what is inside a hunk: an amend or a rebase that
+        moves no file and no hunk header tells the same story about the change,
+        and re-narrating it costs a model call for nothing. What does move the
+        digest is a file appearing, disappearing, being renamed, or its hunks
+        landing somewhere else.
+        """
+        if self.is_empty:
+            return ""
+        parts: list[str] = []
+        for file in sorted(self.files, key=lambda f: f.path):
+            parts.append(f"{file.path}|{file.previous_path or ''}|{file.change_type}")
+            parts.extend(
+                f"{h.old_start},{h.old_lines},{h.new_start},{h.new_lines}" for h in file.hunks
+            )
+        return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
 
 class Finding(BaseModel):
     """One reviewable observation, in new-file coordinates.

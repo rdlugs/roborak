@@ -72,6 +72,8 @@ static:
 output:
   # Spend a second model call on an overview of the change. It is what fills the
   # summary comment `--post` publishes; turn it off to halve the cost of a run.
+  # Re-posting to a merge request whose files and hunks have not moved reuses the
+  # overview already published there instead of paying for it twice.
   walkthrough: true
   # At the end of an interactive review, offer to publish the result. Only ever
   # asked on a terminal -- a script or a CI job is never prompted.
