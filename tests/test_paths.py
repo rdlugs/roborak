@@ -44,6 +44,16 @@ def test_every_file_is_reviewed_whole(tree: Path):
     assert core.diff_position(1) == 2
 
 
+def test_windows_line_endings_are_normalised(tree: Path):
+    """A CRLF file must reach the IR spelling its line endings the way every other
+    source does, or the same file reviewed on Windows and Linux is two files."""
+    (tree / "crlf.py").write_bytes(b"def run():\r\n    return 1\r\n")
+    crlf = PathsSource(root=tree).load().file_by_path("crlf.py")
+    assert crlf is not None
+    assert crlf.new_content == "def run():\n    return 1\n"
+    assert crlf.added_lines == {1, 2}
+
+
 def test_a_subdirectory_reviews_only_that_subtree(tree: Path):
     changeset = PathsSource(root=tree / "app").load()
     assert {file.path for file in changeset.files} == {"core.py"}

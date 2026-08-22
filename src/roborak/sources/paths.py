@@ -149,7 +149,7 @@ class PathsSource:
         if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
             return _binary(relative)
         try:
-            content = raw.decode("utf-8")
+            content = _decode(raw)
         except UnicodeDecodeError:
             return _binary(relative)
 
@@ -160,6 +160,18 @@ class PathsSource:
             new_content=content,
             hunks=whole_file_hunk(content),
         )
+
+
+def _decode(raw: bytes) -> str:
+    """UTF-8 text with newlines normalised, the way every other source sees a file.
+
+    Reading bytes is what lets us sniff for binaries, but it also opts out of the
+    universal-newline translation ``read_text`` performs -- so a CRLF checkout
+    reviewed on Windows would carry a literal carriage return into every prompt,
+    every ``new_content`` and every rendered line, unlike the same file read
+    through ``LocalGitSource``. One IR means one spelling of a line ending.
+    """
+    return raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _binary(relative: str) -> ChangedFile:
