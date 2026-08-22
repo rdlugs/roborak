@@ -884,6 +884,101 @@ def test_remote_state_finds_the_summary_as_a_github_issue_comment(monkeypatch):
     assert state.summary.edit_path == "/repos/acme/web/issues/comments/31"
 
 
+def test_remote_state_trusts_only_the_publishing_account_on_github(monkeypatch):
+    """The markers are public; authorship is what makes an overview roborak's."""
+    from roborak.publish.base import remote_state
+
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler_for(author: str):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/user":
+                return httpx.Response(200, json={"login": "roborak-bot"})
+            if request.url.path.endswith("/issues/42/comments"):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 31,
+                            "body": summary_body(make_result()),
+                            "user": {"login": author},
+                        }
+                    ],
+                )
+            return httpx.Response(200, json=[])
+
+        return handler
+
+    monkeypatch.setattr(
+        "roborak.publish.base.ForgeClient",
+        lambda t, tok: client_with(handler_for("roborak-bot"), t),
+    )
+    mine = remote_state(target, "tok").summary
+    assert mine is not None
+    assert mine.edit_path == "/repos/acme/web/issues/comments/31"
+
+    monkeypatch.setattr(
+        "roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler_for("impostor"), t)
+    )
+    assert remote_state(target, "tok").summary is None
+
+
+def test_remote_state_trusts_only_the_publishing_account_on_gitlab(monkeypatch):
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler_for(author: str):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/v4/user":
+                return httpx.Response(200, json={"username": "roborak-bot"})
+            if request.url.path.endswith("/notes"):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 9,
+                            "body": summary_body(make_result()),
+                            "author": {"username": author},
+                        }
+                    ],
+                )
+            return httpx.Response(200, json=[])
+
+        return handler
+
+    monkeypatch.setattr(
+        "roborak.publish.base.ForgeClient",
+        lambda t, tok: client_with(handler_for("roborak-bot"), t),
+    )
+    assert remote_state(target, "tok").summary is not None
+
+    monkeypatch.setattr(
+        "roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler_for("impostor"), t)
+    )
+    assert remote_state(target, "tok").summary is None
+
+
+def test_a_ci_token_that_cannot_name_itself_still_finds_its_overview(monkeypatch):
+    """GitHub Actions and GitLab job tokens cannot read ``/user`` at all."""
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(403, text="job tokens may not")
+        if request.url.path.endswith("/notes"):
+            return httpx.Response(
+                200,
+                json=[{"id": 9, "body": summary_body(make_result()), "author": {"username": "ci"}}],
+            )
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    assert remote_state(target, "tok").summary is not None
+
+
 def test_remote_state_reports_no_summary_when_roborak_has_not_spoken(monkeypatch):
     from roborak.publish.base import remote_state
 

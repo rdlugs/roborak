@@ -141,7 +141,12 @@ def fingerprints_in(text: str) -> set[str]:
 
 @dataclass(frozen=True)
 class SummaryRef:
-    """An overview roborak has already published, and how to edit it."""
+    """An overview roborak has already published, and how to edit it.
+
+    Only a comment written by the publishing token's own account becomes one of
+    these -- see ``_offer``. The markers are public, so authorship is the only
+    thing separating roborak's overview from a copy of it.
+    """
 
     edit_path: str
     method: str
@@ -172,6 +177,7 @@ def remote_state(target: Target, token: str) -> RemoteState:
     candidates: list[SummaryRef] = []
 
     with ForgeClient(target, token) as client:
+        viewer = _viewer(client)
         if target.provider == "github":
             root = f"/repos/{target.project}"
             surfaces = [
@@ -187,12 +193,12 @@ def remote_state(target: Target, token: str) -> RemoteState:
                 for item in client.paginate(path):
                     body = _absorb(item, bodies)
                     if body and edit_root:
-                        _offer(candidates, item, edit_root, method, body)
+                        _offer(candidates, item, edit_root, method, body, viewer)
         else:
             base = f"/projects/{target.encoded_project}/merge_requests/{target.number}"
             for item in client.paginate(f"{base}/notes"):
                 if body := _absorb(item, bodies):
-                    _offer(candidates, item, f"{base}/notes", "PUT", body)
+                    _offer(candidates, item, f"{base}/notes", "PUT", body, viewer)
             for discussion in client.paginate(f"{base}/discussions"):
                 if not isinstance(discussion, dict):
                     continue
@@ -219,12 +225,52 @@ def _absorb(item: Any, bodies: list[str]) -> str:
     return body
 
 
+def _viewer(client: ForgeClient) -> str:
+    """Who the publishing token speaks as, or ``""`` when it will not say.
+
+    A CI token -- GitHub Actions' installation token, GitLab's ``CI_JOB_TOKEN``
+    -- cannot read ``/user`` at all. An unanswerable question is not a mismatch,
+    so the marker alone has to do there; treating it as one would report no
+    published overview on every CI run and duplicate the comment each time.
+    """
+    try:
+        who = client.get("/user")
+    except SourceError as exc:
+        log.debug("could not identify the publishing token (%s); trusting the marker", exc)
+        return ""
+    if not isinstance(who, dict):
+        return ""
+    key = "username" if client.target.provider == "gitlab" else "login"
+    return str(who.get(key) or "")
+
+
+def _author(item: dict[str, Any]) -> str:
+    """The account a comment payload says wrote it, on either forge."""
+    who = item.get("user") or item.get("author")
+    if not isinstance(who, dict):
+        return ""
+    return str(who.get("login") or who.get("username") or "")
+
+
 def _offer(
-    candidates: list[SummaryRef], item: dict[str, Any], edit_root: str, method: str, body: str
+    candidates: list[SummaryRef],
+    item: dict[str, Any],
+    edit_root: str,
+    method: str,
+    body: str,
+    viewer: str = "",
 ) -> None:
-    """Note a body as roborak's overview, if that is what it is."""
+    """Note a body as roborak's overview, if that is what it is.
+
+    The markers are published in plain sight, so a comment carrying one proves
+    nothing on its own: anyone in the thread can paste it, and a match would
+    then suppress the walkthrough and leave the copy standing as the review's
+    overview. When the token names itself, the author has to be it.
+    """
     identifier = item.get("id")
     if _SUMMARY_MARKER not in body or not isinstance(identifier, int):
+        return
+    if viewer and _author(item).casefold() != viewer.casefold():
         return
     found = _FLOW_RE.search(body)
     candidates.append(
