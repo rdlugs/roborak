@@ -1,0 +1,101 @@
+name: Bug report
+description: Something roborak does is wrong, crashes, or contradicts the docs.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste tokens or API keys. `roborak config show` redacts them;
+        raw config files, logs and terminal captures do not.
+
+        Found a security problem? Do not file it here — see
+        [SECURITY.md](https://github.com/rdlugs/roborak/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected instead, and what you got.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      description: The full command line, with any tokens or paths you would rather not share redacted.
+      render: shell
+      placeholder: roborak review --base main --full
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >
+        Paste the relevant output. If the problem is in the report itself, add `--full`
+        output. If roborak crashed, include the traceback.
+      render: shell
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Which source was under review
+      options:
+        - Local git diff
+        - GitLab merge request
+        - GitHub pull request
+        - Raw path (--path)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: forge
+    attributes:
+      label: Forge instance
+      description: If it involves GitLab or GitHub, say which, and whether the instance is self-hosted.
+      placeholder: self-hosted GitLab 17.4
+
+  - type: input
+    id: version
+    attributes:
+      label: roborak version
+      description: Output of `roborak --version`.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.7"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Fedora 44 / macOS 15.2 / Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The LiteLLM model id you configured, if the bug involves a review run.
+      placeholder: anthropic/claude-sonnet-5
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I am on the latest release, and the problem still happens there.
+          required: true
+        - label: There are no tokens or API keys anywhere in this report.
+          required: true
