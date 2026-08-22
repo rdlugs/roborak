@@ -6,6 +6,21 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE.md"]
+# Declared rather than implied: CI runs every one of these, on every one of
+# those, so the claim is a test result. No License:: entry -- PyPI rejects one
+# alongside the SPDX expression above.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "typer>=0.15",
     "rich>=13.9",
