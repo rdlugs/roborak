@@ -22,6 +22,9 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   rather than duplicated, with a line saying which commit it now describes.
   `--repost` still forces a fresh overview, `--no-walkthrough` still skips the
   pass entirely, and local reviews are unaffected.
+  A published overview is only reused when the forge attests to who wrote it: the
+  publishing account, or -- for a CI token that cannot name itself -- a bot
+  account. A comment in which someone pasted the markers by hand is ignored.
 
 - **`setup` asks with the arrow keys.** Where the config goes and which model to
   use are now lists you move through with ↑/↓ and Enter, instead of a number to

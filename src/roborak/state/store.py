@@ -107,8 +107,10 @@ class StateStore:
         }
         record.last_head_sha = head_sha
         record.last_reviewed_at = datetime.now(UTC).isoformat(timespec="seconds")
-        if flow_digest:
+        if flow_digest and flow_digest != record.last_flow_digest:
+            # The cached overview narrates the old shape; it is not reusable now.
             record.last_flow_digest = flow_digest
+            record.last_walkthrough = None
         if walkthrough is not None:
             record.last_walkthrough = walkthrough
         reviews[key] = record.to_json()

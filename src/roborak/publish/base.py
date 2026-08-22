@@ -17,6 +17,7 @@ from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import Kind
 from roborak.render import markdown
 from roborak.sources.base import SourceError
+from roborak.sources.discussion import is_bot
 from roborak.sources.forge import ForgeClient, Target
 
 log = logging.getLogger(__name__)
@@ -193,12 +194,12 @@ def remote_state(target: Target, token: str) -> RemoteState:
                 for item in client.paginate(path):
                     body = _absorb(item, bodies)
                     if body and edit_root:
-                        _offer(candidates, item, edit_root, method, body, viewer)
+                        _offer(candidates, item, edit_root, method, body, viewer, target.provider)
         else:
             base = f"/projects/{target.encoded_project}/merge_requests/{target.number}"
             for item in client.paginate(f"{base}/notes"):
                 if body := _absorb(item, bodies):
-                    _offer(candidates, item, f"{base}/notes", "PUT", body, viewer)
+                    _offer(candidates, item, f"{base}/notes", "PUT", body, viewer, target.provider)
             for discussion in client.paginate(f"{base}/discussions"):
                 if not isinstance(discussion, dict):
                     continue
@@ -230,8 +231,9 @@ def _viewer(client: ForgeClient) -> str:
 
     A CI token -- GitHub Actions' installation token, GitLab's ``CI_JOB_TOKEN``
     -- cannot read ``/user`` at all. An unanswerable question is not a mismatch,
-    so the marker alone has to do there; treating it as one would report no
-    published overview on every CI run and duplicate the comment each time.
+    so ``_offer`` falls back to the weaker test there; treating it as one would
+    report no published overview on every CI run and duplicate the comment each
+    time.
     """
     try:
         who = client.get("/user")
@@ -258,7 +260,8 @@ def _offer(
     edit_root: str,
     method: str,
     body: str,
-    viewer: str = "",
+    viewer: str,
+    provider: str,
 ) -> None:
     """Note a body as roborak's overview, if that is what it is.
 
@@ -266,11 +269,19 @@ def _offer(
     nothing on its own: anyone in the thread can paste it, and a match would
     then suppress the walkthrough and leave the copy standing as the review's
     overview. When the token names itself, the author has to be it.
+
+    A CI token that will not name itself leaves only the weaker test the forge
+    can still attest to: the comment has to come from a bot account. That is not
+    proof it is *this* bot, but it does put the forgery out of reach of the
+    contributors who can comment on the merge request.
     """
     identifier = item.get("id")
     if _SUMMARY_MARKER not in body or not isinstance(identifier, int):
         return
-    if viewer and _author(item).casefold() != viewer.casefold():
+    if viewer:
+        if _author(item).casefold() != viewer.casefold():
+            return
+    elif not is_bot(item.get("user") or item.get("author"), provider=provider):
         return
     found = _FLOW_RE.search(body)
     candidates.append(

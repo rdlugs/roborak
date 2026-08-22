@@ -832,7 +832,11 @@ def test_remote_state_finds_the_summary_note_on_gitlab(monkeypatch):
                 200,
                 json=[
                     {"id": 7, "body": "a human said something"},
-                    {"id": 9, "body": summary_body(make_result())},
+                    {
+                        "id": 9,
+                        "body": summary_body(make_result()),
+                        "author": {"username": "roborak-bot", "bot": True},
+                    },
                 ],
             )
         return httpx.Response(200, json=[])
@@ -855,7 +859,16 @@ def test_remote_state_finds_the_summary_review_on_github(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/pulls/42/reviews"):
-            return httpx.Response(200, json=[{"id": 55, "body": summary_body(make_result())}])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 55,
+                        "body": summary_body(make_result()),
+                        "user": {"login": "roborak-bot", "type": "Bot"},
+                    }
+                ],
+            )
         return httpx.Response(200, json=[])
 
     monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
@@ -873,7 +886,16 @@ def test_remote_state_finds_the_summary_as_a_github_issue_comment(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/issues/42/comments"):
-            return httpx.Response(200, json=[{"id": 31, "body": summary_body(make_result())}])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 31,
+                        "body": summary_body(make_result()),
+                        "user": {"login": "roborak-bot", "type": "Bot"},
+                    }
+                ],
+            )
         return httpx.Response(200, json=[])
 
     monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
@@ -959,11 +981,8 @@ def test_remote_state_trusts_only_the_publishing_account_on_gitlab(monkeypatch):
     assert remote_state(target, "tok").summary is None
 
 
-def test_a_ci_token_that_cannot_name_itself_still_finds_its_overview(monkeypatch):
-    """GitHub Actions and GitLab job tokens cannot read ``/user`` at all."""
-    from roborak.publish.base import remote_state
-
-    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+def _ci_note_handler(author: dict[str, object]):
+    """A GitLab thread whose token cannot read ``/user``, holding one overview."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/user"):
@@ -971,12 +990,33 @@ def test_a_ci_token_that_cannot_name_itself_still_finds_its_overview(monkeypatch
         if request.url.path.endswith("/notes"):
             return httpx.Response(
                 200,
-                json=[{"id": 9, "body": summary_body(make_result()), "author": {"username": "ci"}}],
+                json=[{"id": 9, "body": summary_body(make_result()), "author": author}],
             )
         return httpx.Response(200, json=[])
 
+    return handler
+
+
+def test_a_ci_token_that_cannot_name_itself_still_finds_its_overview(monkeypatch):
+    """GitHub Actions and GitLab job tokens cannot read ``/user`` at all."""
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    handler = _ci_note_handler({"username": "ci", "bot": True})
+
     monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
     assert remote_state(target, "tok").summary is not None
+
+
+def test_a_ci_token_ignores_an_overview_a_person_pasted(monkeypatch):
+    """The markers are copyable; a contributor's account is not a bot account."""
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    handler = _ci_note_handler({"username": "impostor", "bot": False})
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    assert remote_state(target, "tok").summary is None
 
 
 def test_remote_state_reports_no_summary_when_roborak_has_not_spoken(monkeypatch):
@@ -1087,3 +1127,30 @@ def test_state_written_before_the_overview_cache_still_reads(tmp_path):
     assert record.fingerprints == {"abc123"}
     assert record.last_flow_digest == ""
     assert record.last_walkthrough is None
+
+
+def test_a_new_flow_drops_the_overview_it_did_not_narrate(tmp_path):
+    """Keeping it would serve the old change's narrative under the new digest."""
+    from roborak.state.store import StateStore
+
+    store = StateStore(tmp_path)
+    key = "gitlab:gitlab.com:acme/web#298"
+    store.record(key, [], "sha1", flow_digest="flowA", walkthrough={"summary": "old"})
+
+    store.record(key, [], "sha2", flow_digest="flowB")
+
+    record = store.get(key)
+    assert record.last_flow_digest == "flowB"
+    assert record.last_walkthrough is None
+
+
+def test_an_unchanged_flow_keeps_its_cached_overview(tmp_path):
+    from roborak.state.store import StateStore
+
+    store = StateStore(tmp_path)
+    key = "gitlab:gitlab.com:acme/web#298"
+    store.record(key, [], "sha1", flow_digest="flowA", walkthrough={"summary": "old"})
+
+    store.record(key, [], "sha2", flow_digest="flowA")
+
+    assert store.get(key).last_walkthrough == {"summary": "old"}

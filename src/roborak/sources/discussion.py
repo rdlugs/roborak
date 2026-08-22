@@ -54,7 +54,7 @@ def _gitlab_comments(client: ForgeClient, target: Target, *, head_sha: str) -> l
         ):
             continue
         for note in notes:
-            if note.get("system") or _is_bot(note.get("author"), provider="gitlab"):
+            if note.get("system") or is_bot(note.get("author"), provider="gitlab"):
                 continue
             position = note.get("position")
             position = position if isinstance(position, dict) else None
@@ -108,7 +108,7 @@ def _comment_from(
     position: dict[str, Any] | None = None,
 ) -> ReviewComment | None:
     author = item.get("author") if provider == "gitlab" else item.get("user")
-    if _is_bot(author, provider=provider):
+    if is_bot(author, provider=provider):
         return None
     body = str(item.get("body") or "").strip()
     if not body or _is_roborak(body):
@@ -127,7 +127,8 @@ def _comment_from(
     )
 
 
-def _is_bot(author: object, *, provider: str) -> bool:
+def is_bot(author: object, *, provider: str) -> bool:
+    """Whether the forge itself says this account is a bot, not a person."""
     if not isinstance(author, dict):
         return False
     if provider == "gitlab":
