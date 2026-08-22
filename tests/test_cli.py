@@ -1187,7 +1187,7 @@ def test_post_skips_the_prompt_entirely(repo: Path, monkeypatch):
     }
 
 
-def _empty_mr_session(monkeypatch) -> list[dict[str, object]]:
+def _empty_mr_session(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """Stand a --mr 298 review up over a changeset with no files at all.
 
     Reports one entry per publisher run, so a test can tell a single clean
@@ -1271,6 +1271,135 @@ def test_post_publishes_an_empty_changeset_exactly_once(repo: Path, monkeypatch)
 
     assert result.exit_code == EXIT_OK, result.output
     assert len(runs) == 1, runs
+
+
+PR_URL = "https://github.com/acme/web/pull/57"
+
+
+def _with_github_origin(repo: Path) -> None:
+    """Give the repository the remote a bare ``--pr 21`` needs to name a project."""
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/acme/web.git"],
+        cwd=repo,
+        check=True,
+    )
+
+
+def _empty_pr_session(
+    monkeypatch: pytest.MonkeyPatch, *, number: int = 57
+) -> list[dict[str, object]]:
+    """The same empty review, but stated as --pr and paired with --issue.
+
+    The reported failure came from that combination: an issue alongside a
+    stated pull request must not cost the run its target. ``number`` is the
+    pull request the forge hands back, so a test can assert the run published
+    to the request it was given.
+    """
+    from roborak.core.models import ChangeSet, ForgeRef
+    from roborak.sources.forge import Target
+
+    changeset = ChangeSet(
+        files=[],
+        origin="github",
+        head_sha="head333",
+        forge_ref=ForgeRef(
+            provider="github",
+            host="github.com",
+            project="acme/web",
+            number=number,
+            base_sha="base111",
+            head_sha="head333",
+        ),
+    )
+
+    monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
+    monkeypatch.setattr("roborak.cli.shared.load_issue", lambda t, tok: _stub_issue())
+    monkeypatch.setattr(
+        "roborak.cli.commands.review.remote_state", lambda target, token: RemoteState()
+    )
+
+    class FakeSource:
+        def __init__(self, target: Target, token: str) -> None:
+            pass
+
+        def load(self) -> ChangeSet:
+            return changeset
+
+    monkeypatch.setattr("roborak.cli.shared.GitHubSource", FakeSource)
+
+    runs: list[dict[str, object]] = []
+
+    class FakePublisher:
+        def __init__(
+            self,
+            *,
+            target,
+            token,
+            post_inline,
+            post_summary,
+            seen_fingerprints,
+            summary_ref=None,
+            summary_refreshed=False,
+        ):
+            self._run = {
+                "number": target.number,
+                "post_inline": post_inline,
+                "post_summary": post_summary,
+            }
+
+        def publish(self, result):
+            from roborak.publish.base import PublishReport
+
+            runs.append(self._run)
+            return PublishReport()
+
+    monkeypatch.setattr("roborak.cli.commands.review.GitHubPublisher", FakePublisher)
+    _make_interactive(monkeypatch)
+    return runs
+
+
+def test_post_publishes_an_empty_pull_request_reviewed_against_an_issue(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--pr with --issue still has a target, so an empty review is published."""
+    runs = _empty_pr_session(monkeypatch)
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "--no-llm",
+            "--pr",
+            PR_URL,
+            "--issue",
+            "https://github.com/acme/web/issues/42",
+            "--post",
+            "-C",
+            str(repo),
+        ],
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert runs == [{"number": 57, "post_inline": True, "post_summary": True}]
+
+
+def test_post_publishes_an_empty_numbered_pull_request_reviewed_against_an_issue(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported form: bare numbers, which resolve the project from the remote.
+
+    ``--pr 21`` takes a different road through ``parse_target`` than a full URL
+    does -- host and project come from the git remote rather than the argument --
+    so the URL test above says nothing about the command that actually failed.
+    """
+    _with_github_origin(repo)
+    runs = _empty_pr_session(monkeypatch, number=21)
+    result = runner.invoke(
+        app,
+        ["review", "--no-llm", "--pr", "21", "--issue", "18", "--post", "-C", str(repo)],
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert runs == [{"number": 21, "post_inline": True, "post_summary": True}]
 
 
 def _gitlab_changeset(files: bool = True):
