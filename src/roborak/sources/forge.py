@@ -344,19 +344,22 @@ class ForgeClient:
             raise SourceError(
                 f"{self.target.host} rejected the token. Check "
                 f"{'GITLAB_TOKEN' if self.target.provider == 'gitlab' else 'GITHUB_TOKEN'} "
-                f"or forge.tokens.{self.target.provider} in the config."
+                f"or forge.tokens.{self.target.provider} in the config.",
+                status=401,
             )
         if response.status_code == 403:
-            raise SourceError(f"Not permitted: {method} {path} on {self.target.host}.")
+            raise SourceError(f"Not permitted: {method} {path} on {self.target.host}.", status=403)
         if response.status_code == 404:
             raise SourceError(
                 f"Not found: {self.target.project} #{self.target.number} on {self.target.host}. "
-                "Check the project path and that the token can see it."
+                "Check the project path and that the token can see it.",
+                status=404,
             )
         if response.status_code >= 400:
             raise SourceError(
                 f"{self.target.host} returned {response.status_code} for {method} {path}: "
-                f"{response.text[:300]}"
+                f"{response.text[:300]}",
+                status=response.status_code,
             )
 
         return response

@@ -1019,6 +1019,22 @@ def test_a_ci_token_ignores_an_overview_a_person_pasted(monkeypatch):
     assert remote_state(target, "tok").summary is None
 
 
+def test_a_failing_user_lookup_does_not_weaken_the_ownership_check(monkeypatch):
+    """A 5xx is the forge stumbling, not an answer; it must not trust the marker."""
+    from roborak.publish.base import remote_state
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(503, text="service unavailable")
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr("roborak.publish.base.ForgeClient", lambda t, tok: client_with(handler, t))
+    with pytest.raises(SourceError):
+        remote_state(target, "tok")
+
+
 def test_remote_state_reports_no_summary_when_roborak_has_not_spoken(monkeypatch):
     from roborak.publish.base import remote_state
 

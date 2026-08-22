@@ -226,6 +226,10 @@ def _absorb(item: Any, bodies: list[str]) -> str:
     return body
 
 
+#: Statuses that mean the forge answered: this token cannot name itself.
+_UNIDENTIFIABLE = frozenset({401, 403, 404})
+
+
 def _viewer(client: ForgeClient) -> str:
     """Who the publishing token speaks as, or ``""`` when it will not say.
 
@@ -234,11 +238,18 @@ def _viewer(client: ForgeClient) -> str:
     so ``_offer`` falls back to the weaker test there; treating it as one would
     report no published overview on every CI run and duplicate the comment each
     time.
+
+    Only a refusal counts as unanswerable. A timeout, a rate limit or a 5xx is
+    the forge failing to answer a question it would have answered, and letting
+    that weaken the ownership test would hand any bot account the markers on a
+    bad afternoon. Those propagate.
     """
     try:
         who = client.get("/user")
     except SourceError as exc:
-        log.debug("could not identify the publishing token (%s); trusting the marker", exc)
+        if exc.status not in _UNIDENTIFIABLE:
+            raise
+        log.debug("the publishing token may not name itself (%s); trusting the marker", exc)
         return ""
     if not isinstance(who, dict):
         return ""
