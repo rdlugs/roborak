@@ -1,6 +1,6 @@
 [project]
 name = "roborak"
-version = "0.2.0"
+version = "0.2.0rc1"
 description = "AI code review from the terminal — local diffs, GitLab MRs, and GitHub PRs."
 readme = "README.md"
 keywords = ["code-review", "llm", "gitlab", "github", "static-analysis", "cli"]
