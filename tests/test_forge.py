@@ -940,6 +940,26 @@ def test_an_overview_too_large_to_ride_along_is_left_behind():
     assert encode_walkthrough(incompressible) == "", "dropped rather than truncated"
 
 
+def test_a_zip_bomb_in_the_marker_never_gets_room_to_expand():
+    """The token comes off a comment anyone can edit, so the decoder bounds it."""
+    import base64
+    import zlib
+
+    from roborak.render.markdown import MAX_WALKTHROUGH_PAYLOAD, decode_walkthrough
+
+    bomb = base64.b64encode(zlib.compress(b"\0" * (MAX_WALKTHROUGH_PAYLOAD * 4), 9)).decode()
+
+    assert len(bomb) < 8192, "a few kilobytes standing for many megabytes"
+    assert decode_walkthrough(bomb) is None
+
+
+def test_an_oversized_marker_is_rejected_before_it_is_decoded():
+    """Nothing honest reaches the encoder's ceiling, so nothing past it is read."""
+    from roborak.render.markdown import MAX_WALKTHROUGH_MARKER, decode_walkthrough
+
+    assert decode_walkthrough("A" * (MAX_WALKTHROUGH_MARKER + 4)) is None
+
+
 def test_a_realistic_overview_is_a_small_fraction_of_the_comment_budget():
     """Prose deflates well, so carrying it costs the review almost nothing."""
     from roborak.core.models import FileSummary, Walkthrough

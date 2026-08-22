@@ -636,6 +636,15 @@ way when a very large review needs the room. Losing it costs one model call on
 the next run, which is the cheaper half of the trade."""
 
 
+MAX_WALKTHROUGH_PAYLOAD = 1 << 20
+"""Ceiling on what a marker is allowed to inflate to, in bytes.
+
+The token comes off a comment anyone can edit, and deflate lets a few kilobytes
+of it stand for gigabytes once expanded. Stopping the decompressor at a bound no
+honest overview comes near keeps a crafted marker from eating the process.
+Anything larger is treated as unreadable, the same as any other bad marker."""
+
+
 def encode_walkthrough(walkthrough: Walkthrough | None) -> str:
     """The overview as one marker-safe token, or ``""`` when it cannot ride along.
 
@@ -659,10 +668,14 @@ def decode_walkthrough(token: str) -> Walkthrough | None:
     The caller then narrates the change again, which costs a model call but is
     never wrong.
     """
-    if not token:
+    if not token or len(token) > MAX_WALKTHROUGH_MARKER:
         return None
     try:
-        raw = zlib.decompress(base64.b64decode(token.encode("ascii"), validate=True))
+        packed = base64.b64decode(token.encode("ascii"), validate=True)
+        pump = zlib.decompressobj()
+        raw = pump.decompress(packed, MAX_WALKTHROUGH_PAYLOAD)
+        if pump.unconsumed_tail:
+            return None
         return Walkthrough.model_validate_json(raw)
     except (ValueError, zlib.error, ValidationError):
         return None
