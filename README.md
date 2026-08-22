@@ -15,7 +15,7 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 [![Forges](https://img.shields.io/badge/forges-GitLab%20%7C%20GitHub-FC6D26?logo=gitlab&logoColor=white)](#tokens)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
 
-[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [License](LICENSE.md)
+[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [Security](SECURITY.md) · [License](LICENSE.md)
 
 </div>
 
