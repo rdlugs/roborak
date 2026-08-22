@@ -8,6 +8,7 @@
 
 Severity-graded, line-anchored findings with committable fix suggestions.
 
+[![PyPI](https://img.shields.io/pypi/v/roborak?logo=pypi&logoColor=white)](https://pypi.org/project/roborak/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-434%20passing-2ea44f)](#development)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
@@ -38,15 +39,32 @@ static analysis, custom rules, posting and every output mode work end to end.
 ## Install
 
 ```bash
-uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
-export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY, GEMINI_API_KEY, …
+uvx roborak review       # try it without installing anything
 ```
 
 ```bash
-uv run roborak review    # review everything that differs from the base branch
+uv tool install roborak             # or: pipx install roborak
+export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY, GEMINI_API_KEY, …
+roborak review           # review everything that differs from the base branch
 ```
 
-That is the whole quick start. Everything below is optional.
+`rk` is a shorter alias for the same command. That is the whole quick start.
+Everything below is optional.
+
+<details>
+<summary><b>From a checkout instead</b></summary>
+
+<br>
+
+```bash
+uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
+uv run roborak review
+```
+
+The `ast` extra pulls in tree-sitter for AST context; `uvx roborak[ast]` and
+`uv tool install "roborak[ast]"` get the same thing from the released package.
+
+</details>
 
 <details>
 <summary><b>Keys in the config file instead of the shell</b></summary>

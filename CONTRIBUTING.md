@@ -133,10 +133,32 @@ catch.
    interactive rk setup wizard for first-run configuration`.
 4. Run the checks above, and update `README.md` when you change a flag, a config
    key, or an exit code.
-5. Open the PR against `main`. CI must be green on both Python versions.
+5. Open the PR against `main`. CI must be green on every leg — three operating
+   systems by three Python versions.
 
 Dogfooding is encouraged: `uv run roborak review --base main` on your own branch
 before you ask anyone else to read it.
+
+## Releasing
+
+Releases are cut from a tag and published to PyPI by
+[`.github/workflows/release.yml`](.github/workflows/release.yml). There is no
+token to manage: PyPI is configured to trust that workflow through OIDC, and the
+job mints a short-lived credential per run.
+
+1. Land the changes, and wait for CI to be green on `main`.
+2. Bump `version` in `pyproject.toml`. Nothing else records the version —
+   `roborak.__version__` reads it back from the installed metadata.
+3. Move the `## [Unreleased]` entries in `CHANGELOG.md` under a new
+   `## [x.y.z] - YYYY-MM-DD` heading, and update the link references at the
+   bottom. The release job uses that section verbatim as the GitHub Release body,
+   so the heading format matters.
+4. `git tag vx.y.z && git push origin vx.y.z`.
+
+The job refuses to publish if the tag and the packaged version disagree, or if
+the changelog has no section for it. A tag ending in `rc` is marked a
+pre-release, which is the way to rehearse the whole path — a PyPI version number
+can never be reused, even after the file is deleted.
 
 ## Reporting bugs
 

@@ -6,8 +6,10 @@ find a way to break any of that, please tell us privately first.
 
 ## Supported versions
 
-roborak is pre-1.0 and has no tagged releases yet. Security fixes land on `main`,
-and only the latest published version is supported. There is no backport branch.
+roborak is pre-1.0. Only the latest release on PyPI is supported: security fixes
+land on `main` and go out in the next release. There is no backport branch, so an
+older version is fixed by upgrading to the current one. `roborak --version` reports
+which one you are on.
 
 ## Reporting a vulnerability
 
