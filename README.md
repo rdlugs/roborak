@@ -14,9 +14,10 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![Providers](https://img.shields.io/badge/LLM-any%20LiteLLM%20model-8A2BE2)](https://docs.litellm.ai/docs/providers)
 [![Forges](https://img.shields.io/badge/forges-GitLab%20%7C%20GitHub-FC6D26?logo=gitlab&logoColor=white)](#tokens)
+[![Docs](https://img.shields.io/badge/docs-roborak.pages.dev-22D3EE)](https://roborak.pages.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/rdlugs/roborak/blob/main/LICENSE.md)
 
-[Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [Security](https://github.com/rdlugs/roborak/blob/main/SECURITY.md) · [License](https://github.com/rdlugs/roborak/blob/main/LICENSE.md)
+[Documentation](https://roborak.pages.dev) · [Install](#install) · [Usage](#use) · [How it works](#how-it-works) · [Configuration](#configuration) · [Security](https://github.com/rdlugs/roborak/blob/main/SECURITY.md) · [License](https://github.com/rdlugs/roborak/blob/main/LICENSE.md)
 
 </div>
 

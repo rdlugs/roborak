@@ -39,6 +39,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/rdlugs/roborak"
+Documentation = "https://roborak.pages.dev"
 Source = "https://github.com/rdlugs/roborak"
 Issues = "https://github.com/rdlugs/roborak/issues"
 Changelog = "https://github.com/rdlugs/roborak/blob/main/CHANGELOG.md"

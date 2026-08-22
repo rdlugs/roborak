@@ -23,6 +23,11 @@ wheels/
 .env.*
 !.env.example
 
+# Docs website (docs/): Node deps and the Vite build. The build is produced by
+# Cloudflare Pages from source, so it is never committed.
+node_modules/
+docs/dist/
+
 # Test and type-check caches
 .coverage
 .coverage.*
@@ -38,3 +43,6 @@ evals/eval-results.json
 .idea/
 .vscode/
 .DS_Store
+
+# Copied out of node_modules by docs/scripts/copy-fonts.mjs at build time.
+docs/public/fonts/

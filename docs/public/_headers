@@ -1,0 +1,20 @@
+# Cloudflare Pages response headers. This file is copied verbatim into the
+# build output and read by Pages at serve time.
+#
+# Everything is locked to 'self': the site loads no third-party assets at all,
+# fonts included. Vite emits an external module script, so script-src needs no
+# 'unsafe-inline'; style-src still does, because React writes inline style
+# attributes for the few colours and widths that are computed.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+# Hashed bundles and fonts are immutable; the HTML is not.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable

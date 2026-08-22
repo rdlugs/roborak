@@ -10,6 +10,19 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Added
+
+- **A documentation website.** `README.md` had grown past what one scroll can
+  carry — around thirty `review` flags, a hundred-key config schema and an
+  eighteen-bullet "How it works" all competing for the same page. The site in
+  `docs/` splits that into a landing page and ten navigable documentation pages,
+  built with Vite, React Router and Tailwind and bundled to static assets.
+  Content is derived from `README.md`, `CONTRIBUTING.md`, the Typer `help=`
+  strings and `src/roborak/config_template.yaml`, so a reference page and
+  `--help` cannot drift apart unnoticed. Deployed to Cloudflare Pages; a
+  `Website` job in CI type-checks the site, builds it, and checks the bundle
+  carries its content.
+
 ## [0.3.0] - 2026-08-22
 
 ### Changed

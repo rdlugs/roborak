@@ -56,3 +56,40 @@ jobs:
 
       - name: Smoke-test the CLI
         run: uv run roborak --help
+
+  website:
+    name: Website
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: docs/.nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      # The build is the deploy: if this fails, Cloudflare Pages would fail too.
+      - name: Build the static site
+        run: npm run build
+
+      # A build that dropped a page still succeeds, so check the copy people
+      # actually read made it into the bundle.
+      - name: Check the build carries its content
+        run: |
+          test -f dist/index.html
+          test -f dist/_redirects
+          grep -rq "AI code review" dist/assets/
+          grep -rq "uvx roborak" dist/assets/
