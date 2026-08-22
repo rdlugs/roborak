@@ -10,6 +10,21 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Changed
+
+- **`setup` asks with the arrow keys.** Where the config goes and which model to
+  use are now lists you move through with ↑/↓ and Enter, instead of a number to
+  type and a provider-prefixed string to remember. Every list ends with
+  `Other (type it in)…`, so the curated model list stays a starting point rather
+  than a ceiling — any LiteLLM model string is still accepted. Keys, tokens and
+  self-hosted domains are unchanged: free text, and secrets still unechoed. The
+  lists are styled to the palette the rest of the CLI uses — cyan for a path or
+  the row you are on, green for a settled answer, dim for an aside — so setup no
+  longer looks like a different program mid-run.
+- **`setup` without a terminal no longer errors.** A piped or CI invocation gets
+  the previous line-based prompts and can be answered from stdin; with nothing on
+  stdin it writes nothing and exits 0 instead of failing with "needs a terminal".
+
 ## [0.2.0] - 2026-08-22
 
 First public release, and the first version on PyPI. `uvx roborak review` now

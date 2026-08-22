@@ -326,6 +326,15 @@ sparse file, so every other default stays live across upgrades. It chmods 600
 whatever it writes that holds secrets, wherever it wrote it. `config init` remains
 the manual path, and the full annotated file to edit.
 
+In a terminal the closed questions — where the file goes, which model — are
+arrow-key lists rather than strings to type. Every list ends with
+`Other (type it in)…`, because the model list can only ever be a starting point:
+roborak takes any LiteLLM model string. Keys, tokens and a self-hosted domain
+stay free text, and keys are never echoed. Run it without a terminal — piped, or
+in CI — and the same questions come back as plain line prompts reading stdin, so
+`printf '1\n\nsk-ant-…\n\n\n' | rk setup` works; with nothing on stdin it
+writes nothing and exits 0 rather than waiting.
+
 ```yaml
 version: 1
 

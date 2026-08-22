@@ -578,11 +578,34 @@ def test_config_show_names_an_explicit_config_file(repo: Path, tmp_path: Path):
 
 @pytest.fixture
 def wizard(monkeypatch):
-    """Make the wizard answerable, and keep the real environment out of it."""
-    monkeypatch.setattr("roborak.cli.commands.setup_cmd._is_interactive", lambda: True)
+    """Pin the wizard to its line-based path, and keep the real environment out.
+
+    CliRunner already fails the tty test, so this only makes explicit what these
+    tests rely on: typed answers fed as a flat string, no arrow keys involved.
+    """
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd._is_interactive", lambda: False)
     monkeypatch.setattr("roborak.cli.commands.setup_cmd.get_token", lambda *a, **k: None)
     for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITLAB_TOKEN", "GITHUB_TOKEN"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def picker(monkeypatch, wizard):
+    """The selector path: a terminal, with the arrow-key lists answered for us.
+
+    ``_select`` is the seam. Patching it keeps the test off a pty while still
+    driving the real branch, the same way the tty predicates are patched
+    elsewhere in this file.
+    """
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd._is_interactive", lambda: True)
+    answers: list[str] = []
+
+    def choose(label, choices):
+        assert answers, f"no canned answer left for {label!r}"
+        return answers.pop(0)
+
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd._select", choose)
+    return answers
 
 
 def test_setup_writes_a_config_that_round_trips(wizard, repo: Path, user_config: Path):
@@ -689,11 +712,119 @@ def test_setup_reprompts_on_a_host_that_is_a_url_path(wizard, user_config: Path)
 
 
 def test_setup_without_a_terminal_exits_instead_of_hanging(user_config: Path):
-    """CliRunner fails the tty test naturally, exactly as a CI runner does."""
-    result = runner.invoke(app, ["setup"], input="1\n")
-    assert result.exit_code == EXIT_ERROR
-    assert "needs a terminal" in flatten(result.output)
+    """CliRunner fails the tty test naturally, exactly as a CI runner does.
+
+    Nothing on stdin means the first question hits EOF, so it aborts rather than
+    waiting for an answer nobody is there to give.
+    """
+    result = runner.invoke(app, ["setup"], input="")
+    assert result.exit_code == EXIT_OK
+    assert "aborted" in flatten(result.output)
+    assert "rk config init" in flatten(result.output)
     assert not user_config.exists()
+
+
+def test_setup_without_a_terminal_still_answers_from_a_pipe(user_config: Path, monkeypatch):
+    """A non-tty is no longer fatal: piped answers drive the line-based path."""
+    monkeypatch.setattr("roborak.cli.commands.setup_cmd.get_token", lambda *a, **k: None)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["setup"], input="1\n\nsk-ant-piped\n\n\n")
+    assert result.exit_code == EXIT_OK, result.output
+    written = yaml.safe_load(user_config.read_text(encoding="utf-8"))
+    assert written["llm"]["api_keys"]["anthropic"] == "sk-ant-piped"
+
+
+def test_setup_picks_the_destination_from_a_list(picker, repo: Path, user_config: Path):
+    """No number typing: the choice is the value, and the input is only free text."""
+    picker.extend(["project", "anthropic/claude-opus-5"])
+    result = runner.invoke(app, ["setup", "-C", str(repo)], input="sk-ant\n\n\n")
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert not user_config.exists()
+    written = yaml.safe_load((repo / ".roborak.yaml").read_text(encoding="utf-8"))
+    assert written["llm"]["model"] == "anthropic/claude-opus-5"
+
+
+def test_setup_picks_a_known_model_without_typing_it(picker, user_config: Path):
+    picker.extend(["user", "gemini/gemini-2.5-pro"])
+    result = runner.invoke(app, ["setup"], input="sk-gemini\n\n\n")
+
+    assert result.exit_code == EXIT_OK, result.output
+    written = yaml.safe_load(user_config.read_text(encoding="utf-8"))
+    assert written["llm"]["model"] == "gemini/gemini-2.5-pro"
+
+
+def test_setup_falls_through_to_free_text_on_other(picker, repo: Path, user_config: Path):
+    """A curated list is not a ceiling -- `Other` lands in the typed prompt."""
+    from roborak.cli.commands.setup_cmd import OTHER
+
+    picker.extend([OTHER, OTHER])
+    result = runner.invoke(
+        app,
+        ["setup", "-C", str(repo)],
+        input=f"{repo / 'typed.yaml'}\nollama/llama3\n\n\n",
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    written = yaml.safe_load((repo / "typed.yaml").read_text(encoding="utf-8"))
+    assert written["llm"]["model"] == "ollama/llama3"
+
+
+def test_setup_aborts_when_the_selector_is_cancelled(picker, monkeypatch, user_config: Path):
+    """Ctrl-C in a list is the same event as an EOF in a prompt."""
+    from roborak.cli.commands import setup_cmd
+
+    def cancel(label, choices):
+        raise setup_cmd.Aborted
+
+    monkeypatch.setattr(setup_cmd, "_select", cancel)
+    result = runner.invoke(app, ["setup"], input="")
+
+    assert result.exit_code == EXIT_OK
+    assert "aborted" in flatten(result.output)
+    assert not user_config.exists()
+
+
+def test_select_appends_the_escape_hatch_and_maps_both_exits_to_abort(monkeypatch):
+    """The two things `_select` owns, tested without a terminal."""
+    import questionary
+
+    from roborak.cli.commands.setup_cmd import OTHER, Aborted, _select
+
+    seen: dict[str, object] = {}
+
+    class FakeQuestion:
+        def __init__(self, answer):
+            self._answer = answer
+
+        def ask(self):
+            if isinstance(self._answer, BaseException):
+                raise self._answer
+            return self._answer
+
+    def fake_select(label, choices, **kwargs):
+        seen["titles"] = [choice.title for choice in choices]
+        return FakeQuestion(seen["answer"])
+
+    monkeypatch.setattr(questionary, "select", fake_select)
+
+    seen["answer"] = "user"
+    assert _select("Where?", [questionary.Choice(title="~/x", value="user")]) == "user"
+    assert seen["titles"][-1] == "Other (type it in)…"
+
+    seen["answer"] = OTHER
+    assert _select("Where?", [questionary.Choice(title="~/x", value="user")]) == OTHER
+
+    # Ctrl-C: questionary swallows it and hands back None.
+    seen["answer"] = None
+    with pytest.raises(Aborted):
+        _select("Where?", [questionary.Choice(title="~/x", value="user")])
+
+    # A stdin that ends: prompt_toolkit raises, and questionary does not catch it.
+    seen["answer"] = EOFError()
+    with pytest.raises(Aborted):
+        _select("Where?", [questionary.Choice(title="~/x", value="user")])
 
 
 def test_help_lists_the_setup_command():
