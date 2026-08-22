@@ -122,6 +122,8 @@ def _remote_url(remote: str, repo: Path | None) -> str | None:
         cwd=repo,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -252,7 +254,12 @@ def get_token(provider: Provider, forge: ForgeConfig | None = None) -> str | Non
 
     if provider == "github" and shutil.which("gh"):
         result = subprocess.run(
-            ["gh", "auth", "token"], capture_output=True, text=True, check=False
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
         if result.returncode == 0 and (token := result.stdout.strip()):
             return token

@@ -16,13 +16,29 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # Windows is not green yet: the static runner hardcodes POSIX paths and
+    # adapter discovery assumes .venv/bin. Report it without blocking PRs, and
+    # drop this once those are fixed.
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
-      # Report both interpreters; one failing tells you nothing about the other.
+      # Report every leg; one failing tells you nothing about the others.
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13"]
+        # Every interpreter we claim to support, on Linux.
+        os: [ubuntu-latest]
+        python: ["3.12", "3.13", "3.14"]
+        experimental: [false]
+        include:
+          # The other platforms get one leg each, on the newest interpreter.
+          - os: macos-latest
+            python: "3.14"
+            experimental: false
+          - os: windows-latest
+            python: "3.14"
+            experimental: true
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7

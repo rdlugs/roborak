@@ -8,11 +8,14 @@ allowed to leak into the report.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from roborak.core.models import ChangedFile, Finding
+
+_WINDOWS = os.name == "nt"
 
 
 @dataclass
@@ -36,15 +39,26 @@ class Adapter:
         with, so it wins over whatever happens to be on PATH.
         """
         for candidate in self.local_paths(repo):
-            if candidate.is_file() and candidate.stat().st_mode & 0o111:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
                 return str(candidate)
         return shutil.which(self.binary)
 
     def local_paths(self, repo: Path) -> list[Path]:
+        """Every place a project-local copy of the tool might sit, best first.
+
+        Windows keeps virtualenv entry points in ``Scripts`` rather than ``bin``,
+        and reaches them through a suffix from ``PATHEXT`` -- npm ships ``.cmd``
+        shims, uv ships ``.exe``. A bare name matches nothing there.
+        """
+        directories = [
+            repo / "node_modules" / ".bin",
+            repo / "vendor" / "bin",
+            repo / ".venv" / ("Scripts" if _WINDOWS else "bin"),
+        ]
+        # The empty suffix first keeps POSIX lookup exactly as it was.
+        suffixes = ("", ".exe", ".cmd", ".bat") if _WINDOWS else ("",)
         return [
-            repo / "node_modules" / ".bin" / self.binary,
-            repo / "vendor" / "bin" / self.binary,
-            repo / ".venv" / "bin" / self.binary,
+            directory / f"{self.binary}{suffix}" for directory in directories for suffix in suffixes
         ]
 
     def applicable(self, files: list[ChangedFile]) -> list[ChangedFile]:
