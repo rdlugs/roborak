@@ -59,6 +59,19 @@ def stdout_is_a_terminal() -> bool:
     return sys.stdout.isatty()
 
 
+def is_interactive() -> bool:
+    """Whether there is a human here to answer a question.
+
+    Both halves matter: a redirected stdout means the output is being captured
+    rather than read, and a non-tty stdin means nobody could answer anyway.
+    Typer's ``CliRunner`` and every CI runner fail the second test, which is what
+    keeps them from hanging on a prompt. Asked of the streams directly rather
+    than of a console, because a console may be stderr, and stderr staying a
+    terminal says nothing about whether stdout was piped into a file.
+    """
+    return sys.stdout.isatty() and sys.stdin.isatty()
+
+
 def fail(console: Console, message: str) -> NoReturn:
     console.print(f"[bold red]error[/] {message}")
     raise typer.Exit(EXIT_ERROR)

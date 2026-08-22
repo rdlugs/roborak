@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -13,6 +12,7 @@ from rich.console import Console
 from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
 from roborak.cli.shared import fail
+from roborak.cli.shared import is_interactive as _is_interactive
 from roborak.core.buckets import Bucket, group
 from roborak.core.models import Finding, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
@@ -329,19 +329,6 @@ def _report_publish(console: Console, report: PublishReport) -> None:
 
 
 DEFAULT_REPORT_NAME = "roborak-review.md"
-
-
-def _is_interactive() -> bool:
-    """Whether there is a human here to answer.
-
-    Both halves matter: a redirected stdout means the report is being captured
-    rather than read, and a non-tty stdin means nobody could answer anyway.
-    Typer's ``CliRunner`` and every CI runner fail the second test, which is what
-    keeps them from hanging. Asked of the streams directly rather than of the
-    console, because the console is stderr now and stderr staying a terminal says
-    nothing about whether stdout was piped into a file.
-    """
-    return sys.stdout.isatty() and sys.stdin.isatty()
 
 
 def _offer_to_share(
