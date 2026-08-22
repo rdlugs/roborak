@@ -1,6 +1,8 @@
 name: Release
 
 # Tag a commit CI has already passed; this workflow does not re-run the matrix.
+# It publishes the package and GitHub Release before deploying that exact tag's
+# documentation to Cloudflare Pages.
 on:
   push:
     tags: ["v*"]
@@ -106,3 +108,39 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             ${{ contains(github.ref_name, 'rc') && '--prerelease' || '' }}
+
+  deploy-docs:
+    name: Deploy docs to Cloudflare Pages
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Check out the released version
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: docs/.nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the static site
+        run: npm run build
+
+      - name: Deploy the released site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs/dist --project-name=roborak --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}

@@ -178,8 +178,8 @@ version it precedes, and the GitHub Release is marked a pre-release.
 ## Working on the website
 
 The documentation site lives in `docs/`: Vite, React Router and Tailwind, built
-to a single-page app and deployed to Cloudflare Pages from `main`. Node 20 or
-newer.
+to a single-page app and deployed to Cloudflare Pages when a release is cut.
+Node 20 or newer.
 
 ```bash
 cd docs
