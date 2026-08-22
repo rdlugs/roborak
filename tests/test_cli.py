@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -201,7 +202,7 @@ def test_markdown_report_is_written(repo: Path, tmp_path: Path):
     )
     assert result.exit_code == EXIT_OK
     assert out.is_file()
-    assert out.read_text().startswith("#")
+    assert out.read_text(encoding="utf-8").startswith("#")
 
 
 def test_mr_and_pr_are_mutually_exclusive(repo: Path):
@@ -508,7 +509,8 @@ def test_global_init_writes_the_user_config(user_config: Path):
 
 def test_global_init_is_not_world_readable(user_config: Path):
     runner.invoke(app, ["config", "init", "--global"])
-    assert user_config.stat().st_mode & 0o077 == 0
+    if os.name != "nt":  # Windows synthesises st_mode; the bits mean nothing there
+        assert user_config.stat().st_mode & 0o077 == 0
 
 
 def test_global_init_refuses_to_overwrite_without_force(user_config: Path):
@@ -517,10 +519,12 @@ def test_global_init_refuses_to_overwrite_without_force(user_config: Path):
 
     second = runner.invoke(app, ["config", "init", "--global"])
     assert second.exit_code == EXIT_ERROR
-    assert "# hand-edited" in user_config.read_text(), "must not clobber a real config"
+    assert "# hand-edited" in user_config.read_text(encoding="utf-8"), (
+        "must not clobber a real config"
+    )
 
     assert runner.invoke(app, ["config", "init", "--global", "--force"]).exit_code == EXIT_OK
-    assert "# hand-edited" not in user_config.read_text()
+    assert "# hand-edited" not in user_config.read_text(encoding="utf-8")
 
 
 def test_global_and_dir_together_are_refused(repo: Path, user_config: Path):
@@ -539,7 +543,7 @@ def test_global_init_is_picked_up_by_show(repo: Path, user_config: Path):
 
 def test_the_scaffolded_file_is_the_commented_template(repo: Path):
     runner.invoke(app, ["config", "init", "-C", str(repo)])
-    written = (repo / ".roborak.yaml").read_text()
+    written = (repo / ".roborak.yaml").read_text(encoding="utf-8")
 
     assert written.startswith("# roborak configuration")
     assert "check_requirements" in written
@@ -591,7 +595,7 @@ def test_setup_writes_a_config_that_round_trips(wizard, repo: Path, user_config:
 
 def test_setup_writes_only_the_answered_keys(wizard, user_config: Path):
     runner.invoke(app, ["setup"], input="1\n\nsk-ant-secret\n\n\n")
-    written = yaml.safe_load(user_config.read_text())
+    written = yaml.safe_load(user_config.read_text(encoding="utf-8"))
 
     assert set(written) == {"version", "llm"}
     assert set(written["llm"]) == {"model", "api_keys"}
@@ -601,12 +605,13 @@ def test_setup_skips_the_key_when_the_environment_has_one(wizard, monkeypatch, u
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
     result = runner.invoke(app, ["setup"], input="1\n\n\n\n")
     assert result.exit_code == EXIT_OK, result.output
-    assert "api_keys" not in yaml.safe_load(user_config.read_text())["llm"]
+    assert "api_keys" not in yaml.safe_load(user_config.read_text(encoding="utf-8"))["llm"]
 
 
 def test_setup_secures_the_user_config(wizard, user_config: Path):
     runner.invoke(app, ["setup"], input="1\n\nsk-ant-secret\n\n\n")
-    assert user_config.stat().st_mode & 0o077 == 0
+    if os.name != "nt":  # Windows synthesises st_mode; the bits mean nothing there
+        assert user_config.stat().st_mode & 0o077 == 0
 
 
 def test_setup_secures_a_project_config_too(wizard, repo: Path, user_config: Path):
@@ -615,7 +620,8 @@ def test_setup_secures_a_project_config_too(wizard, repo: Path, user_config: Pat
     assert result.exit_code == EXIT_OK, result.output
     written = repo / ".roborak.yaml"
     assert written.is_file()
-    assert written.stat().st_mode & 0o077 == 0
+    if os.name != "nt":  # Windows synthesises st_mode; the bits mean nothing there
+        assert written.stat().st_mode & 0o077 == 0
 
 
 def test_setup_warns_when_a_secret_file_is_not_gitignored(wizard, repo: Path, user_config: Path):
@@ -634,11 +640,13 @@ def test_setup_refuses_to_overwrite_without_force(wizard, user_config: Path):
 
     second = runner.invoke(app, ["setup"], input="1\n\nsk-ant\n\n\n")
     assert second.exit_code == EXIT_ERROR
-    assert "# hand-edited" in user_config.read_text(), "must not clobber a real config"
+    assert "# hand-edited" in user_config.read_text(encoding="utf-8"), (
+        "must not clobber a real config"
+    )
 
     forced = runner.invoke(app, ["setup", "--force"], input="1\n\nsk-ant\n\n\n")
     assert forced.exit_code == EXIT_OK
-    assert "# hand-edited" not in user_config.read_text()
+    assert "# hand-edited" not in user_config.read_text(encoding="utf-8")
 
 
 def test_setup_aborts_without_writing_anything(wizard, user_config: Path):
@@ -655,7 +663,7 @@ def test_setup_normalises_a_self_hosted_host(wizard, user_config: Path):
         ["setup"],
         input="1\n\nsk-ant\nglpat-x\nhttps://gitlab.acme.com/\n\n",
     )
-    written = yaml.safe_load(user_config.read_text())
+    written = yaml.safe_load(user_config.read_text(encoding="utf-8"))
     assert written["forge"]["hosts"]["gitlab"] == "gitlab.acme.com"
     assert written["forge"]["tokens"]["gitlab"] == "glpat-x"
 
@@ -668,7 +676,8 @@ def test_setup_reprompts_on_a_host_that_is_a_url_path(wizard, user_config: Path)
     )
     assert result.exit_code == EXIT_OK, result.output
     assert "must be a domain" in flatten(result.output)
-    assert yaml.safe_load(user_config.read_text())["forge"]["hosts"]["gitlab"] == "gitlab.acme.com"
+    hosts = yaml.safe_load(user_config.read_text(encoding="utf-8"))["forge"]["hosts"]
+    assert hosts["gitlab"] == "gitlab.acme.com"
 
 
 def test_setup_without_a_terminal_exits_instead_of_hanging(user_config: Path):
@@ -746,7 +755,7 @@ def test_a_local_review_offers_to_save_the_report(repo: Path, monkeypatch):
     assert "Save this review" in flatten(result.output)
     assert "[p] post" not in flatten(result.output)
     assert out.is_file()
-    assert "Returns the wrong value" in out.read_text()
+    assert "Returns the wrong value" in out.read_text(encoding="utf-8")
 
 
 def test_declining_the_save_writes_nothing(repo: Path, monkeypatch):
@@ -988,7 +997,7 @@ def test_the_prompt_can_save_a_forge_review_instead_of_posting(repo: Path, monke
     assert "[s] save as .md" in flatten(result.output)
     assert "published" not in built
     assert out.is_file()
-    assert "SQL injection" in out.read_text()
+    assert "SQL injection" in out.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("answer", ["n", "", "whatever"])
