@@ -1,0 +1,87 @@
+name: Review quality
+description: A finding roborak reported was wrong, missed, mis-anchored, or posted in the wrong place.
+labels: ["review-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is for the reviewer's judgement rather than the plumbing: false positives,
+        misses, wrong line numbers, findings routed inline that belonged in the summary.
+        These become eval cases, so a small reproducible diff is worth more than a long
+        description.
+
+        Please do not paste proprietary code or credentials — reduce it to a minimal
+        snippet you are comfortable publishing.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - False positive — reported something that is not a defect
+        - Miss — did not report a real defect
+        - Anchoring — right finding, wrong line or file
+        - Routing — inline vs. summary placement was wrong
+        - Severity — graded too high or too low
+        - Fix suggestion — the suggested patch was wrong or would not apply
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: snippet
+    attributes:
+      label: The diff or code under review
+      description: The smallest change that reproduces it.
+      render: diff
+    validations:
+      required: true
+
+  - type: textarea
+    id: reported
+    attributes:
+      label: What roborak said
+      description: The finding as it was rendered, including its severity and line reference.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should have said
+      description: Nothing at all, a different line, a different severity — be specific.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: roborak version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Reviewer quality depends on it, so this one matters.
+      placeholder: anthropic/claude-sonnet-5
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language of the reviewed code
+      placeholder: Python
+
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Reproducibility
+      options:
+        - label: I saw this on more than one run. (Model output varies; a single run may not repeat.)
+        - label: The snippet above contains no proprietary code and no credentials.
+          required: true

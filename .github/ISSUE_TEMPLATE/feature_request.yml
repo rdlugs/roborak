@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a flag, a config key, a new source, or a change in behaviour.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        roborak is feature complete for what it set out to do, so the bar for new surface
+        area is deliberately high — the strongest requests describe the workflow that is
+        currently awkward rather than the flag you have in mind.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do today, and where does roborak get in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+      description: A flag, a config key, a source, an output mode — sketch the interface if you have one in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Existing flags, config, or a wrapper script — and why they fall short.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the pipeline this touches
+      description: "Source → ChangeSet → Compressor → Static pass → LLM → Validator → Renderer"
+      options:
+        - Sources (local git, GitLab, GitHub, paths)
+        - Static analysis
+        - LLM and prompting
+        - Rendering and output modes
+        - Publishing to a forge
+        - CLI and configuration
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to open a PR for this.
