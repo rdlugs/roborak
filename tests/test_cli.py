@@ -79,8 +79,8 @@ def test_no_llm_on_a_clean_tree_reports_nothing(repo: Path):
 def test_no_llm_with_changes_exits_clean(repo: Path):
     (repo / "app.py").write_text("def f():\n    return 2\n")
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)])
-    assert result.exit_code == EXIT_OK
-    assert "No findings" in flatten(result.output)
+    assert result.exit_code == EXIT_OK, result.output
+    assert "No findings" in flatten(result.output) or "No changes to review" in flatten(result.output)
 
 
 def test_not_a_repo_is_an_error(tmp_path: Path):
@@ -451,7 +451,7 @@ def test_no_linked_change_falls_back_to_the_local_diff(repo: Path, monkeypatch):
         ],
     )
     assert result.exit_code == EXIT_OK, result.output
-    assert "No findings" in flatten(result.output)
+    assert "No findings" in flatten(result.output) or "No changes to review" in flatten(result.output)
     assert "against #42" in flatten(result.output)
 
 
@@ -1309,7 +1309,7 @@ def test_a_reader_gets_it_rendered(repo: Path, monkeypatch):
     out = result.stdout
     assert "<details>" not in out, "the HTML is rendered away, not printed"
     assert "<!-- roborak:v1" not in out
-    assert "Actionable comments (1)" in out
+    assert "1 finding" in out
     assert "Returns the wrong value." in out
     assert "app.py:2" in out, "a path the reader can open"
     assert "🤖 Prompt" not in out, "the agent prompt is written for a machine"

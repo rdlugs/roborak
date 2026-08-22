@@ -221,6 +221,10 @@ def review(
         remote = _remote_state(console, session.target, session.token, result, repost=repost)
         if remote is None:
             publishing = False
+    elif post and session.target is not None and session.token is not None:
+        # We wanted to publish, but _remote_state returned None (discovery failure)
+        # and already printed its own error.
+        pass
 
     overview = _overview_plan(
         session,
@@ -274,6 +278,23 @@ def review(
             repost=repost,
             already_written=markdown_out is not None,
         )
+    elif post and session.target is not None and session.token is not None and remote is not None:
+        if result.changeset.is_empty:
+            # Discovery was fine but the changeset was empty. Reviewer.review()
+            # returned early so we finish the publish here.
+            result.status = ReviewStatus.COMPLETE
+            _publish(
+                console,
+                session.repo,
+                session.target,
+                session.token,
+                result,
+                post_inline=True,
+                post_summary=False,  # No summary for empty changesets
+                repost=repost,
+                remote=remote,
+                overview=_Overview(),
+            )
 
     shared.finish(result, fail_on)
 
