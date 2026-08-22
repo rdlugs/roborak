@@ -47,23 +47,27 @@ behind any URL is greppable from one file.
 
 ## Deployment
 
-Cloudflare Pages, from this repository, on push to `main`:
+Cloudflare Pages, from this repository, after the release workflow creates the
+GitHub Release:
 
 | Setting | Value |
 |---|---|
-| Root directory | `docs` |
+| Project | `roborak` |
+| Workflow | `.github/workflows/release.yml` |
 | Build command | `npm ci && npm run build` |
-| Output directory | `dist` |
-| Environment | `NODE_VERSION=20` |
+| Upload directory | `docs/dist` |
+| GitHub secrets | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` |
 
-Both paths the build uses are relative to the root directory, not to the
-repository: with a root directory of `docs`, the output directory is `dist`, and
-`docs/dist` would be looked for at `docs/docs/dist`.
+The API token needs `Account / Cloudflare Pages / Edit` permission. In the
+Cloudflare Pages project's branch controls, automatic production deployments
+must be disabled and the preview branch setting must be `None`; otherwise the
+Git integration will still deploy pushes and pull requests independently of
+GitHub Actions.
 
 `public/_headers` sets the CSP and cache headers, and `public/_redirects` rewrites
 every path to `index.html` so deep links reach the router instead of a 404. Pages
-reads both from the build root. Pull requests get preview deployments
-automatically.
+reads both from the build root. Pull requests are built and checked by CI but
+are not deployed.
 
 Note that this is a single-page app: every URL serves the same `index.html`, and
 titles, descriptions and body copy are filled in by JavaScript. Crawlers that

@@ -28,6 +28,13 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   `--include-untracked` — have nothing to compare against there and are refused
   rather than quietly reinterpreted.
 
+### Changed
+
+- **The documentation site deploys only after a release is created.** Pull
+  requests and ordinary pushes still build the site in CI, but the release
+  workflow now uploads the released tag to Cloudflare Pages after publishing
+  the package and GitHub Release.
+
 ## [0.3.1] - 2026-08-23
 
 ### Added
