@@ -4,6 +4,9 @@ Thanks for taking the time. This file is also what roborak reads as repository
 context when reviewing changes here, so it doubles as the conventions document —
 keep it accurate.
 
+Everyone taking part here is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Getting set up
 
 ```bash
@@ -144,6 +147,9 @@ self-hosted.
 
 Please do not paste tokens or API keys into an issue — `roborak config show`
 redacts them, raw config files do not.
+
+Security problems do not go in the issue tracker. See
+[SECURITY.md](SECURITY.md) for the private reporting channel.
 
 ## License
 
