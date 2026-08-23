@@ -44,6 +44,7 @@ from roborak.core.severity import (
     Kind,
     Severity,
 )
+from roborak.core.verdict import Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.prompt_only import (
@@ -161,6 +162,7 @@ def render(
             sections.append(f"<!-- {FLOW_MARKER_PREFIX}:{flow} -->")
         if carried := encode_walkthrough(result.walkthrough):
             sections.append(f"<!-- {WALKTHROUGH_MARKER_PREFIX}:{carried} -->")
+    sections.append(_pre_merge_check(result, form=form))
     sections.append("---")
     if machine_sections:
         sections.append(_review_info(result, collapsible=collapsible))
@@ -490,6 +492,52 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
     if not blocks:
         return ""
     return _details("ℹ️ Review info", "\n\n".join(blocks), level=2, collapsible=collapsible)
+
+
+_VERDICT_TITLE: dict[Verdict, str] = {
+    Verdict.PASS: "✅ Pre-merge check: pass",
+    Verdict.BLOCKED: "⛔ Pre-merge check: blocked",
+    Verdict.ERROR: "⚠️ Pre-merge check: inconclusive",
+}
+
+_VERDICT_CALLOUT: dict[Verdict, str] = {
+    Verdict.PASS: "TIP",
+    Verdict.BLOCKED: "CAUTION",
+    Verdict.ERROR: "WARNING",
+}
+
+
+def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
+    """The verdict, stated rather than left to be tallied.
+
+    Rendered on every review, including a clean one: a section that appears only
+    when something is wrong teaches the reader that its absence means nothing was
+    checked. It is the last thing before the footer because it is the one line a
+    reader who skims the review still has to see.
+
+    Because the summary comment *is* this document (``publish.base.summary_markdown``),
+    writing it here is also what puts the verdict on the merge request, on every
+    re-run, without the publishers knowing anything about verdicts.
+
+    Empty for a run that judged nothing -- ``describe`` shares this document but
+    never reviews, and a pass it never reached would be a claim, not a summary.
+    """
+    if not verdict_requested(result):
+        return ""
+    gate = gate_for(result)
+    heading = f"## {_VERDICT_TITLE[gate.verdict]}"
+
+    lines = [gate.summary_line()]
+    floor_source = "`--fail-on`" if gate.explicit else "`review.block_on`"
+    lines.append(f"Judged against **{gate.floor}** and above, from {floor_source}.")
+    lines.append(f"Findings: {gate.counts_line()}.")
+    if not gate.explicit:
+        lines.append(f"_Not gated: pass `--fail-on {gate.floor}` for the exit code too._")
+    body = "\n\n".join(lines)
+
+    if form is Form.TERMINAL:
+        return f"{heading}\n\n{body}"
+    return f"{heading}\n\n{_callout(_VERDICT_CALLOUT[gate.verdict], body)}"
 
 
 def _signature(*, form: Form) -> str:

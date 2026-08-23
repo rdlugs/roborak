@@ -306,6 +306,21 @@ class ReviewResult(BaseModel):
     skipped_files: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
+    block_on: Severity | None = None
+    """The severity floor this review's verdict is judged against.
+
+    Recorded by the CLI so that every surface -- the report, the summary comment,
+    the forge status -- can state the same verdict. ``markdown.render`` and the
+    publishers are handed a ``ReviewResult`` and nothing else, and threading a
+    flag through all of them would give each surface its own chance to disagree.
+    ``None`` only while a review is still being assembled; see
+    ``roborak.core.verdict.gate_for``."""
+
+    block_on_explicit: bool = False
+    """``block_on`` came from ``--fail-on`` rather than the configured default.
+    Only an explicit floor moves the exit code, so the rendered block says which
+    one it is rather than implying CI is gated when it is not."""
+
     def add_omission(self, path: str, reason: OmissionReason, detail: str | None = None) -> None:
         omission = ReviewOmission(path=path, reason=reason, detail=detail)
         if omission not in self.coverage:

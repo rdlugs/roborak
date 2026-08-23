@@ -175,8 +175,47 @@ def test_fail_on_gates_the_exit_code(repo: Path, monkeypatch):
     )
     assert gated.exit_code == EXIT_FINDINGS
 
+    assert "Pre-merge check: blocked" in gated.output
+    assert "from `--fail-on`" in gated.output
+
     ungated = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo)])
-    assert ungated.exit_code == EXIT_OK
+    assert ungated.exit_code == EXIT_OK, "an unset --fail-on must not start failing CI"
+    assert "Pre-merge check: blocked" in ungated.output, "the verdict is stated regardless"
+    assert "from `review.block_on`" in ungated.output
+
+
+def test_no_check_stops_the_status_without_touching_the_comments(repo: Path, monkeypatch):
+    built = _mr_session(monkeypatch)
+    result = runner.invoke(
+        app,
+        ["review", "--no-llm", "--mr", MR_URL, "--post", "--no-check", "-C", str(repo)],
+        input="n\n",
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert built["post_check"] is False
+    assert built["post_summary"] is True, "only the status is withheld"
+
+
+def test_the_check_is_posted_by_default(repo: Path, monkeypatch):
+    built = _mr_session(monkeypatch)
+    result = runner.invoke(
+        app, ["review", "--no-llm", "--mr", MR_URL, "--post", "-C", str(repo)], input="n\n"
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert built["post_check"] is True
+
+
+def test_the_config_can_turn_the_check_off(repo: Path, monkeypatch):
+    (repo / ".roborak.yaml").write_text("output:\n  post_check: false\n")
+    built = _mr_session(monkeypatch)
+    result = runner.invoke(
+        app, ["review", "--no-llm", "--mr", MR_URL, "--post", "-C", str(repo)], input="n\n"
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert built["post_check"] is False
 
 
 def test_cli_flags_beat_the_config_file(repo: Path, monkeypatch):
@@ -1115,12 +1154,14 @@ def _mr_session(monkeypatch):
             token,
             post_inline,
             post_summary,
+            post_check=True,
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
         ):
             built["post_inline"] = post_inline
             built["post_summary"] = post_summary
+            built["post_check"] = post_check
             built["summary_ref"] = summary_ref
             built["summary_refreshed"] = summary_refreshed
 
@@ -1148,6 +1189,7 @@ def test_the_prompt_previews_what_it_would_post(repo: Path, monkeypatch):
     assert built == {
         "post_inline": True,
         "post_summary": True,
+        "post_check": True,
         "published": True,
         "summary_ref": None,
         "summary_refreshed": False,
@@ -1206,6 +1248,7 @@ def test_post_skips_the_prompt_entirely(repo: Path, monkeypatch):
     assert built == {
         "post_inline": True,
         "post_summary": True,
+        "post_check": True,
         "published": True,
         "summary_ref": None,
         "summary_refreshed": False,
@@ -1259,6 +1302,7 @@ def _empty_mr_session(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]
             token,
             post_inline,
             post_summary,
+            post_check=True,
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
@@ -1362,6 +1406,7 @@ def _empty_pr_session(
             token,
             post_inline,
             post_summary,
+            post_check=True,
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
@@ -1470,6 +1515,7 @@ def _install_gitlab_session(monkeypatch, published: list, *, files: bool = True)
             token,
             post_inline,
             post_summary,
+            post_check=True,
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,

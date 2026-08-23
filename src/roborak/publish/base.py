@@ -44,6 +44,11 @@ class PublishReport:
         """An overview roborak had already published was edited in place rather
         than a second one appended beside it."""
 
+        self.status_posted = False
+        self.status_skipped: str | None = None
+        """Why the pre-merge commit status did not go up. A token that may comment
+        but not set a status still publishes the review; the gap is reported."""
+
     @property
     def total_attempted(self) -> int:
         return (
@@ -108,27 +113,49 @@ def publish_summary(
     post_path: str,
     ref: SummaryRef | None,
     refreshed: bool,
-) -> None:
+) -> str | None:
     """Put the overview where it belongs: over the old one, or beside nothing.
 
     A failed edit falls back to posting fresh. A duplicated overview is noise; a
     review whose overview silently vanished because someone deleted the comment
     roborak was aiming at is a missing review.
+
+    Returns the published comment's own URL when the forge names one, so the
+    commit status can point at the review rather than at the whole change.
     """
     if ref is not None:
         body = refreshed_summary_markdown(result) if refreshed else summary_markdown(result)
         try:
             send = client.put if ref.method == "PUT" else client.patch
-            send(ref.edit_path, {"body": body})
+            answer = send(ref.edit_path, {"body": body})
         except SourceError as exc:
             log.warning("could not update the existing summary (%s); posting a new one", exc)
         else:
             report.summary_updated = True
             report.summary_posted = True
-            return
+            return comment_url(answer, client.target.provider, result)
 
-    client.post(post_path, {"body": summary_markdown(result)})
+    answer = client.post(post_path, {"body": summary_markdown(result)})
     report.summary_posted = True
+    return comment_url(answer, client.target.provider, result)
+
+
+def comment_url(answer: Any, provider: str, result: ReviewResult) -> str | None:
+    """Where the comment the forge just wrote can be read.
+
+    GitHub names it outright. GitLab's note payload carries only an id, so the
+    link is the merge request's own page plus the note anchor -- which is where
+    the web UI puts it too.
+    """
+    if not isinstance(answer, dict):
+        return None
+    if provider != "gitlab":
+        return str(answer.get("html_url") or "") or None
+    note = answer.get("id")
+    changeset = result.changeset
+    ref = changeset.forge_ref if changeset else None
+    web_url = ref.web_url if ref else None
+    return f"{web_url}#note_{note}" if note is not None and web_url else None
 
 
 _MARKER_RE = re.compile(r"<!--\s*roborak:v[12]:([0-9a-f]{16})\s*-->")

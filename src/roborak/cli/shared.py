@@ -19,6 +19,7 @@ from rich.console import Console
 from roborak.core.config import Config, ForgeConfig, load_config
 from roborak.core.models import ChangeSet, Issue, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
+from roborak.core.verdict import blocking_findings
 from roborak.llm.client import LLMClient, missing_credentials
 from roborak.render import json_out, markdown, prompt_only, rich_report, terminal
 from roborak.sources.base import SourceError
@@ -442,9 +443,16 @@ def emit(
 
 
 def finish(result: ReviewResult, fail_on: Severity | None) -> None:
-    """Translate the result into an exit code."""
+    """Translate the result into an exit code.
+
+    Shares ``blocking_findings`` with the rendered pre-merge block and the forge
+    status, so the three can never read the same findings differently. It stays
+    keyed on ``fail_on`` rather than ``result.block_on``: the configured default
+    exists so a report always has a verdict to state, and letting it move the
+    exit code would start failing every CI job that runs roborak without a gate.
+    """
     if result.errors or result.status is not ReviewStatus.COMPLETE:
         raise typer.Exit(EXIT_ERROR)
-    if fail_on is not None and any(f.severity.at_least(fail_on) for f in result.findings):
+    if fail_on is not None and blocking_findings(result, fail_on):
         raise typer.Exit(EXIT_FINDINGS)
     raise typer.Exit(EXIT_OK)

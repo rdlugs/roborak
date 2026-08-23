@@ -12,6 +12,27 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **A pre-merge check on every review.** `--fail-on` already decided whether a
+  change should be blocked, but only ever said so through an exit code, so the
+  verdict was invisible to anyone reading the review. Every review now ends with
+  a pre-merge check block — the verdict, the severity floor it was judged
+  against, and the finding counts that drove it — in the terminal report, in
+  `--markdown` output and, because the summary comment *is* the report, on the
+  merge request too, on every re-run. A clean review states an explicit pass
+  rather than omitting the section. The floor is `--fail-on` when given and the
+  new `review.block_on` (default `critical`) otherwise; only `--fail-on` moves
+  the exit code, and the block says which one it is rather than implying CI is
+  gated when it is not. Publishing with `--post` also sets a `roborak/review`
+  commit status on the change's head commit — a GitHub commit status and the
+  GitLab equivalent — so branch protection and approval rules can gate on the
+  verdict; re-running replaces that status instead of stacking another. A token
+  that may comment but not set a status is not fatal: the review still publishes
+  and the skipped check is reported. `--no-check` (or `output.post_check: false`)
+  publishes comments only. The status links straight to the summary comment it
+  was posted with, falling back to the merge request page when the forge does not
+  name the comment. The rendered verdict, the forge status and the exit code all
+  come from one function, so the three cannot disagree.
+
 - **Reviewing a directory that is not a git repository.** `roborak review -C
   <dir>` used to exit with `<dir> is not a git repository`, so an extracted
   archive, a generated tree, a vendor handoff or a Mercurial checkout could only

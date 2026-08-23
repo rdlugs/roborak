@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from roborak.core.models import Finding, ReviewResult
+from roborak.core.verdict import gate_for, verdict_requested
 
 SCHEMA_VERSION = 1
 
@@ -39,6 +40,13 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
         },
         "findings": [_finding_dict(f, agent=agent) for f in result.sorted_findings()],
     }
+
+    # Absent rather than assumed: `describe` renders through here too and never
+    # judged anything, so a verdict key would be a claim nobody made.
+    if verdict_requested(result):
+        gate = gate_for(result)
+        payload["summary"]["verdict"] = gate.verdict.value
+        payload["summary"]["block_on"] = gate.floor.value
 
     if not agent:
         payload["model"] = result.model

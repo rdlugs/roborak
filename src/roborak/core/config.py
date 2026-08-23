@@ -65,6 +65,11 @@ class ReviewConfig(ConfigModel):
         ]
     )
     severity_floor: Severity = Severity.MINOR
+    block_on: Severity = Severity.CRITICAL
+    """The floor the pre-merge verdict is judged against when ``--fail-on`` is not
+    given. Distinct from ``severity_floor``, which decides what gets *reported* at
+    all: a finding below that never reaches a renderer, let alone a verdict."""
+
     max_findings: int = Field(default=25, ge=1)
     committable_suggestions: bool = True
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -127,6 +132,10 @@ class OutputConfig(ConfigModel):
     """Print the review as rich panels instead of the report -- one finding to a
     bordered panel, which is the denser way to read a long review. Not what gets
     published either way."""
+
+    post_check: bool = True
+    """Post the pre-merge verdict to the forge as a commit status when publishing.
+    Off makes ``--post`` leave comments only; the rendered verdict stays either way."""
 
     full: bool = False
     """Show the sections the terminal report leaves out: the agent prompt under

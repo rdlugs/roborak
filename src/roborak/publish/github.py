@@ -17,15 +17,18 @@ from typing import Any
 
 from roborak.core.buckets import can_anchor
 from roborak.core.models import ChangeSet, Finding, ReviewResult
+from roborak.core.verdict import gate_for
 from roborak.publish.base import (
     PublishReport,
     SummaryRef,
+    comment_url,
     finding_markdown,
     inline_findings,
     publish_summary,
     summarised_findings,
     summary_markdown,
 )
+from roborak.publish.status import post_status
 from roborak.sources.base import SourceError
 from roborak.sources.forge import ForgeClient, Target
 
@@ -45,6 +48,9 @@ class GitHubPublisher:
     summary_refreshed: bool = False
     """Whether the overview being published is a new narration of a change that
     has moved, which the edited comment says out loud."""
+
+    post_check: bool = True
+    """Post the pre-merge verdict as a commit status the PR can be gated on."""
 
     def publish(self, result: ReviewResult) -> PublishReport:
         report = PublishReport()
@@ -81,16 +87,18 @@ class GitHubPublisher:
         if changeset.forge_ref.head_sha:
             payload["commit_id"] = changeset.forge_ref.head_sha
 
-        if not comments and inline_only and not self.post_summary:
+        # Nothing to say and no check to post: the client is never opened.
+        if not comments and inline_only and not self.post_summary and not self.post_check:
             return report
 
         issue_comments = f"/repos/{self.target.project}/issues/{self.target.number}/comments"
         base = f"/repos/{self.target.project}/pulls/{self.target.number}/reviews"
         with ForgeClient(self.target, self.token) as client:
             rejected: str | None = None
+            summary_url: str | None = None
             if comments or not inline_only:
                 try:
-                    client.post(base, payload)
+                    answer = client.post(base, payload)
                 except SourceError as exc:
                     log.warning("inline review rejected (%s); posting the summary only", exc)
                     rejected = str(exc)
@@ -98,9 +106,11 @@ class GitHubPublisher:
                     report.posted.clear()
                 else:
                     report.summary_posted = self.post_summary and not inline_only
+                    if report.summary_posted:
+                        summary_url = comment_url(answer, self.target.provider, result)
 
             if self.post_summary and (self.summary_ref is not None or rejected is not None):
-                publish_summary(
+                summary_url = publish_summary(
                     client,
                     result,
                     report,
@@ -108,6 +118,14 @@ class GitHubPublisher:
                     ref=self.summary_ref,
                     refreshed=self.summary_refreshed,
                 )
+
+            # Last, so a token that may comment but not set a status still leaves
+            # the review behind rather than losing it to a failed check.
+            if self.post_check:
+                report.status_skipped = post_status(
+                    client, self.target, result, gate_for(result), summary_url
+                )
+                report.status_posted = report.status_skipped is None
 
         return report
 
