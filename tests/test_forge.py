@@ -8,6 +8,7 @@ single worst thing this tool can do.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -1575,22 +1576,60 @@ def test_an_under_scoped_token_still_publishes_the_review(monkeypatch):
     assert "statuses:write" in (report.status_skipped or "")
 
 
-def test_gitlab_treats_an_unchanged_status_as_already_correct(monkeypatch):
-    """GitLab refuses to re-set a status to the state it already holds."""
-    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+def refusing_status_handler(existing: list[dict]) -> Callable:
+    """A GitLab that refuses the status post and reports ``existing`` on the commit."""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/statuses"):
+            return httpx.Response(200, json=existing)
         if "/statuses/" in request.url.path:
             return httpx.Response(400, text="Cannot transition status")
         return httpx.Response(201, json={"id": "1"})
 
+    return handler
+
+
+def test_gitlab_treats_an_unchanged_status_as_already_correct(monkeypatch):
+    """A refusal is forgiven only once the commit is seen already saying it."""
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
     monkeypatch.setattr(
-        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+        "roborak.publish.gitlab.ForgeClient",
+        lambda t, tok: client_with(
+            refusing_status_handler([{"name": "roborak/review", "status": "failed"}]), t
+        ),
     )
     report = GitLabPublisher(target=target, token="tok").publish(make_result())
 
     assert report.status_posted
     assert report.status_skipped is None
+
+
+def test_a_refused_status_that_left_a_stale_verdict_is_reported(monkeypatch):
+    """The message names a state machine, not the state the commit ended up in."""
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient",
+        lambda t, tok: client_with(
+            refusing_status_handler([{"name": "roborak/review", "status": "success"}]), t
+        ),
+    )
+    report = GitLabPublisher(target=target, token="tok").publish(make_result())
+
+    assert not report.status_posted, "the commit still carries the old passing verdict"
+    assert "400" in (report.status_skipped or "")
+
+
+def test_a_refused_status_with_no_status_to_read_back_is_reported(monkeypatch):
+    """Silence about the state is not evidence the state is right."""
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient",
+        lambda t, tok: client_with(refusing_status_handler([]), t),
+    )
+    report = GitLabPublisher(target=target, token="tok").publish(make_result())
+
+    assert not report.status_posted
+    assert report.status_skipped
 
 
 def test_gitlab_reports_a_rejected_status_that_is_not_an_unchanged_one(monkeypatch):

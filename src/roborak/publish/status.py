@@ -55,10 +55,10 @@ also cover a malformed request and a concurrent update, so the code alone is not
 enough to call it 'already correct'; see ``_unchanged``."""
 
 _UNCHANGED_MESSAGE = "cannot transition status"
-"""What GitLab says when the status already holds the state being posted:
-``Cannot transition status via :run from :running``. On a re-run that changed
-nothing that is the expected answer, not a failure. Anything else answered with
-the same code is a real refusal and is reported."""
+"""What GitLab says when it refuses a status transition:
+``Cannot transition status via :run from :running``. The message names a state
+machine, not the state the commit ended up in, so it is only the first half of
+the test -- ``_unchanged`` reads the status back before believing it."""
 
 
 def post_status(
@@ -88,21 +88,51 @@ def post_status(
     try:
         client.post(path, payload)
     except SourceError as exc:
-        if target.provider == "gitlab" and _unchanged(exc):
+        if target.provider == "gitlab" and _unchanged(client, target, sha, payload, exc):
             return None
         log.warning("could not post the pre-merge check: %s", exc)
         return _reason(exc)
     return None
 
 
-def _unchanged(exc: SourceError) -> bool:
-    """Whether GitLab refused because the status already says what we are saying.
+def _unchanged(
+    client: ForgeClient,
+    target: Target,
+    sha: str,
+    payload: dict[str, str],
+    exc: SourceError,
+) -> bool:
+    """Whether the refused post left the commit already saying what we wanted.
 
-    Only that refusal is suppressed. A malformed request or a genuine conflict
-    with a concurrent update wears the same status code, and treating those as
-    'already correct' would report a check that the merge request never got.
+    A refusal is suppressed only when the commit is then observed carrying our
+    context in the state we asked for. The status code is not proof -- 400 and
+    409 also cover a malformed request and a concurrent update -- and neither is
+    GitLab's message, which names a state machine rather than the state the
+    commit is in. Reporting a check the merge request never got is the one
+    failure a gate cannot absorb: branch protection would wait on a status that
+    is absent, or read a stale verdict as the current one.
+
+    An unreadable answer counts as changed. Silence about the state is not
+    evidence the state is right.
     """
-    return exc.status in _ALREADY_SET and _UNCHANGED_MESSAGE in str(exc).lower()
+    if exc.status not in _ALREADY_SET or _UNCHANGED_MESSAGE not in str(exc).lower():
+        return False
+    try:
+        found = client.get(
+            f"/projects/{target.encoded_project}/repository/commits/{sha}/statuses",
+            name=STATUS_CONTEXT,
+        )
+    except SourceError as read_back:
+        log.debug("could not read the existing status back (%s)", read_back)
+        return False
+    if not isinstance(found, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("name") == STATUS_CONTEXT
+        and item.get("status") == payload["state"]
+        for item in found
+    )
 
 
 def _head_sha(result: ReviewResult) -> str:
