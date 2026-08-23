@@ -21,6 +21,7 @@ from roborak.core.verdict import gate_for
 from roborak.publish.base import (
     PublishReport,
     SummaryRef,
+    comment_url,
     finding_markdown,
     inline_findings,
     publish_summary,
@@ -94,9 +95,10 @@ class GitHubPublisher:
         base = f"/repos/{self.target.project}/pulls/{self.target.number}/reviews"
         with ForgeClient(self.target, self.token) as client:
             rejected: str | None = None
+            summary_url: str | None = None
             if comments or not inline_only:
                 try:
-                    client.post(base, payload)
+                    answer = client.post(base, payload)
                 except SourceError as exc:
                     log.warning("inline review rejected (%s); posting the summary only", exc)
                     rejected = str(exc)
@@ -104,9 +106,11 @@ class GitHubPublisher:
                     report.posted.clear()
                 else:
                     report.summary_posted = self.post_summary and not inline_only
+                    if report.summary_posted:
+                        summary_url = comment_url(answer, self.target.provider, result)
 
             if self.post_summary and (self.summary_ref is not None or rejected is not None):
-                publish_summary(
+                summary_url = publish_summary(
                     client,
                     result,
                     report,
@@ -118,7 +122,9 @@ class GitHubPublisher:
             # Last, so a token that may comment but not set a status still leaves
             # the review behind rather than losing it to a failed check.
             if self.post_check:
-                report.status_skipped = post_status(client, self.target, result, gate_for(result))
+                report.status_skipped = post_status(
+                    client, self.target, result, gate_for(result), summary_url
+                )
                 report.status_posted = report.status_skipped is None
 
         return report

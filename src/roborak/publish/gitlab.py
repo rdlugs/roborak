@@ -62,8 +62,9 @@ class GitLabPublisher:
 
             report.summarised.extend(summarised_findings(result))
 
+            summary_url: str | None = None
             if self.post_summary:
-                publish_summary(
+                summary_url = publish_summary(
                     client,
                     result,
                     report,
@@ -75,7 +76,9 @@ class GitLabPublisher:
             # Last, so a token that may comment but not set a status still leaves
             # the review behind rather than losing it to a failed check.
             if self.post_check:
-                report.status_skipped = post_status(client, self.target, result, gate_for(result))
+                report.status_skipped = post_status(
+                    client, self.target, result, gate_for(result), summary_url
+                )
                 report.status_posted = report.status_skipped is None
 
         return report

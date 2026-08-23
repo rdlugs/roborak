@@ -50,12 +50,23 @@ _GITLAB_STATE: dict[Verdict, str] = {
 inconclusive review fails rather than silently passing."""
 
 _ALREADY_SET = {400, 409}
-"""GitLab refuses to transition a status to the state it already holds. On a
-re-run that changed nothing that is the expected answer, not a failure."""
+"""The codes GitLab answers with when it refuses a status transition -- but they
+also cover a malformed request and a concurrent update, so the code alone is not
+enough to call it 'already correct'; see ``_unchanged``."""
+
+_UNCHANGED_MESSAGE = "cannot transition status"
+"""What GitLab says when the status already holds the state being posted:
+``Cannot transition status via :run from :running``. On a re-run that changed
+nothing that is the expected answer, not a failure. Anything else answered with
+the same code is a real refusal and is reported."""
 
 
 def post_status(
-    client: ForgeClient, target: Target, result: ReviewResult, gate: Gate
+    client: ForgeClient,
+    target: Target,
+    result: ReviewResult,
+    gate: Gate,
+    summary_url: str | None = None,
 ) -> str | None:
     """Post the verdict as a commit status on the change's head commit.
 
@@ -68,7 +79,7 @@ def post_status(
     if not sha:
         return "no head commit sha for this change"
 
-    payload = _payload(target, gate, result)
+    payload = _payload(target, gate, result, summary_url)
     path = (
         f"/projects/{target.encoded_project}/statuses/{sha}"
         if target.provider == "gitlab"
@@ -77,11 +88,21 @@ def post_status(
     try:
         client.post(path, payload)
     except SourceError as exc:
-        if target.provider == "gitlab" and exc.status in _ALREADY_SET:
+        if target.provider == "gitlab" and _unchanged(exc):
             return None
         log.warning("could not post the pre-merge check: %s", exc)
         return _reason(exc)
     return None
+
+
+def _unchanged(exc: SourceError) -> bool:
+    """Whether GitLab refused because the status already says what we are saying.
+
+    Only that refusal is suppressed. A malformed request or a genuine conflict
+    with a concurrent update wears the same status code, and treating those as
+    'already correct' would report a check that the merge request never got.
+    """
+    return exc.status in _ALREADY_SET and _UNCHANGED_MESSAGE in str(exc).lower()
 
 
 def _head_sha(result: ReviewResult) -> str:
@@ -98,7 +119,9 @@ def _head_sha(result: ReviewResult) -> str:
     return (ref.head_sha if ref else None) or changeset.head_sha or ""
 
 
-def _payload(target: Target, gate: Gate, result: ReviewResult) -> dict[str, str]:
+def _payload(
+    target: Target, gate: Gate, result: ReviewResult, summary_url: str | None = None
+) -> dict[str, str]:
     description = _truncate(gate.summary_line(), DESCRIPTION_LIMIT)
     if target.provider == "gitlab":
         payload = {
@@ -114,8 +137,11 @@ def _payload(target: Target, gate: Gate, result: ReviewResult) -> dict[str, str]
         }
     changeset = result.changeset
     ref = changeset.forge_ref if changeset else None
-    if ref and ref.web_url:
-        payload["target_url"] = ref.web_url
+    # The summary comment is the review; the merge request page is only where to
+    # start looking for it, so it is the fallback when the comment has no URL.
+    link = summary_url or (ref.web_url if ref else None)
+    if link:
+        payload["target_url"] = link
     return payload
 
 

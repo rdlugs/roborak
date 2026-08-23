@@ -28,8 +28,10 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   verdict; re-running replaces that status instead of stacking another. A token
   that may comment but not set a status is not fatal: the review still publishes
   and the skipped check is reported. `--no-check` (or `output.post_check: false`)
-  publishes comments only. The rendered verdict, the forge status and the exit
-  code all come from one function, so the three cannot disagree.
+  publishes comments only. The status links straight to the summary comment it
+  was posted with, falling back to the merge request page when the forge does not
+  name the comment. The rendered verdict, the forge status and the exit code all
+  come from one function, so the three cannot disagree.
 
 - **Reviewing a directory that is not a git repository.** `roborak review -C
   <dir>` used to exit with `<dir> is not a git repository`, so an extracted

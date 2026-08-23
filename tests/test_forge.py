@@ -1593,6 +1593,24 @@ def test_gitlab_treats_an_unchanged_status_as_already_correct(monkeypatch):
     assert report.status_skipped is None
 
 
+def test_gitlab_reports_a_rejected_status_that_is_not_an_unchanged_one(monkeypatch):
+    """400 and 409 also cover a bad request and a concurrent update."""
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/statuses/" in request.url.path:
+            return httpx.Response(409, text="Conflict: the status was updated concurrently")
+        return httpx.Response(201, json={"id": "1"})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitLabPublisher(target=target, token="tok").publish(make_result())
+
+    assert not report.status_posted
+    assert "409" in (report.status_skipped or "")
+
+
 def test_a_change_with_no_head_commit_skips_the_status(monkeypatch):
     posted: list[tuple[str, dict]] = []
     target = Target("github", "github.com", "acme/web", 42)
@@ -1626,3 +1644,47 @@ def test_the_status_links_back_to_the_change(monkeypatch):
     GitHubPublisher(target=target, token="tok").publish(result)
 
     assert status_calls(posted)[0][1]["target_url"] == "https://github.com/acme/web/pull/42"
+
+
+REVIEW_URL = "https://github.com/acme/web/pull/42#pullrequestreview-1"
+
+
+def test_the_status_links_to_the_summary_comment(monkeypatch):
+    """The verdict is in the summary; the status points at it, not at the page."""
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": 1, "html_url": REVIEW_URL})
+
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    result = make_result()
+    assert result.changeset is not None and result.changeset.forge_ref is not None
+    result.changeset.forge_ref.web_url = "https://github.com/acme/web/pull/42"
+
+    GitHubPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted)[0][1]["target_url"] == REVIEW_URL
+
+
+def test_a_gitlab_status_links_to_the_note_it_just_wrote(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(201, json={"id": 77})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    result = make_result()
+    assert result.changeset is not None and result.changeset.forge_ref is not None
+    result.changeset.forge_ref.web_url = "https://gitlab.com/acme/web/-/merge_requests/298"
+
+    GitLabPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted)[0][1]["target_url"].endswith("/merge_requests/298#note_77")
