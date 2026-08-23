@@ -373,3 +373,13 @@ def test_an_honest_unverified_claim_keeps_the_note_it_offered():
     )
     assert finding.evidence is Evidence.UNVERIFIED
     assert finding.evidence_note == "Depends on validate(), which was not shown."
+
+
+def test_a_model_cannot_award_itself_the_static_tool_label():
+    """That label means an analyser ran; a model saying so is only a claim."""
+    finding = _one(
+        evidence="static_tool",
+        evidence_note="ruff would flag this.",
+    )
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == "ruff would flag this."

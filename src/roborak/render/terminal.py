@@ -190,6 +190,18 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
 
     parts += [Text(""), Text(finding.body.strip())]
 
+    # The tail says which kind of evidence; this says what it actually is. A
+    # sentence needs its own line, so it sits under the body rather than in the
+    # badge row, matching where Markdown puts it.
+    if finding.evidence_note:
+        parts += [
+            Text(""),
+            Text(
+                f"Evidence ({EVIDENCE_LABEL[finding.evidence].lower()}): {finding.evidence_note}",
+                style="dim italic",
+            ),
+        ]
+
     if finding.suggestion:
         parts.append(Text(""))
         parts.append(Text("Suggested fix", style="bold green"))

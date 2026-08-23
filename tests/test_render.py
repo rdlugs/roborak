@@ -890,3 +890,23 @@ def test_describe_states_no_verdict_because_it_judged_nothing():
 
     assert "Pre-merge check" not in document
     assert "verdict" not in json.loads(json_out.render(result))["summary"]
+
+
+def test_an_unverified_finding_keeps_the_note_explaining_what_to_check():
+    """The generic phrase is the fallback, not a replacement for a real sentence."""
+    result = make_result()
+    finding = next(f for f in result.findings if f.source == "llm")
+    finding.evidence = Evidence.UNVERIFIED
+    finding.evidence_note = "Depends on validate(), which was not shown."
+    result.findings = [finding]
+    # Collapsed, because the provenance line is deliberately wrapped.
+    text = " ".join(markdown.render(result).split())
+    assert "Evidence (unverified): Depends on validate(), which was not shown." in text
+    assert "from reasoning about the diff alone" not in text
+
+
+def test_the_terminal_prints_the_evidence_note_and_not_just_its_label():
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    text = render_terminal(result, width=120)
+    assert "user_id reaches line 11 unescaped" in text

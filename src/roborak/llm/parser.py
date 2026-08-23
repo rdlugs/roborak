@@ -213,10 +213,16 @@ def _as_evidence(kind: Any, note: Any) -> tuple[Evidence, str]:
 
     A model that writes ``evidence: execution_path`` and then says nothing has not
     shown a path, it has picked a word. Unknown labels fall back the same way, so
-    the only route to a proven value is naming one *and* explaining it.
+    the only route to a proven value is naming one *and* explaining it -- and
+    ``static_tool`` is not on that route at all, being reserved for analysers.
     """
     described = _as_str(note)[:300]
     claimed = _as_enum(kind, Evidence, Evidence.UNVERIFIED)
+    # ``static_tool`` means an analyser ran and said so. Nothing ran here, so a
+    # model claiming it is describing the world rather than the diff -- the one
+    # label no sentence can earn. The note is kept; only the claim is refused.
+    if claimed is Evidence.STATIC_TOOL:
+        return Evidence.UNVERIFIED, described
     if claimed.proven and not described:
         return Evidence.UNVERIFIED, ""
     return claimed, described

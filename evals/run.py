@@ -14,7 +14,8 @@ from roborak.analysis.reviewer import Reviewer
 from roborak.context.diff import parse_diff
 from roborak.core.config import Config
 from roborak.core.models import ChangeSet
-from roborak.core.severity import Kind, Severity
+from roborak.core.severity import Severity
+from roborak.core.verdict import blocking_findings
 from roborak.llm.client import LLMClient
 
 ROOT = Path(__file__).parent
@@ -86,11 +87,9 @@ def main() -> int:
         expected = case.get("expected_category")
         line = int(case.get("expected_line") or 0)
         candidates = [finding for finding in result.findings if finding.category.value == expected]
-        blockers = [
-            finding
-            for finding in result.findings
-            if finding.severity.at_least(Severity.MAJOR) and finding.kind is Kind.POTENTIAL_ISSUE
-        ]
+        # The same predicate the verdict blocks on, so the metric cannot drift from
+        # what actually fails CI: severity alone decides, whatever the kind.
+        blockers = blocking_findings(result, Severity.MAJOR)
         rows.append(
             {
                 "id": case["id"],

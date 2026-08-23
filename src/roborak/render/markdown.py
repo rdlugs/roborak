@@ -398,10 +398,12 @@ def _source_note(finding: Finding) -> str:
 def _evidence_phrase(finding: Finding) -> str:
     """What the finding can point at, said plainly enough to argue with."""
     label = EVIDENCE_LABEL[finding.evidence].lower()
-    if not finding.evidence.proven:
-        return "Evidence: unverified, from reasoning about the diff alone"
     if not finding.evidence_note:
+        if not finding.evidence.proven:
+            return "Evidence: unverified, from reasoning about the diff alone"
         return f"Evidence: {label}"
+    # An unverified finding still says what it would take to check, and that
+    # sentence is the most useful thing on the line -- keep it, labelled honestly.
     return f"Evidence ({label}): {finding.evidence_note}"
 
 
