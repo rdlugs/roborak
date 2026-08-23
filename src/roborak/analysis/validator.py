@@ -45,6 +45,9 @@ def enforce_evidence(findings: list[Finding], *, require: bool = True) -> list[F
     claim that cannot say what makes it true is demoted rather than discarded: it
     may well be real, so it becomes something to go and check.
 
+    A proven label with nothing written under it proves nothing, so an empty
+    ``evidence_note`` counts as unverified however the label reads.
+
     Static findings are exempt because a tool ran; the model reasoning about them
     afterwards is not what put them here.
     """
@@ -52,7 +55,9 @@ def enforce_evidence(findings: list[Finding], *, require: bool = True) -> list[F
         return findings
 
     for finding in findings:
-        if finding.source != "llm" or finding.evidence.proven:
+        if finding.source != "llm":
+            continue
+        if finding.evidence.proven and finding.evidence_note.strip():
             continue
         if finding.kind not in UNPROVEN_KINDS:
             continue
@@ -153,6 +158,11 @@ def _overlaps(a: Finding, b: Finding) -> bool:
 
 
 def _preference(finding: Finding) -> tuple[int, int, float]:
-    """Rank duplicates: explanation beats detection, then severity, then confidence."""
+    """Rank duplicates: severity first, then explanation beats detection, then confidence.
+
+    Severity leads because ``enforce_evidence`` demotes an unproven LLM claim to
+    minor, and a duplicate that lost its severity must not carry off a static
+    critical finding's place in the review.
+    """
     has_explanation = 1 if finding.source == "llm" else 0
-    return (has_explanation, finding.severity.rank, finding.confidence)
+    return (finding.severity.rank, has_explanation, finding.confidence)

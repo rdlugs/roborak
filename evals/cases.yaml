@@ -32,5 +32,5 @@
 - {id: unproven-cache-write, path: a.py, before: "pass", after: "cache.set(key, serialize(value))", expected_category: null, expected_line: null, expect_blocker: false}
 - {id: unproven-helper-call, path: a.py, before: "pass", after: "return sanitize(payload) and store(payload)", expected_category: null, expected_line: null, expect_blocker: false}
 - {id: unproven-config-read, path: a.py, before: "pass", after: "token = settings.get('api_token')", expected_category: null, expected_line: null, expect_blocker: false}
-- {id: proven-zero-divisor, path: a.py, before: "def rate(hits, total):\n    return hits", after: "def rate(hits, total):\n    return hits / total", expected_category: bug, expected_line: 2, expect_blocker: true}
+- {id: proven-zero-divisor, path: a.py, before: "def rate(hits, total=0):\n    return hits", after: "def rate(hits, total=0):\n    return hits / total", expected_category: bug, expected_line: 2, expect_blocker: true}
 - {id: proven-index-past-end, path: a.py, before: "def last(values):\n    return values[-1]", after: "def last(values):\n    return values[len(values)]", expected_category: bug, expected_line: 2, expect_blocker: true}
