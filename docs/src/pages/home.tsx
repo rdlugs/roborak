@@ -66,7 +66,7 @@ export default function Landing() {
 
         <Shell className="relative z-10 flex-col gap-14 pb-20 pt-16 lg:flex-row lg:items-center lg:gap-16 lg:pt-24">
           <div className="w-full lg:flex-1">
-            <Pill tone="cyan">v0.3.1</Pill>
+            <Pill tone="cyan">v0.4.0</Pill>
 
             <h1 className="mt-6 font-mono text-4xl font-bold leading-[1.1] text-ink sm:text-5xl lg:text-[3.4rem]">
               AI code review
