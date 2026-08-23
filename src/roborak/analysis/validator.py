@@ -11,7 +11,7 @@ import logging
 
 from roborak.core.config import Config
 from roborak.core.models import ChangeSet, Finding
-from roborak.core.severity import Kind
+from roborak.core.severity import Kind, Severity
 
 log = logging.getLogger(__name__)
 
@@ -19,11 +19,59 @@ log = logging.getLogger(__name__)
 def validate(findings: list[Finding], changeset: ChangeSet, config: Config) -> list[Finding]:
     """Apply every filter, in the order that discards the most obvious junk first."""
     kept = anchor_to_changed_lines(findings, changeset, full_file=config.review.full_file)
+    kept = enforce_evidence(kept, require=config.review.require_evidence)
     kept = [f for f in kept if f.confidence >= config.review.min_confidence]
     kept = [f for f in kept if f.severity.at_least(config.review.severity_floor)]
     kept = dedupe(kept)
     kept = sorted(kept, key=lambda f: (-f.severity.rank, -f.confidence, f.file, f.start_line))
     return kept[: config.review.max_findings]
+
+
+UNPROVEN_KINDS = frozenset({Kind.POTENTIAL_ISSUE, Kind.VERIFICATION_NEEDED})
+"""The kinds that assert a defect exists, and so have something to prove.
+
+A refactor suggestion or a nitpick claims taste, not breakage. A requirement gap
+is judged against the issue text, which is evidence roborak was handed rather than
+evidence it has to derive.
+"""
+
+
+def enforce_evidence(findings: list[Finding], *, require: bool = True) -> list[Finding]:
+    """Stop an unproven model claim from reaching blocker level.
+
+    ``confidence`` is the model grading its own homework, so a 0.95 on a guess
+    reads exactly like a 0.95 on a traced failure -- and a blocker-level guess is
+    the most expensive thing a review can produce, because it fails the build. A
+    claim that cannot say what makes it true is demoted rather than discarded: it
+    may well be real, so it becomes something to go and check.
+
+    A proven label with nothing written under it proves nothing, so an empty
+    ``evidence_note`` counts as unverified however the label reads.
+
+    Static findings are exempt because a tool ran; the model reasoning about them
+    afterwards is not what put them here.
+    """
+    if not require:
+        return findings
+
+    for finding in findings:
+        if finding.source != "llm":
+            continue
+        if finding.evidence.proven and finding.evidence_note.strip():
+            continue
+        if finding.kind not in UNPROVEN_KINDS:
+            continue
+        if not finding.severity.at_least(Severity.MAJOR):
+            continue
+        log.debug(
+            "demoting unproven %s finding to verification_needed: %s",
+            finding.severity,
+            finding.location,
+        )
+        finding.severity = Severity.MINOR
+        finding.kind = Kind.VERIFICATION_NEEDED
+
+    return findings
 
 
 def anchor_to_changed_lines(
@@ -110,6 +158,11 @@ def _overlaps(a: Finding, b: Finding) -> bool:
 
 
 def _preference(finding: Finding) -> tuple[int, int, float]:
-    """Rank duplicates: explanation beats detection, then severity, then confidence."""
+    """Rank duplicates: severity first, then explanation beats detection, then confidence.
+
+    Severity leads because ``enforce_evidence`` demotes an unproven LLM claim to
+    minor, and a duplicate that lost its severity must not carry off a static
+    critical finding's place in the review.
+    """
     has_explanation = 1 if finding.source == "llm" else 0
-    return (has_explanation, finding.severity.rank, finding.confidence)
+    return (finding.severity.rank, has_explanation, finding.confidence)

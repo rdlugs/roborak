@@ -10,8 +10,9 @@ import textwrap
 
 import pytest
 
-from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
+    MAX_EVIDENCE_FILES,
     ParseError,
     parse_findings,
     parse_requirement_evidence,
@@ -320,3 +321,86 @@ requirement_evidence:
         }
     ]
     assert parse_requirement_evidence("findings: []\nrequirement_evidence: nope") == []
+
+
+def _one(**fields: object):
+    """Parse a single finding, with the boilerplate fields filled in."""
+    entry = {
+        "file": "a.py",
+        "start_line": 3,
+        "end_line": 3,
+        "severity": "critical",
+        "category": "bug",
+        "body": "The divisor can be zero.",
+        **fields,
+    }
+    body = "\n".join(f"    {key}: {value}" for key, value in entry.items())
+    findings = parse_findings(f"findings:\n  -\n{body}\n")
+    assert len(findings) == 1
+    return findings[0]
+
+
+def test_evidence_is_read_when_the_model_supplies_both_halves():
+    finding = _one(
+        evidence="execution_path",
+        evidence_note="count is 0 for an empty batch, so line 3 raises.",
+    )
+    assert finding.evidence is Evidence.EXECUTION_PATH
+    assert finding.evidence_note == "count is 0 for an empty batch, so line 3 raises."
+
+
+def test_a_missing_evidence_key_is_unverified_rather_than_assumed():
+    finding = _one()
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == ""
+
+
+def test_an_unknown_evidence_label_falls_back_to_unverified():
+    finding = _one(evidence="vibes", evidence_note="I have a feeling about this one.")
+    assert finding.evidence is Evidence.UNVERIFIED
+
+
+def test_a_proven_label_with_no_note_behind_it_is_not_evidence():
+    """Picking the word is not showing the path, and must not buy a blocker slot."""
+    finding = _one(evidence="execution_path")
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == ""
+
+
+def test_an_honest_unverified_claim_keeps_the_note_it_offered():
+    finding = _one(
+        evidence="unverified",
+        evidence_note="Depends on validate(), which was not shown.",
+    )
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == "Depends on validate(), which was not shown."
+
+
+def test_evidence_files_name_the_other_places_to_look():
+    finding = _one(evidence_files="[b.py, tests/test_b.py]")
+    assert finding.evidence_files == ["b.py", "tests/test_b.py"]
+
+
+def test_evidence_files_drop_the_flagged_file_and_repeats():
+    """The finding already names its own file; listing it again promises a second
+    place to look that does not exist."""
+    finding = _one(evidence_files="[a.py, b.py, b.py]")
+    assert finding.evidence_files == ["b.py"]
+
+
+def test_evidence_files_stop_at_the_limit_and_take_a_bare_path():
+    """Six files is a description of the change, not of a defect."""
+    finding = _one(evidence_files="[b.py, c.py, d.py, e.py, f.py, g.py]")
+    assert len(finding.evidence_files) == MAX_EVIDENCE_FILES
+    assert _one(evidence_files="b.py").evidence_files == ["b.py"]
+    assert _one(evidence_files="[]").evidence_files == []
+
+
+def test_a_model_cannot_award_itself_the_static_tool_label():
+    """That label means an analyser ran; a model saying so is only a claim."""
+    finding = _one(
+        evidence="static_tool",
+        evidence_note="ruff would flag this.",
+    )
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == "ruff would flag this."

@@ -16,7 +16,7 @@ from roborak.analysis.reviewer import Reviewer
 from roborak.context.diff import parse_diff
 from roborak.core.config import Config
 from roborak.core.models import ChangeSet, Finding, Issue, ReviewComment
-from roborak.core.severity import Category, Kind, Severity
+from roborak.core.severity import Category, Evidence, Kind, Severity
 from roborak.llm.client import LLMError, LLMResponse
 
 DIFF = textwrap.dedent(
@@ -72,6 +72,10 @@ GOOD_REPLY = textwrap.dedent(
           user_id comes straight from the query string and is concatenated into SQL,
           so any caller can rewrite the statement. Use a bound parameter.
         confidence: 0.95
+        evidence: execution_path
+        evidence_note: >
+          A request with ?user_id=1 OR 1=1 reaches line 11 unescaped and rewrites the
+          WHERE clause.
         suggestion: |
           row = db.execute("SELECT * FROM sessions WHERE user = ?", (user_id,))
       - file: app/auth.py
@@ -84,6 +88,10 @@ GOOD_REPLY = textwrap.dedent(
         title: Timing-unsafe token comparison
         body: Comparing tokens with == leaks length and content through timing.
         confidence: 0.8
+        evidence: execution_path
+        evidence_note: >
+          == on line 12 short-circuits on the first differing byte, so response time
+          reveals the shared prefix.
     """
 )
 
@@ -225,6 +233,102 @@ def test_low_confidence_is_filtered(tmp_path):
     )
     result, _ = review_with(reply, tmp=tmp_path)
     assert result.findings == []
+
+
+def _claim(
+    *,
+    severity: str = "critical",
+    kind: str = "potential_issue",
+    proven: bool = False,
+) -> str:
+    """One high-confidence model finding, with or without something behind it."""
+    lines = [
+        "findings:",
+        "  - file: app/auth.py",
+        "    start_line: 11",
+        "    end_line: 11",
+        f"    severity: {severity}",
+        "    category: security",
+        f"    kind: {kind}",
+        "    confidence: 0.95",
+        "    body: The query on this line concatenates user input into SQL.",
+    ]
+    if proven:
+        lines += [
+            "    evidence: execution_path",
+            "    evidence_note: ?user_id=1 OR 1=1 reaches line 11 unescaped.",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def test_an_unproven_blocker_is_demoted_rather_than_believed(tmp_path):
+    """A model cannot vote itself a blocker by writing 0.95 next to a guess."""
+    result, _ = review_with(_claim(), tmp=tmp_path)
+    assert len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.severity is Severity.MINOR
+    assert finding.kind is Kind.VERIFICATION_NEEDED
+    assert finding.start_line == 11
+
+
+def test_a_demoted_finding_no_longer_blocks_the_merge(tmp_path):
+    result, _ = review_with(_claim(), tmp=tmp_path)
+    assert not result.has_blocking
+    assert result.counts_by_severity[Severity.CRITICAL] == 0
+
+
+def test_the_same_claim_with_evidence_keeps_its_severity(tmp_path):
+    result, _ = review_with(_claim(proven=True), tmp=tmp_path)
+    finding = result.findings[0]
+    assert finding.severity is Severity.CRITICAL
+    assert finding.kind is Kind.POTENTIAL_ISSUE
+    assert finding.evidence_note.startswith("?user_id=1")
+
+
+def test_a_blocker_cannot_hide_behind_the_verification_needed_kind(tmp_path):
+    """Relabelling the kind must not preserve a severity nothing supports."""
+    result, _ = review_with(_claim(kind="verification_needed"), tmp=tmp_path)
+    assert result.findings[0].severity is Severity.MINOR
+    assert not result.has_blocking
+
+
+def test_an_unproven_finding_below_major_is_left_alone(tmp_path):
+    result, _ = review_with(_claim(severity="minor"), tmp=tmp_path)
+    finding = result.findings[0]
+    assert finding.severity is Severity.MINOR
+    assert finding.kind is Kind.POTENTIAL_ISSUE
+
+
+def test_a_static_finding_is_tool_backed_and_never_demoted(tmp_path):
+    static = [
+        Finding(
+            file="app/auth.py",
+            start_line=11,
+            end_line=11,
+            severity=Severity.CRITICAL,
+            category=Category.SECURITY,
+            title="S608",
+            body="Possible SQL injection.",
+            source="static",
+            tool="ruff",
+        )
+    ]
+    reviewer = Reviewer(
+        config=Config(), repo=tmp_path, llm=StubLLM(reply="findings: []"), static_findings=static
+    )
+    result = reviewer.review(make_changeset())
+    finding = result.findings[0]
+    assert finding.evidence is Evidence.STATIC_TOOL
+    assert finding.severity is Severity.CRITICAL
+    assert result.has_blocking
+
+
+def test_require_evidence_off_leaves_the_model_in_charge(tmp_path):
+    config = Config()
+    config.review.require_evidence = False
+    result, _ = review_with(_claim(), config, tmp=tmp_path)
+    assert result.findings[0].severity is Severity.CRITICAL
+    assert result.has_blocking
 
 
 def test_empty_findings_reply(tmp_path):

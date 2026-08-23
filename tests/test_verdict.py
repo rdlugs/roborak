@@ -10,9 +10,10 @@ from __future__ import annotations
 import pytest
 import typer
 
+from roborak.analysis import validator
 from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, finish
 from roborak.core.models import Finding, ReviewResult, ReviewStatus
-from roborak.core.severity import Category, Severity
+from roborak.core.severity import Category, Kind, Severity
 from roborak.core.verdict import Verdict, blocking_findings, gate_for
 
 
@@ -122,3 +123,21 @@ def test_the_configured_default_never_moves_the_exit_code():
 
 def test_an_incomplete_review_still_exits_with_an_error():
     assert exit_code(result(errors=["boom"]), None) == EXIT_ERROR
+
+
+def test_an_unproven_critical_does_not_reach_the_verdict():
+    """The point of the evidence policy, stated where it is finally paid out.
+
+    The demotion happens in the validator; what matters here is that the verdict,
+    the block and the exit code all agree afterwards that nothing blocked.
+    """
+    guess = finding(Severity.CRITICAL)
+    guess.confidence = 0.95
+    kept = validator.enforce_evidence([guess])
+
+    review = ReviewResult(findings=kept, block_on=Severity.CRITICAL)
+    gate = gate_for(review)
+    assert kept[0].kind is Kind.VERIFICATION_NEEDED
+    assert gate.verdict is Verdict.PASS
+    assert gate.blocking == []
+    assert "No findings at or above critical" in gate.summary_line()

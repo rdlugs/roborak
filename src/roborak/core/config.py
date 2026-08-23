@@ -73,6 +73,12 @@ class ReviewConfig(ConfigModel):
     max_findings: int = Field(default=25, ge=1)
     committable_suggestions: bool = True
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    require_evidence: bool = True
+    """Require a critical or major model finding to name what makes it true. One
+    that cannot is demoted to a `minor` `verification_needed` rather than dropped --
+    it may be real, but a self-assigned confidence score is not grounds to fail a
+    build. Static findings are exempt: a tool ran."""
+
     full_file: bool = False
     """Allow findings on lines the change did not touch. Off by default: it is the
     main source of noise, since untouched code is not what the author asked about."""

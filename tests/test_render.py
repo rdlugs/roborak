@@ -23,7 +23,7 @@ from roborak.core.models import (
     ReviewResult,
     Walkthrough,
 )
-from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only
 
@@ -51,6 +51,8 @@ def make_result(*, walkthrough: bool = False) -> ReviewResult:
             body="user_id is concatenated into SQL.",
             suggestion="row = db.execute('...', (user_id,))",
             confidence=0.95,
+            evidence=Evidence.EXECUTION_PATH,
+            evidence_note="user_id reaches line 11 unescaped",
         ),
         Finding(
             file="app/util.py",
@@ -132,6 +134,16 @@ def test_json_findings_carry_provenance():
     assert len(static["fingerprint"]) == 16
 
 
+def test_json_findings_carry_the_evidence_behind_them():
+    """A consumer deciding whether to gate on a finding needs more than a number."""
+    payload = json.loads(json_out.render(make_result()))
+    llm, static = payload["findings"]
+    assert llm["evidence"] == "execution_path"
+    assert llm["evidence_note"] == "user_id reaches line 11 unescaped"
+    assert static["evidence"] == "static_tool"
+    assert "evidence_note" not in static
+
+
 def test_agent_mode_is_a_lean_actionable_payload():
     payload = json.loads(json_out.render(make_result(), agent=True))
     assert set(payload) == {
@@ -152,6 +164,8 @@ def test_agent_mode_is_a_lean_actionable_payload():
         "kind",
         "title",
         "body",
+        "evidence",
+        "evidence_note",
         "suggestion",
     }
 
@@ -479,6 +493,81 @@ def test_a_static_finding_reports_no_confidence():
     assert "confidence" not in text
 
 
+def test_an_unverified_finding_says_so_rather_than_going_quiet():
+    """Silence would read as evidence withheld; the report says there is none."""
+    result = make_result()
+    finding = next(f for f in result.findings if f.source == "llm")
+    finding.evidence = Evidence.UNVERIFIED
+    finding.evidence_note = ""
+    result.findings = [finding]
+    published = markdown.render(result)
+    assert "<summary>🔎 Evidence · unverified</summary>" in published
+    assert "Unverified — from reasoning about the diff alone." in published
+    assert "Evidence: unverified, from reasoning about the diff alone" in _terminal(result)
+
+
+def test_the_published_evidence_folds_away_but_keeps_its_label_in_view():
+    """A skimmer reads the summary; only the sentence behind it is folded."""
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    published = markdown.render(result)
+
+    assert "<summary>🔎 Evidence · execution path</summary>" in published
+    assert "user_id reaches line 11 unescaped" in published
+    # Under the agent prompt, which is where a reader arguing with a finding looks.
+    assert published.index("🤖 Prompt for AI Agents") < published.index("🔎 Evidence")
+
+
+def test_the_confidence_stays_out_of_the_fold_and_goes_last():
+    """A number nobody unfolds is a number nobody reads."""
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    published = markdown.render(result)
+
+    assert "_Confidence: 95%_" in published
+    assert (
+        "95%"
+        not in published[
+            published.index("🔎 Evidence") : published.index(
+                "</details>", published.index("🔎 Evidence")
+            )
+        ]
+    )
+    finding = markdown.finding_markdown(result.findings[0])
+    assert finding.rstrip().endswith("_Confidence: 95%_")
+
+
+def test_the_evidence_names_the_other_files_it_rests_on():
+    result = make_result()
+    finding = next(f for f in result.findings if f.source == "llm")
+    finding.evidence_files = ["app/callers.py", "tests/test_db.py"]
+    result.findings = [finding]
+
+    assert "**Files:** `app/callers.py`, `tests/test_db.py`" in markdown.render(result)
+    assert "Evidence in: app/callers.py, tests/test_db.py" in render_terminal(result, width=120)
+
+
+def test_a_finding_with_no_other_files_gets_no_empty_file_list():
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    assert "**Files:**" not in markdown.render(result)
+
+
+def test_a_model_finding_states_its_evidence_in_the_terminal():
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    text = render_terminal(result, width=120)
+    assert "evidence execution path" in text
+
+
+def test_a_static_finding_claims_no_model_evidence_in_the_terminal():
+    result = make_result()
+    static = next(f for f in result.findings if f.source == "static")
+    static.kind = Kind.POTENTIAL_ISSUE
+    result.findings = [static]
+    assert "evidence" not in render_terminal(result, width=120)
+
+
 def test_nitpicks_are_compressed_to_one_line_each():
     """The terminal cannot collapse a section, so it shrinks it instead."""
     result = make_result()
@@ -631,11 +720,18 @@ def test_no_finding_is_lost_between_the_forms():
         "🔴 Critical",
         "⚡ Quick win",
         "Introduces a session cache keyed by user id.",
-        "_Confidence: 95%_",
+        "user_id reaches line 11 unescaped",
         "row = db.execute",
     ):
         assert fragment in published, fragment
         assert fragment in shown, fragment
+
+    # Said in the form each reader can use: folded where folding works, one
+    # italic line where it does not.
+    assert "<summary>🔎 Evidence · execution path</summary>" in published
+    assert (
+        "_Confidence: 95% · Evidence (execution path): user_id reaches line 11 unescaped_" in shown
+    )
 
     for finding in result.findings:
         assert f"<!-- roborak:v1:{finding.fingerprint} -->" in published
@@ -851,3 +947,24 @@ def test_describe_states_no_verdict_because_it_judged_nothing():
 
     assert "Pre-merge check" not in document
     assert "verdict" not in json.loads(json_out.render(result))["summary"]
+
+
+def test_an_unverified_finding_keeps_the_note_explaining_what_to_check():
+    """The generic phrase is the fallback, not a replacement for a real sentence."""
+    result = make_result()
+    finding = next(f for f in result.findings if f.source == "llm")
+    finding.evidence = Evidence.UNVERIFIED
+    finding.evidence_note = "Depends on validate(), which was not shown."
+    result.findings = [finding]
+    # Collapsed, because the evidence body is deliberately wrapped.
+    text = " ".join(markdown.render(result).split())
+    assert "<summary>🔎 Evidence · unverified</summary>" in text
+    assert "Depends on validate(), which was not shown." in text
+    assert "from reasoning about the diff alone" not in text
+
+
+def test_the_terminal_prints_the_evidence_note_and_not_just_its_label():
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    text = render_terminal(result, width=120)
+    assert "user_id reaches line 11 unescaped" in text

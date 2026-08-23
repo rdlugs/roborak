@@ -24,6 +24,7 @@ from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
+    EVIDENCE_LABEL,
     KIND_LABEL,
     SEVERITY_LABEL,
     SEVERITY_STYLE,
@@ -175,6 +176,7 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
     tail.append(KIND_LABEL[finding.kind], style="dim")
     if finding.source == "llm":
         tail.append(f"  confidence {finding.confidence:.0%}", style="dim")
+        tail.append(f"  evidence {EVIDENCE_LABEL[finding.evidence].lower()}", style="dim")
     if finding.rule_id:
         tail.append(f"  [{finding.rule_id}]", style="magenta")
     if finding.source == "static" and finding.tool:
@@ -187,6 +189,23 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
         parts += [Text(""), code]
 
     parts += [Text(""), Text(finding.body.strip())]
+
+    # The tail says which kind of evidence; this says what it actually is. A
+    # sentence needs its own line, so it sits under the body rather than in the
+    # badge row, matching where Markdown puts it.
+    if finding.evidence_note:
+        parts += [
+            Text(""),
+            Text(
+                f"Evidence ({EVIDENCE_LABEL[finding.evidence].lower()}): {finding.evidence_note}",
+                style="dim italic",
+            ),
+        ]
+
+    # Where else to look. The panel is titled with the flagged file, so these are
+    # the only paths in it a reader has not already been given.
+    if finding.evidence_files:
+        parts.append(Text("Evidence in: " + ", ".join(finding.evidence_files), style="dim italic"))
 
     if finding.suggestion:
         parts.append(Text(""))

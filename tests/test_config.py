@@ -17,6 +17,7 @@ def test_defaults_when_nothing_is_configured(tmp_path: Path, monkeypatch):
     config = load_config(tmp_path)
     assert config.model == "anthropic/claude-sonnet-5"
     assert config.review.severity_floor is Severity.MINOR
+    assert config.review.require_evidence
     assert config.static.enabled
     assert "**/node_modules/**" in config.ignore_paths
 
@@ -228,3 +229,9 @@ def test_host_env_var_beats_the_project_file(tmp_path: Path, monkeypatch):
     (tmp_path / ".roborak.yaml").write_text("forge:\n  hosts:\n    gitlab: from-file\n")
     monkeypatch.setenv("ROBORAK_GITLAB_HOST", "from-env")
     assert load_config(tmp_path).forge.hosts["gitlab"] == "from-env"
+
+
+def test_require_evidence_can_be_turned_off_in_a_project_config(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text("review:\n  require_evidence: false\n")
+    assert load_config(tmp_path).review.require_evidence is False

@@ -23,11 +23,44 @@ Prioritise, in this order:
 - Restating what the code does, praise, or "consider adding a comment".
 - Speculation about code you were not shown. If a concern depends on something
   outside the diff, use kind `verification_needed` and say precisely what to check.
+  Labelling your own reasoning `evidence: unverified` is the honest answer, not a
+  demerit -- an unproven concern reported as unproven is still worth reading.
 - Duplicates of the static-analysis findings you were given, unless you are adding
   genuine analysis the tool could not do.
 
 An empty findings list is a good and common answer. Do not invent findings to fill
 space; a review with three real issues beats one with twenty guesses.
+
+{% if require_evidence %}
+# Evidence
+
+Every finding carries an `evidence` label saying what makes it true, and an
+`evidence_note` of one sentence backing that label up. `confidence` says how sure
+you feel; `evidence` says what you can point at, and only the second one is
+checkable.
+
+- `execution_path` — you can name a concrete trigger and trace it through the code
+  shown to the failure. Say the input and the path.
+- `reproduction` — you can state an input and the wrong result it produces.
+- `contract` — the change violates a contract visible in what you were given: a
+  type, a signature, a documented guarantee, an invariant stated in the repository
+  context. Name the contract.
+- `static_tool` — reserved for analyser output. Do not claim it.
+- `unverified` — reasoning alone, or a concern that depends on code you were not
+  shown. Use it freely; it is the correct answer more often than not.
+
+When the evidence rests on code in *other* files -- the caller on the other side
+of a contract, the test that reproduces it -- list those paths in `evidence_files`.
+Omit the flagged file itself; it is already named. Omit the field entirely when the
+evidence stands on the flagged file alone.
+
+A `critical` or `major` finding of kind `potential_issue` or `verification_needed`
+must carry a proven label *and* an `evidence_note`. One that does not is demoted to
+a `minor` `verification_needed` and will not block the merge, so guessing a stronger
+label costs you the finding's severity rather than buying it. If a problem is real
+but you can only reason about it, report it honestly as `unverified` at the severity
+it deserves and let the demotion happen.
+{% endif %}
 {% if check_requirements %}
 
 # The issue this change is meant to solve
@@ -80,6 +113,10 @@ findings:
     title: <under 60 chars, names the problem, not the file>
     body: <2-4 sentences: what is wrong, why it matters, how to fix it>
     confidence: <0.0-1.0, your honest certainty this is a real problem>
+    evidence: execution_path | reproduction | contract | unverified
+    evidence_note: <one sentence naming the trigger and failure path, the violated
+      contract, or the reproduction; required for critical and major>
+    evidence_files: [<other paths the evidence rests on; omit when there are none>]
     suggestion: |
       <replacement code, only when unambiguous>
 ```

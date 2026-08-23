@@ -40,6 +40,7 @@ from roborak.core.models import Finding, ReviewResult, Walkthrough
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
+    EVIDENCE_LABEL,
     SEVERITY_LABEL,
     Kind,
     Severity,
@@ -322,6 +323,10 @@ def finding_markdown(
                 collapsible=collapsible,
             ),
         ]
+
+    if evidence := _evidence_block(finding, form=form):
+        lines += ["", evidence]
+
     if collapsible:
         lines += [
             "",
@@ -331,6 +336,9 @@ def finding_markdown(
 
     if source := _source_note(finding):
         lines += ["", source]
+
+    if confidence := _confidence_note(finding, form=form):
+        lines += ["", confidence]
 
     return "\n".join(lines)
 
@@ -376,14 +384,83 @@ def _span(finding: Finding) -> str:
 
 
 def _source_note(finding: Finding) -> str:
-    """Where this came from, when it did not simply come from reading the diff."""
+    """Where this came from.
+
+    Deliberately the last line rather than a badge beside the severity: a reader
+    wants the problem first, and the provenance once they have decided to care.
+    A model finding says the same thing in ``_evidence_block``, which has a
+    sentence and a file list to carry and so needs the room.
+    """
     if finding.rule_id and finding.source == "rule":
         return f"_Source: project rule `{finding.rule_id}`_"
     if finding.tool:
         return f"_Source: `{finding.tool}`_"
-    if finding.source == "llm":
-        return f"_Confidence: {finding.confidence:.0%}_"
     return ""
+
+
+def _confidence_note(finding: Finding, *, form: Form) -> str:
+    """How sure the model is, on the last line and never behind a fold.
+
+    It belongs to the finding rather than to the evidence: a number that only
+    appears once a reader opens a section is a number most readers never see, and
+    the whole point of printing it beside a proven label is that the two can be
+    compared at a glance. The terminal says it on the evidence line instead,
+    which is already the last line there.
+    """
+    if finding.source != "llm" or form is Form.TERMINAL:
+        return ""
+    return f"_Confidence: {finding.confidence:.0%}_"
+
+
+def _evidence_block(finding: Finding, *, form: Form) -> str:
+    """What makes a model's finding true, folded away until it is argued with.
+
+    A reader scanning a review wants the claim; a reader disputing one wants the
+    sentence behind it and the files it rests on. Published, that is a
+    ``<details>`` under the agent prompt, labelled with the kind of evidence so a
+    skimmer still learns whether the finding was proven without opening it. The
+    confidence stays outside the fold entirely (``_confidence_note``). The
+    terminal, which cannot fold anything, keeps both on the one line it had.
+    """
+    if finding.source != "llm":
+        return ""
+    files = (
+        "**Files:** " + ", ".join(f"`{path}`" for path in finding.evidence_files)
+        if finding.evidence_files
+        else ""
+    )
+
+    if form is Form.TERMINAL:
+        # Wrapped, because an evidence note is a sentence rather than a badge and a
+        # long one would otherwise be the only unwrapped line in the document.
+        # Emphasis spans a soft line break, so the italics survive the wrap.
+        line = _wrap(f"_Confidence: {finding.confidence:.0%} · {_evidence_phrase(finding)}_")
+        return f"{line}\n\n{files}" if files else line
+
+    summary = f"🔎 Evidence · {EVIDENCE_LABEL[finding.evidence].lower()}"
+    body = _wrap(_evidence_detail(finding))
+    return _details(summary, f"{body}\n\n{files}" if files else body, level=4)
+
+
+def _evidence_detail(finding: Finding) -> str:
+    """The sentence behind the label, or the honest absence of one."""
+    if finding.evidence_note:
+        return finding.evidence_note
+    if not finding.evidence.proven:
+        return "Unverified — from reasoning about the diff alone."
+    return f"{EVIDENCE_LABEL[finding.evidence]}, with no note given."
+
+
+def _evidence_phrase(finding: Finding) -> str:
+    """What the finding can point at, said plainly enough to argue with."""
+    label = EVIDENCE_LABEL[finding.evidence].lower()
+    if not finding.evidence_note:
+        if not finding.evidence.proven:
+            return "Evidence: unverified, from reasoning about the diff alone"
+        return f"Evidence: {label}"
+    # An unverified finding still says what it would take to check, and that
+    # sentence is the most useful thing on the line -- keep it, labelled honestly.
+    return f"Evidence ({label}): {finding.evidence_note}"
 
 
 def _agent_prompt(finding: Finding) -> str:

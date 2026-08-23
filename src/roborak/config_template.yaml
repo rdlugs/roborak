@@ -52,6 +52,11 @@ review:
   committable_suggestions: true
   # Drop findings the model was not reasonably sure about.
   min_confidence: 0.5
+  # Require a critical or major model finding to name what makes it true -- the
+  # trigger and failure path, the violated contract, a reproduction, or a tool
+  # result. One that cannot is demoted to a minor `verification_needed` instead of
+  # blocking the merge. Static-analyser findings are exempt: a tool ran.
+  require_evidence: true
   # Allow findings on lines this change did not touch. Off by default: untouched
   # code is not what the author asked about, and it is the main source of noise.
   full_file: false

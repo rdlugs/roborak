@@ -13,7 +13,7 @@ from typing import Any
 from roborak.core.models import Finding, ReviewResult
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -84,7 +84,12 @@ def _finding_dict(finding: Finding, *, agent: bool) -> dict[str, Any]:
         "kind": finding.kind.value,
         "title": finding.title,
         "body": finding.body,
+        "evidence": finding.evidence.value,
     }
+    if finding.evidence_note:
+        data["evidence_note"] = finding.evidence_note
+    if finding.evidence_files:
+        data["evidence_files"] = list(finding.evidence_files)
     if finding.suggestion:
         data["suggestion"] = finding.suggestion
     if agent:
