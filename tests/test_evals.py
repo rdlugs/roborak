@@ -35,6 +35,7 @@ def _row(*, expect_blocker: bool, blockers: int) -> dict[str, object]:
         "expected_category": "bug" if expect_blocker else None,
         "expect_blocker": expect_blocker,
         "matched": expect_blocker,
+        "matched_blocker": expect_blocker and bool(blockers),
         "exact_anchor": expect_blocker,
         "findings": blockers,
         "blockers": blockers,
@@ -55,6 +56,19 @@ def test_the_evidence_metrics_measure_both_halves_of_the_trade():
     )
     assert metrics["unproven_blocker_rate"] == 0.5
     assert metrics["blocker_recall"] == 0.5
+
+
+def test_blocker_recall_needs_the_blocker_to_be_the_expected_defect():
+    """An unrelated major finding cannot stand in for the defect the case tests."""
+    row = _row(expect_blocker=True, blockers=1)
+    row["matched_blocker"] = False
+    assert score([row])["blocker_recall"] == 0.0
+
+
+def test_nonblocking_controls_are_not_counted_as_clean_false_positives():
+    """The controls are meant to draw a finding; only silence-expected cases aren't."""
+    metrics = score([_row(expect_blocker=False, blockers=0) | {"findings": 1}])
+    assert metrics["clean_false_positive_rate"] == 0.0
 
 
 def test_rows_without_a_blocker_label_are_left_out_of_both_metrics():

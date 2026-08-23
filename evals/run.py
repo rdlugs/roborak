@@ -36,7 +36,6 @@ def synthetic_diff(path: str, before: str, after: str) -> str:
 
 def score(rows: list[dict[str, object]]) -> dict[str, float | int]:
     defects = [row for row in rows if row["expected_category"]]
-    clean = [row for row in rows if not row["expected_category"]]
     matched = [row for row in defects if row["matched"]]
 
     # The evidence policy is a trade, so both halves are measured together: a run
@@ -44,6 +43,14 @@ def score(rows: list[dict[str, object]]) -> dict[str, float | int]:
     # not improved anything.
     controls = [row for row in rows if row.get("expect_blocker") is False]
     provable = [row for row in rows if row.get("expect_blocker") is True]
+
+    # The controls are *meant* to draw a nonblocking finding, so they are not
+    # false positives; only the cases expected to stay silent are.
+    clean = [
+        row
+        for row in rows
+        if not row["expected_category"] and row.get("expect_blocker") is not False
+    ]
 
     return {
         "cases": len(rows),
@@ -55,7 +62,9 @@ def score(rows: list[dict[str, object]]) -> dict[str, float | int]:
             sum(bool(row["blockers"]) for row in controls) / len(controls) if controls else 0.0
         ),
         "blocker_recall": (
-            sum(bool(row["blockers"]) for row in provable) / len(provable) if provable else 1.0
+            sum(bool(row["matched_blocker"]) for row in provable) / len(provable)
+            if provable
+            else 1.0
         ),
         "anchor_accuracy": (
             sum(bool(row["exact_anchor"]) for row in matched) / len(matched) if matched else 0.0
@@ -90,6 +99,9 @@ def main() -> int:
         # The same predicate the verdict blocks on, so the metric cannot drift from
         # what actually fails CI: severity alone decides, whatever the kind.
         blockers = blocking_findings(result, Severity.MAJOR)
+        # Recall is only earned by blocking on *this* case's defect, so an unrelated
+        # major finding cannot stand in for the one the case was written to catch.
+        near = [finding for finding in candidates if abs(finding.start_line - line) <= 3]
         rows.append(
             {
                 "id": case["id"],
@@ -97,7 +109,10 @@ def main() -> int:
                 "expect_blocker": case.get("expect_blocker"),
                 "findings": len(result.findings),
                 "blockers": len(blockers),
-                "matched": any(abs(finding.start_line - line) <= 3 for finding in candidates),
+                "matched": bool(near),
+                "matched_blocker": any(
+                    any(blocker is finding for blocker in blockers) for finding in near
+                ),
                 "exact_anchor": any(finding.start_line == line for finding in candidates),
                 "errors": result.errors,
                 "tokens": result.tokens_used,
