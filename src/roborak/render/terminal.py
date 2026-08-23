@@ -24,6 +24,7 @@ from roborak.core.models import Finding, ReviewResult
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
+    EVIDENCE_LABEL,
     KIND_LABEL,
     SEVERITY_LABEL,
     SEVERITY_STYLE,
@@ -175,6 +176,7 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
     tail.append(KIND_LABEL[finding.kind], style="dim")
     if finding.source == "llm":
         tail.append(f"  confidence {finding.confidence:.0%}", style="dim")
+        tail.append(f"  evidence {EVIDENCE_LABEL[finding.evidence].lower()}", style="dim")
     if finding.rule_id:
         tail.append(f"  [{finding.rule_id}]", style="magenta")
     if finding.source == "static" and finding.tool:

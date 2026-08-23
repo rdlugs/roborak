@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 
 ChangeType = Literal["added", "modified", "deleted", "renamed"]
 Origin = Literal["local", "gitlab", "github", "paths"]
@@ -236,9 +236,23 @@ class Finding(BaseModel):
     tool: str | None = None
     """Which static analyser produced this, when ``source == "static"``."""
 
+    evidence: Evidence = Evidence.UNVERIFIED
+    """What makes this finding true. ``confidence`` says how sure the model feels;
+    this says what it can point at, which is what the blocker policy is judged on."""
+
+    evidence_note: str = ""
+    """One concise sentence naming the trigger and failure path, the violated
+    contract, the reproduction, or the tool result. Empty means the claim stands on
+    nothing, and ``roborak.analysis.validator`` treats it that way."""
+
     def model_post_init(self, __context: object) -> None:
         if self.end_line < self.start_line:
             self.end_line = self.start_line
+        # A tool ran and said so, which is evidence of a different kind from
+        # reasoning. Defaulting here rather than in five adapters keeps a new one
+        # from silently arriving unverified.
+        if self.source == "static" and "evidence" not in self.model_fields_set:
+            self.evidence = Evidence.STATIC_TOOL
 
     @property
     def fingerprint(self) -> str:

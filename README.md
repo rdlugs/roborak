@@ -187,6 +187,14 @@ output:
 `review.block_on` is not `review.severity_floor`: the floor decides what is *reported* at
 all, `block_on` decides what *blocks*.
 
+**Blocking takes evidence.** A `critical` or `major` model finding has to say what makes it
+true — the trigger and the failure path, a violated contract, or a reproduction — not just how
+confident it feels. One that cannot is demoted to a `minor` `verification_needed`: still
+reported, still anchored, no longer counted by the verdict. A self-assigned `confidence: 0.95`
+is the model grading its own homework, and it is not grounds to fail a build. Static-analyser
+findings are exempt, because a tool ran. Set `review.require_evidence: false` to turn the
+policy off.
+
 **As a forge status.** A review posted with `--post` also sets a commit status on the
 change's head commit, named `roborak/review`, so branch protection and approval rules can
 gate on it. Re-running a review replaces that status rather than stacking another. Pass
@@ -411,6 +419,7 @@ review:
   max_findings: 25
   committable_suggestions: true
   min_confidence: 0.5
+  require_evidence: true     # a critical/major model finding must show its evidence
   check_requirements: true   # with --issue, report requirements the change misses
   include_discussions: true  # use relevant unresolved MR/PR comments as context
 

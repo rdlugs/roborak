@@ -48,8 +48,27 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   that name a diff — `--base`, `--committed`, `--uncommitted`,
   `--include-untracked` — have nothing to compare against there and are refused
   rather than quietly reinterpreted.
+- **Blocking a merge now takes evidence, not confidence.** A `critical` or
+  `major` model finding used to need nothing but prose and a number the model
+  assigned to its own claim — and a missing number defaulted to `0.8`, comfortably
+  above the threshold that filtered it. With the pre-merge check now gating
+  branches, that made one plausible guess enough to fail a build. Findings carry
+  an `evidence` label (`execution_path`, `reproduction`, `contract`,
+  `static_tool`, `unverified`) and a one-sentence `evidence_note` saying what
+  makes them true, the review prompt requires both for anything blocker-level,
+  and a claim that arrives without them — or that names a label with nothing
+  behind it — is demoted to a `minor` `verification_needed` rather than dropped:
+  still reported, still anchored, no longer counted by the verdict. Static
+  findings are exempt and labelled `static_tool`, because a tool ran. The
+  evidence rides along in the terminal report, `--markdown`, the published
+  summary comment, `--json` and `--agent`. Set `review.require_evidence: false`
+  to turn the policy off.
 
 ### Changed
+
+- **`--json` and `--agent` report `schema_version: 2`.** Both finding payloads
+  gained `evidence`, and `evidence_note` where there is one. Additive only; no
+  existing field moved or changed meaning.
 
 - **The documentation site deploys only after a release is created.** Pull
   requests and ordinary pushes still build the site in CI, but the release

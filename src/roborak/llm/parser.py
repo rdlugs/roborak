@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from roborak.core.models import Finding, Walkthrough
-from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +131,8 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
     if not body:
         return None
 
+    evidence, note = _as_evidence(entry.get("evidence"), entry.get("evidence_note"))
+
     return Finding(
         file=path,
         start_line=start,
@@ -145,6 +147,8 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
         rule_id=_as_str(entry.get("rule_id")) or None,
         confidence=_as_confidence(entry.get("confidence")),
         source="llm",
+        evidence=evidence,
+        evidence_note=note,
     )
 
 
@@ -202,6 +206,20 @@ def _as_confidence(value: Any) -> float:
     if number > 1.0:
         number /= 100.0
     return min(max(number, 0.0), 1.0)
+
+
+def _as_evidence(kind: Any, note: Any) -> tuple[Evidence, str]:
+    """Read the evidence pair, refusing a label that carries nothing behind it.
+
+    A model that writes ``evidence: execution_path`` and then says nothing has not
+    shown a path, it has picked a word. Unknown labels fall back the same way, so
+    the only route to a proven value is naming one *and* explaining it.
+    """
+    described = _as_str(note)[:300]
+    claimed = _as_enum(kind, Evidence, Evidence.UNVERIFIED)
+    if claimed.proven and not described:
+        return Evidence.UNVERIFIED, ""
+    return claimed, described
 
 
 def _clean_suggestion(value: Any) -> str | None:

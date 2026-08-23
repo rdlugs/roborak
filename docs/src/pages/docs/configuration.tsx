@@ -111,11 +111,22 @@ export default function Configuration() {
           "  max_findings: 25",
           "  committable_suggestions: true # emit replacement code you can commit as-is",
           "  min_confidence: 0.5           # drop findings the model was not sure about",
+          "  require_evidence: true        # a critical/major model finding must show its evidence",
           "  full_file: false              # allow findings on untouched lines",
           "  check_requirements: true      # with --issue, report requirements the change misses",
           "  include_discussions: true     # unresolved MR/PR comments as bounded context",
         ].join("\n")}
       />
+      <Callout kind="note" title="What require_evidence buys you">
+        <P>
+          A <Code>critical</Code> or <Code>major</Code> model finding has to say what makes it true
+          — the trigger and the failure path, a violated contract, or a reproduction. One that
+          cannot is demoted to a <Code>minor</Code> <Code>verification_needed</Code>: still
+          reported, still anchored, no longer counted by the pre-merge verdict. A self-assigned{" "}
+          <Code>confidence</Code> is the model grading its own homework, and it is not grounds to
+          fail a build. Static-analyser findings are exempt, because a tool ran.
+        </P>
+      </Callout>
       <Callout kind="note" title="Why full_file defaults to off">
         <P>
           Untouched code is not what the author asked about, and reviewing it is the single largest

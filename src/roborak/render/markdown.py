@@ -40,6 +40,7 @@ from roborak.core.models import Finding, ReviewResult, Walkthrough
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
+    EVIDENCE_LABEL,
     SEVERITY_LABEL,
     Kind,
     Severity,
@@ -376,14 +377,32 @@ def _span(finding: Finding) -> str:
 
 
 def _source_note(finding: Finding) -> str:
-    """Where this came from, when it did not simply come from reading the diff."""
+    """Where this came from, and what makes it true.
+
+    Deliberately the last line rather than a badge beside the severity: a reader
+    wants the problem first, and the provenance once they have decided to care.
+    The lead line is also parsed back by ``rich_report``, so it stays as it is.
+    """
     if finding.rule_id and finding.source == "rule":
         return f"_Source: project rule `{finding.rule_id}`_"
     if finding.tool:
         return f"_Source: `{finding.tool}`_"
     if finding.source == "llm":
-        return f"_Confidence: {finding.confidence:.0%}_"
+        # Wrapped, because an evidence note is a sentence rather than a badge and a
+        # long one would otherwise be the only unwrapped line in the document.
+        # Emphasis spans a soft line break, so the italics survive the wrap.
+        return _wrap(f"_Confidence: {finding.confidence:.0%} · {_evidence_phrase(finding)}_")
     return ""
+
+
+def _evidence_phrase(finding: Finding) -> str:
+    """What the finding can point at, said plainly enough to argue with."""
+    label = EVIDENCE_LABEL[finding.evidence].lower()
+    if not finding.evidence.proven:
+        return "Evidence: unverified, from reasoning about the diff alone"
+    if not finding.evidence_note:
+        return f"Evidence: {label}"
+    return f"Evidence ({label}): {finding.evidence_note}"
 
 
 def _agent_prompt(finding: Finding) -> str:

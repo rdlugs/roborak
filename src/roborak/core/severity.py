@@ -1,9 +1,10 @@
 """Vocabulary for findings.
 
-A finding is described along four axes: ``Severity`` and ``Category`` say how
+A finding is described along five axes: ``Severity`` and ``Category`` say how
 much it matters and what domain it belongs to, ``Kind`` and ``Effort`` say what
-sort of comment it is and what fixing it will cost. Every value is lowercase so
-it round-trips through YAML, JSON and the LLM prompt without normalisation.
+sort of comment it is and what fixing it will cost, and ``Evidence`` says what
+makes it true. Every value is lowercase so it round-trips through YAML, JSON and
+the LLM prompt without normalisation.
 """
 
 from __future__ import annotations
@@ -57,6 +58,34 @@ class Kind(StrEnum):
     kind that is not anchored to a changed line, because an omission has none."""
 
 
+class Evidence(StrEnum):
+    """What makes a finding true, as opposed to how sure the model feels.
+
+    ``confidence`` is the model grading its own homework. This says what the
+    finding can actually point at, which is the only thing that separates a traced
+    failure from a plausible guess wearing a high number.
+    """
+
+    EXECUTION_PATH = "execution_path"
+    """A concrete trigger and the path from it to the failure."""
+
+    REPRODUCTION = "reproduction"
+    """An input and the wrong result it produces."""
+
+    CONTRACT = "contract"
+    """A documented or declared contract the change violates."""
+
+    STATIC_TOOL = "static_tool"
+    """A tool ran and said so. Only static findings claim this."""
+
+    UNVERIFIED = "unverified"
+    """Reasoning alone. Honest, and not grounds to block a merge."""
+
+    @property
+    def proven(self) -> bool:
+        return self is not Evidence.UNVERIFIED
+
+
 class Effort(StrEnum):
     """What the fix is likely to cost."""
 
@@ -94,6 +123,14 @@ EFFORT_LABEL: dict[Effort, str] = {
     Effort.QUICK_WIN: "⚡ Quick win",
     Effort.MODERATE: "🔨 Moderate",
     Effort.HEAVY_LIFT: "🏗️ Heavy lift",
+}
+
+EVIDENCE_LABEL: dict[Evidence, str] = {
+    Evidence.EXECUTION_PATH: "Execution path",
+    Evidence.REPRODUCTION: "Reproduction",
+    Evidence.CONTRACT: "Contract",
+    Evidence.STATIC_TOOL: "Static tool",
+    Evidence.UNVERIFIED: "Unverified",
 }
 
 KIND_LABEL: dict[Kind, str] = {

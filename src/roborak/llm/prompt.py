@@ -128,6 +128,7 @@ def build_review_prompt(
         max_findings=config.review.max_findings,
         committable_suggestions=config.review.committable_suggestions,
         full_file=config.review.full_file,
+        require_evidence=config.review.require_evidence,
         check_requirements=issue is not None
         and config.review.check_requirements
         and not collect_requirement_evidence,

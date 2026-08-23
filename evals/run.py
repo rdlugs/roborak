@@ -14,6 +14,7 @@ from roborak.analysis.reviewer import Reviewer
 from roborak.context.diff import parse_diff
 from roborak.core.config import Config
 from roborak.core.models import ChangeSet
+from roborak.core.severity import Kind, Severity
 from roborak.llm.client import LLMClient
 
 ROOT = Path(__file__).parent
@@ -36,11 +37,24 @@ def score(rows: list[dict[str, object]]) -> dict[str, float | int]:
     defects = [row for row in rows if row["expected_category"]]
     clean = [row for row in rows if not row["expected_category"]]
     matched = [row for row in defects if row["matched"]]
+
+    # The evidence policy is a trade, so both halves are measured together: a run
+    # that stops blocking on guesses by also refusing to block on real defects has
+    # not improved anything.
+    controls = [row for row in rows if row.get("expect_blocker") is False]
+    provable = [row for row in rows if row.get("expect_blocker") is True]
+
     return {
         "cases": len(rows),
         "recall": len(matched) / len(defects) if defects else 1.0,
         "clean_false_positive_rate": (
             sum(bool(row["findings"]) for row in clean) / len(clean) if clean else 0.0
+        ),
+        "unproven_blocker_rate": (
+            sum(bool(row["blockers"]) for row in controls) / len(controls) if controls else 0.0
+        ),
+        "blocker_recall": (
+            sum(bool(row["blockers"]) for row in provable) / len(provable) if provable else 1.0
         ),
         "anchor_accuracy": (
             sum(bool(row["exact_anchor"]) for row in matched) / len(matched) if matched else 0.0
@@ -72,11 +86,18 @@ def main() -> int:
         expected = case.get("expected_category")
         line = int(case.get("expected_line") or 0)
         candidates = [finding for finding in result.findings if finding.category.value == expected]
+        blockers = [
+            finding
+            for finding in result.findings
+            if finding.severity.at_least(Severity.MAJOR) and finding.kind is Kind.POTENTIAL_ISSUE
+        ]
         rows.append(
             {
                 "id": case["id"],
                 "expected_category": expected,
+                "expect_blocker": case.get("expect_blocker"),
                 "findings": len(result.findings),
+                "blockers": len(blockers),
                 "matched": any(abs(finding.start_line - line) <= 3 for finding in candidates),
                 "exact_anchor": any(finding.start_line == line for finding in candidates),
                 "errors": result.errors,
@@ -93,6 +114,8 @@ def main() -> int:
     return int(
         metrics["recall"] < 0.80
         or metrics["clean_false_positive_rate"] > 0.10
+        or metrics["unproven_blocker_rate"] > 0.10
+        or metrics["blocker_recall"] < 0.80
         or metrics["anchor_accuracy"] < 0.95
         or metrics["parse_success"] < 0.99
     )

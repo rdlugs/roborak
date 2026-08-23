@@ -10,7 +10,7 @@ import textwrap
 
 import pytest
 
-from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
     ParseError,
     parse_findings,
@@ -320,3 +320,56 @@ requirement_evidence:
         }
     ]
     assert parse_requirement_evidence("findings: []\nrequirement_evidence: nope") == []
+
+
+def _one(**fields: object):
+    """Parse a single finding, with the boilerplate fields filled in."""
+    entry = {
+        "file": "a.py",
+        "start_line": 3,
+        "end_line": 3,
+        "severity": "critical",
+        "category": "bug",
+        "body": "The divisor can be zero.",
+        **fields,
+    }
+    body = "\n".join(f"    {key}: {value}" for key, value in entry.items())
+    findings = parse_findings(f"findings:\n  -\n{body}\n")
+    assert len(findings) == 1
+    return findings[0]
+
+
+def test_evidence_is_read_when_the_model_supplies_both_halves():
+    finding = _one(
+        evidence="execution_path",
+        evidence_note="count is 0 for an empty batch, so line 3 raises.",
+    )
+    assert finding.evidence is Evidence.EXECUTION_PATH
+    assert finding.evidence_note == "count is 0 for an empty batch, so line 3 raises."
+
+
+def test_a_missing_evidence_key_is_unverified_rather_than_assumed():
+    finding = _one()
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == ""
+
+
+def test_an_unknown_evidence_label_falls_back_to_unverified():
+    finding = _one(evidence="vibes", evidence_note="I have a feeling about this one.")
+    assert finding.evidence is Evidence.UNVERIFIED
+
+
+def test_a_proven_label_with_no_note_behind_it_is_not_evidence():
+    """Picking the word is not showing the path, and must not buy a blocker slot."""
+    finding = _one(evidence="execution_path")
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == ""
+
+
+def test_an_honest_unverified_claim_keeps_the_note_it_offered():
+    finding = _one(
+        evidence="unverified",
+        evidence_note="Depends on validate(), which was not shown.",
+    )
+    assert finding.evidence is Evidence.UNVERIFIED
+    assert finding.evidence_note == "Depends on validate(), which was not shown."
