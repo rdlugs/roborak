@@ -484,7 +484,7 @@ def test_github_review_is_submitted_as_one_call(monkeypatch):
     monkeypatch.setattr(
         "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
     )
-    report = GitHubPublisher(target=target, token="tok").publish(make_result())
+    report = GitHubPublisher(target=target, token="tok", post_check=False).publish(make_result())
 
     assert len(posted) == 1, "one review, not one comment per finding"
     payload = posted[0]
@@ -741,7 +741,9 @@ def test_github_leaves_a_gap_out_of_the_inline_comments(monkeypatch):
     monkeypatch.setattr(
         "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
     )
-    report = GitHubPublisher(target=target, token="tok").publish(result_with_a_gap())
+    report = GitHubPublisher(target=target, token="tok", post_check=False).publish(
+        result_with_a_gap()
+    )
 
     (payload,) = posted
     assert len(payload["comments"]) == 1
@@ -1440,3 +1442,187 @@ def test_an_unchanged_flow_keeps_its_cached_overview(tmp_path):
     store.record(key, [], "sha2", flow_digest="flowA")
 
     assert store.get(key).last_walkthrough == {"summary": "old"}
+
+
+# --- the pre-merge commit status -------------------------------------------
+
+
+def status_calls(posted: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+    return [(path, body) for path, body in posted if "/statuses/" in path]
+
+
+def recording_handler(posted: list, status: int = 201, body: dict | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(status, json=body if body is not None else {"id": "1"})
+
+    return handler
+
+
+def test_github_posts_the_verdict_as_a_commit_status(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+
+    report = GitHubPublisher(target=target, token="tok").publish(result)
+
+    (path, body) = status_calls(posted)[0]
+    assert path.endswith("/repos/acme/web/statuses/head333")
+    assert body["state"] == "failure"
+    assert body["context"] == "roborak/review"
+    assert body["description"] == "1 finding at or above critical."
+    assert report.status_posted
+    assert report.status_skipped is None
+
+
+def test_a_clean_review_posts_a_passing_status(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    result.findings = []
+
+    GitHubPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted)[0][1]["state"] == "success"
+
+
+def test_gitlab_posts_the_verdict_with_its_own_spelling_of_failure(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    wire: list[bytes] = []
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        # httpx decodes %2F out of URL.path, and that is the one character a
+        # GitLab project path must keep encoded, so check the wire form too.
+        wire.append(request.url.raw_path.split(b"?")[0])
+        return httpx.Response(201, json={"id": "1"})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+
+    report = GitLabPublisher(target=target, token="tok").publish(result)
+
+    (path, body) = status_calls(posted)[0]
+    assert path.endswith("/statuses/head333")
+    assert wire[-1].endswith(b"/projects/acme%2Fweb/statuses/head333")
+    assert body["state"] == "failed", "GitLab has no 'failure'"
+    assert body["name"] == "roborak/review"
+    assert report.status_posted
+
+
+def test_the_status_context_is_stable_across_runs(monkeypatch):
+    """Re-posting under one context replaces the status instead of stacking one."""
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    for _ in range(2):
+        GitHubPublisher(target=target, token="tok").publish(make_result())
+
+    paths = [path for path, _ in status_calls(posted)]
+    contexts = {body["context"] for _, body in status_calls(posted)}
+    assert len(paths) == 2 and len(set(paths)) == 1
+    assert contexts == {"roborak/review"}
+
+
+def test_no_check_leaves_the_status_alone(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    report = GitHubPublisher(target=target, token="tok", post_check=False).publish(make_result())
+
+    assert status_calls(posted) == []
+    assert not report.status_posted
+    assert report.status_skipped is None
+
+
+def test_an_under_scoped_token_still_publishes_the_review(monkeypatch):
+    """A missing scope is reported, not fatal: the comments are the review."""
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path, json.loads(request.content)))
+        if "/statuses/" in request.url.path:
+            return httpx.Response(403, text="Resource not accessible by personal access token")
+        return httpx.Response(200, json={"id": 1})
+
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitHubPublisher(target=target, token="tok").publish(make_result())
+
+    assert len(report.posted) == 1, "the inline comment still went up"
+    assert not report.status_posted
+    assert "statuses:write" in (report.status_skipped or "")
+
+
+def test_gitlab_treats_an_unchanged_status_as_already_correct(monkeypatch):
+    """GitLab refuses to re-set a status to the state it already holds."""
+    target = Target("gitlab", "gitlab.com", "acme/web", 298)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/statuses/" in request.url.path:
+            return httpx.Response(400, text="Cannot transition status")
+        return httpx.Response(201, json={"id": "1"})
+
+    monkeypatch.setattr(
+        "roborak.publish.gitlab.ForgeClient", lambda t, tok: client_with(handler, t)
+    )
+    report = GitLabPublisher(target=target, token="tok").publish(make_result())
+
+    assert report.status_posted
+    assert report.status_skipped is None
+
+
+def test_a_change_with_no_head_commit_skips_the_status(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    assert result.changeset is not None and result.changeset.forge_ref is not None
+    result.changeset.forge_ref.head_sha = None
+    result.changeset.head_sha = ""
+
+    report = GitHubPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted) == []
+    assert report.status_skipped == "no head commit sha for this change"
+    assert len(report.posted) == 1, "the review is not lost with the status"
+
+
+def test_the_status_links_back_to_the_change(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    assert result.changeset is not None and result.changeset.forge_ref is not None
+    result.changeset.forge_ref.web_url = "https://github.com/acme/web/pull/42"
+
+    GitHubPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted)[0][1]["target_url"] == "https://github.com/acme/web/pull/42"

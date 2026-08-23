@@ -44,6 +44,9 @@ review:
   categories: [security, bug, performance, logic]
   # Findings below this are not reported.
   severity_floor: minor
+  # The floor the pre-merge verdict is judged against when --fail-on is not given.
+  # severity_floor decides what is reported at all; this decides what blocks.
+  block_on: critical
   max_findings: 25
   # Emit exact replacement code the reviewer can commit as-is.
   committable_suggestions: true
@@ -78,6 +81,9 @@ output:
   # At the end of an interactive review, offer to publish the result. Only ever
   # asked on a terminal -- a script or a CI job is never prompted.
   confirm_post: true
+  # When publishing, also set a `roborak/review` commit status on the change's head
+  # commit, so branch protection or approval rules can gate on the verdict.
+  post_check: true
   # Print rich panels instead of the report -- one finding to a bordered panel.
   # Neither is what gets published; the report is.
   panels: false

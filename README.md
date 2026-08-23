@@ -157,6 +157,7 @@ uv run roborak review --markdown report.md  # walkthrough-style markdown report
 uv run roborak review -m openai/gpt-5       # any LiteLLM model string
 uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
+uv run roborak review --mr 298 --post --no-check   # comments, but no commit status
 ```
 
 | Exit code | Meaning |
@@ -164,6 +165,40 @@ uv run roborak review --fail-on critical    # non-zero exit for CI
 | `0` | Review completed |
 | `1` | Findings at or above `--fail-on` |
 | `2` | Operational error or partial review — failed chunks, unavailable forge patches, or a requested publish that did not complete |
+
+### The pre-merge check
+
+Every review ends with a pre-merge check: the verdict, the severity floor it was judged
+against, and the finding counts that drove it. It is the last section of the report, so it
+shows in the terminal, in `--markdown` output, and — because the summary comment *is* the
+report — on the merge request too, on every re-run.
+
+The floor is `--fail-on` when you pass it, and `review.block_on` (default `critical`)
+otherwise. Only `--fail-on` moves the exit code; without it the block says so rather than
+implying CI is gated when it is not.
+
+```yaml
+review:
+  block_on: major     # the floor the verdict is judged against
+output:
+  post_check: true    # post it to the forge as a commit status
+```
+
+`review.block_on` is not `review.severity_floor`: the floor decides what is *reported* at
+all, `block_on` decides what *blocks*.
+
+**As a forge status.** A review posted with `--post` also sets a commit status on the
+change's head commit, named `roborak/review`, so branch protection and approval rules can
+gate on it. Re-running a review replaces that status rather than stacking another. Pass
+`--no-check` (or set `output.post_check: false`) to publish comments only.
+
+| | Token scope | Where to require it |
+|---|---|---|
+| GitHub | `statuses:write`, or the classic `repo` scope | Settings → Branches → branch protection rule → *Require status checks to pass* → add `roborak/review` |
+| GitLab | `api` | Settings → Merge requests → *Pipelines must succeed* (the status joins the MR's head pipeline) |
+
+A token that may comment but not set a status is not an error: the review still publishes
+and roborak reports the skipped check.
 
 ### Other commands
 

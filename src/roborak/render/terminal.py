@@ -30,6 +30,7 @@ from roborak.core.severity import (
     Kind,
     Severity,
 )
+from roborak.core.verdict import Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 
@@ -232,7 +233,33 @@ def _render_summary(result: ReviewResult, console: Console) -> None:
     _render_footer(result, console)
 
 
+VERDICT_STYLE: dict[Verdict, tuple[str, str]] = {
+    Verdict.PASS: ("✓ pre-merge check: pass", "bold green"),
+    Verdict.BLOCKED: ("⛔ pre-merge check: blocked", "bold red"),
+    Verdict.ERROR: ("⚠ pre-merge check: inconclusive", "bold yellow"),
+}
+
+
+def _render_verdict(result: ReviewResult, console: Console) -> None:
+    """The same verdict the report states, in the view that bypasses the report.
+
+    ``--panels`` does not go through ``render.markdown``, so the one section a
+    skimming reader must not miss has to be printed again here rather than
+    inherited. ``core.verdict`` is what keeps the two from drifting apart.
+    """
+    if not verdict_requested(result):
+        return
+    gate = gate_for(result)
+    label, style = VERDICT_STYLE[gate.verdict]
+    console.print(f"[{style}]{label}[/] [dim]{gate.summary_line()}[/]")
+    source = "--fail-on" if gate.explicit else "review.block_on"
+    console.print(f"[dim]floor: {gate.floor} (from {source}) · {gate.counts_line()}[/]")
+    if not gate.explicit:
+        console.print(f"[dim]pass --fail-on {gate.floor} to gate the exit code on this[/]")
+
+
 def _render_footer(result: ReviewResult, console: Console) -> None:
+    _render_verdict(result, console)
     if result.issue is not None:
         issue = result.issue
         label = f"{issue.reference} — {issue.title}" if issue.title else issue.reference

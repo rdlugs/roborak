@@ -134,6 +134,10 @@ def review(
         Severity | None,
         typer.Option("--fail-on", help="Exit non-zero when a finding reaches this severity."),
     ] = None,
+    no_check: Annotated[
+        bool,
+        typer.Option("--no-check", help="Don't post the pre-merge verdict as a commit status."),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print the full result as JSON.")] = False,
     agent: Annotated[
         bool, typer.Option("--agent", help="Print JSON shaped for another agent to act on.")
@@ -195,6 +199,8 @@ def review(
         config.output.confirm_post = False
     if panels:
         config.output.panels = True
+    if no_check:
+        config.output.post_check = False
     if full:
         config.output.full = True
 
@@ -220,6 +226,11 @@ def review(
     status = f"reviewing with {config.model}…" if session.llm else "collecting findings…"
     with console.status(f"[dim]{status}[/]", spinner="dots"):
         result = reviewer.review(session.changeset)
+
+    # Record the floor before anything renders or publishes: every surface reads
+    # its verdict off the result, which is what keeps the three from disagreeing.
+    result.block_on = fail_on or config.review.block_on
+    result.block_on_explicit = fail_on is not None
 
     publishing = post and session.target is not None and session.token is not None
     remote: RemoteState | None = None
@@ -255,6 +266,7 @@ def review(
             result,
             post_inline=True,
             post_summary=overview.post_summary,
+            post_check=config.output.post_check,
             repost=repost,
             remote=remote,
             overview=overview,
@@ -396,6 +408,7 @@ def _publish(
     *,
     post_inline: bool,
     post_summary: bool,
+    post_check: bool,
     repost: bool,
     remote: RemoteState | None = None,
     overview: _Overview | None = None,
@@ -414,6 +427,7 @@ def _publish(
         token=token,
         post_inline=post_inline,
         post_summary=post_summary,
+        post_check=post_check,
         seen_fingerprints=seen,
         summary_ref=overview.ref if overview else remote.summary,
         summary_refreshed=bool(overview and overview.refreshed),
@@ -458,6 +472,10 @@ def _report_publish(console: Console, report: PublishReport) -> None:
         console.print("[green]updated[/] the existing summary comment")
     elif report.summary_posted:
         console.print("[green]posted[/] summary comment")
+    if report.status_posted:
+        console.print("[green]posted[/] the pre-merge check")
+    elif report.status_skipped:
+        console.print(f"[yellow]skipped the pre-merge check:[/] {report.status_skipped}")
 
 
 DEFAULT_REPORT_NAME = "roborak-review.md"
@@ -523,6 +541,7 @@ def _offer_to_share(
             result,
             post_inline=True,
             post_summary=not no_summary,
+            post_check=session.config.output.post_check,
             repost=repost,
         )
     elif answer == "s" and can_save:

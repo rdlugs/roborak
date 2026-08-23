@@ -44,6 +44,11 @@ class PublishReport:
         """An overview roborak had already published was edited in place rather
         than a second one appended beside it."""
 
+        self.status_posted = False
+        self.status_skipped: str | None = None
+        """Why the pre-merge commit status did not go up. A token that may comment
+        but not set a status still publishes the review; the gap is reported."""
+
     @property
     def total_attempted(self) -> int:
         return (

@@ -24,6 +24,7 @@ from roborak.core.models import (
     Walkthrough,
 )
 from roborak.core.severity import Category, Effort, Kind, Severity
+from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only
 
 
@@ -741,3 +742,112 @@ def test_a_clean_review_is_still_signed():
     text = markdown.render(ReviewResult())
     assert "Reviewed by <b>roborak</b>" in text
     assert not text.rstrip().endswith("---")
+
+
+# --- the pre-merge check ---------------------------------------------------
+
+
+@pytest.mark.parametrize("form", list(markdown.Form))
+def test_every_review_ends_with_a_pre_merge_check(form):
+    """Both surfaces, so the terminal and the merge request state the same thing."""
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    document = markdown.render(result, form=form)
+
+    assert "Pre-merge check: blocked" in document
+    assert "1 finding at or above critical." in document
+    assert "🔴 Critical 1" in document
+
+
+def test_a_clean_review_states_a_pass_rather_than_saying_nothing():
+    """An absent section would teach the reader that nothing was checked."""
+    document = markdown.render(ReviewResult(block_on=Severity.CRITICAL))
+    assert "Pre-merge check: pass" in document
+    assert "No findings at or above critical." in document
+
+
+def test_the_block_names_the_floor_and_where_it_came_from():
+    result = make_result()
+    result.block_on = Severity.MAJOR
+    result.block_on_explicit = True
+    document = markdown.render(result)
+
+    assert "Judged against **major** and above, from `--fail-on`" in document
+
+    result.block_on_explicit = False
+    assert "from `review.block_on`" in markdown.render(result)
+
+
+def test_an_implicit_floor_says_the_exit_code_is_not_gated_on_it():
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    assert "Not gated: pass `--fail-on critical`" in markdown.render(result)
+
+
+def test_an_explicit_floor_does_not_repeat_the_advice():
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    result.block_on_explicit = True
+    assert "Not gated" not in markdown.render(result)
+
+
+def test_the_check_is_the_last_section_before_the_footer():
+    """It is the one thing a reader who skims the review still has to see."""
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    document = markdown.render(result)
+    signature = markdown._signature(form=markdown.Form.PUBLISHED)
+    assert document.index("Pre-merge check") < document.rindex("\n---\n")
+    assert document.index("Pre-merge check") < document.index(signature)
+
+
+def test_an_incomplete_review_is_inconclusive_rather_than_blocked():
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    result.errors = ["the model timed out"]
+    document = markdown.render(result)
+    assert "Pre-merge check: inconclusive" in document
+    assert "Review did not complete" in document
+
+
+def test_the_published_check_is_a_callout_the_forge_renders():
+    blocked = make_result()
+    blocked.block_on = Severity.CRITICAL
+    assert "> [!CAUTION]" in markdown.render(blocked)
+    assert "> [!TIP]" in markdown.render(ReviewResult(block_on=Severity.CRITICAL))
+
+
+def test_the_terminal_check_carries_no_html_that_rich_would_drop():
+    """``rich.Markdown`` drops HTML silently, taking the verdict with it."""
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    section = markdown._pre_merge_check(result, form=markdown.Form.TERMINAL)
+    assert "<" not in section
+    assert "> [!" not in section
+
+
+def test_the_summary_comment_carries_the_verdict_on_every_run():
+    """The comment *is* the report, which is what makes re-runs carry it too."""
+    from roborak.publish.base import summary_markdown
+
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    assert "Pre-merge check: blocked" in summary_markdown(result)
+
+
+def test_the_json_verdict_matches_the_rendered_one():
+    result = make_result()
+    result.block_on = Severity.MINOR
+    payload = json.loads(json_out.render(result))
+    assert payload["summary"]["verdict"] == Verdict.BLOCKED.value
+    assert payload["summary"]["block_on"] == "minor"
+
+
+def test_describe_states_no_verdict_because_it_judged_nothing():
+    """`roborak describe` renders through the same document but never reviews."""
+    result = ReviewResult(walkthrough=Walkthrough(title="Add a cache", overview="Adds one."))
+    assert result.block_on is None
+    document = markdown.render(result)
+
+    assert "Pre-merge check" not in document
+    assert "verdict" not in json.loads(json_out.render(result))["summary"]

@@ -67,6 +67,9 @@ def improve(
             issue=session.issue,
         ).improve(session.changeset)
 
+    result.block_on = fail_on or session.config.review.block_on
+    result.block_on_explicit = fail_on is not None
+
     if panels:
         session.config.output.panels = True
     shared.emit(
