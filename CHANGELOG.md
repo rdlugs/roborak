@@ -61,14 +61,20 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   still reported, still anchored, no longer counted by the verdict. Static
   findings are exempt and labelled `static_tool`, because a tool ran. The
   evidence rides along in the terminal report, `--markdown`, the published
-  summary comment, `--json` and `--agent`. Set `review.require_evidence: false`
-  to turn the policy off.
+  summary comment, `--json` and `--agent`. In a published review it is a
+  collapsible **Evidence** section under the finding's agent prompt: the summary
+  line names the kind of evidence, and the sentence behind it — along with
+  `evidence_files`, the other paths the evidence rests on, when the model names
+  any — unfolds only for a reader arguing with the finding. The confidence stays
+  out of the fold, on its own last line. The terminal, which cannot fold a
+  section, keeps all of it on their own lines. Set
+  `review.require_evidence: false` to turn the policy off.
 
 ### Changed
 
 - **`--json` and `--agent` report `schema_version: 2`.** Both finding payloads
-  gained `evidence`, and `evidence_note` where there is one. Additive only; no
-  existing field moved or changed meaning.
+  gained `evidence`, and `evidence_note` and `evidence_files` where there are
+  any. Additive only; no existing field moved or changed meaning.
 
 - **The documentation site deploys only after a release is created.** Pull
   requests and ordinary pushes still build the site in CI, but the release

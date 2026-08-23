@@ -500,7 +500,57 @@ def test_an_unverified_finding_says_so_rather_than_going_quiet():
     finding.evidence = Evidence.UNVERIFIED
     finding.evidence_note = ""
     result.findings = [finding]
-    assert "Evidence: unverified, from reasoning about the diff alone" in markdown.render(result)
+    published = markdown.render(result)
+    assert "<summary>🔎 Evidence · unverified</summary>" in published
+    assert "Unverified — from reasoning about the diff alone." in published
+    assert "Evidence: unverified, from reasoning about the diff alone" in _terminal(result)
+
+
+def test_the_published_evidence_folds_away_but_keeps_its_label_in_view():
+    """A skimmer reads the summary; only the sentence behind it is folded."""
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    published = markdown.render(result)
+
+    assert "<summary>🔎 Evidence · execution path</summary>" in published
+    assert "user_id reaches line 11 unescaped" in published
+    # Under the agent prompt, which is where a reader arguing with a finding looks.
+    assert published.index("🤖 Prompt for AI Agents") < published.index("🔎 Evidence")
+
+
+def test_the_confidence_stays_out_of_the_fold_and_goes_last():
+    """A number nobody unfolds is a number nobody reads."""
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    published = markdown.render(result)
+
+    assert "_Confidence: 95%_" in published
+    assert (
+        "95%"
+        not in published[
+            published.index("🔎 Evidence") : published.index(
+                "</details>", published.index("🔎 Evidence")
+            )
+        ]
+    )
+    finding = markdown.finding_markdown(result.findings[0])
+    assert finding.rstrip().endswith("_Confidence: 95%_")
+
+
+def test_the_evidence_names_the_other_files_it_rests_on():
+    result = make_result()
+    finding = next(f for f in result.findings if f.source == "llm")
+    finding.evidence_files = ["app/callers.py", "tests/test_db.py"]
+    result.findings = [finding]
+
+    assert "**Files:** `app/callers.py`, `tests/test_db.py`" in markdown.render(result)
+    assert "Evidence in: app/callers.py, tests/test_db.py" in render_terminal(result, width=120)
+
+
+def test_a_finding_with_no_other_files_gets_no_empty_file_list():
+    result = make_result()
+    result.findings = [next(f for f in result.findings if f.source == "llm")]
+    assert "**Files:**" not in markdown.render(result)
 
 
 def test_a_model_finding_states_its_evidence_in_the_terminal():
@@ -670,11 +720,18 @@ def test_no_finding_is_lost_between_the_forms():
         "🔴 Critical",
         "⚡ Quick win",
         "Introduces a session cache keyed by user id.",
-        "_Confidence: 95% · Evidence (execution path): user_id reaches line 11 unescaped_",
+        "user_id reaches line 11 unescaped",
         "row = db.execute",
     ):
         assert fragment in published, fragment
         assert fragment in shown, fragment
+
+    # Said in the form each reader can use: folded where folding works, one
+    # italic line where it does not.
+    assert "<summary>🔎 Evidence · execution path</summary>" in published
+    assert (
+        "_Confidence: 95% · Evidence (execution path): user_id reaches line 11 unescaped_" in shown
+    )
 
     for finding in result.findings:
         assert f"<!-- roborak:v1:{finding.fingerprint} -->" in published
@@ -899,9 +956,10 @@ def test_an_unverified_finding_keeps_the_note_explaining_what_to_check():
     finding.evidence = Evidence.UNVERIFIED
     finding.evidence_note = "Depends on validate(), which was not shown."
     result.findings = [finding]
-    # Collapsed, because the provenance line is deliberately wrapped.
+    # Collapsed, because the evidence body is deliberately wrapped.
     text = " ".join(markdown.render(result).split())
-    assert "Evidence (unverified): Depends on validate(), which was not shown." in text
+    assert "<summary>🔎 Evidence · unverified</summary>" in text
+    assert "Depends on validate(), which was not shown." in text
     assert "from reasoning about the diff alone" not in text
 
 

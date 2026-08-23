@@ -88,6 +88,8 @@ def _finding_dict(finding: Finding, *, agent: bool) -> dict[str, Any]:
     }
     if finding.evidence_note:
         data["evidence_note"] = finding.evidence_note
+    if finding.evidence_files:
+        data["evidence_files"] = list(finding.evidence_files)
     if finding.suggestion:
         data["suggestion"] = finding.suggestion
     if agent:

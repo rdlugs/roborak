@@ -12,6 +12,7 @@ import pytest
 
 from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
+    MAX_EVIDENCE_FILES,
     ParseError,
     parse_findings,
     parse_requirement_evidence,
@@ -373,6 +374,26 @@ def test_an_honest_unverified_claim_keeps_the_note_it_offered():
     )
     assert finding.evidence is Evidence.UNVERIFIED
     assert finding.evidence_note == "Depends on validate(), which was not shown."
+
+
+def test_evidence_files_name_the_other_places_to_look():
+    finding = _one(evidence_files="[b.py, tests/test_b.py]")
+    assert finding.evidence_files == ["b.py", "tests/test_b.py"]
+
+
+def test_evidence_files_drop_the_flagged_file_and_repeats():
+    """The finding already names its own file; listing it again promises a second
+    place to look that does not exist."""
+    finding = _one(evidence_files="[a.py, b.py, b.py]")
+    assert finding.evidence_files == ["b.py"]
+
+
+def test_evidence_files_stop_at_the_limit_and_take_a_bare_path():
+    """Six files is a description of the change, not of a defect."""
+    finding = _one(evidence_files="[b.py, c.py, d.py, e.py, f.py, g.py]")
+    assert len(finding.evidence_files) == MAX_EVIDENCE_FILES
+    assert _one(evidence_files="b.py").evidence_files == ["b.py"]
+    assert _one(evidence_files="[]").evidence_files == []
 
 
 def test_a_model_cannot_award_itself_the_static_tool_label():

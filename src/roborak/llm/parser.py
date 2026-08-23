@@ -149,6 +149,7 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
         source="llm",
         evidence=evidence,
         evidence_note=note,
+        evidence_files=_as_evidence_files(entry.get("evidence_files"), flagged=path),
     )
 
 
@@ -226,6 +227,35 @@ def _as_evidence(kind: Any, note: Any) -> tuple[Evidence, str]:
     if claimed.proven and not described:
         return Evidence.UNVERIFIED, ""
     return claimed, described
+
+
+MAX_EVIDENCE_FILES = 5
+"""How many paths a note may point at. A finding whose evidence spans six files is
+describing the change rather than a defect, and the list stops being readable long
+before it stops being long."""
+
+
+def _as_evidence_files(value: Any, *, flagged: str) -> list[str]:
+    """The other files the evidence rests on, in the order the model gave them.
+
+    The flagged file is dropped: it is already the finding's own location, and a
+    reader who sees it repeated under "Files" reasonably expects a second place to
+    look. Duplicates go the same way, and anything that is not a path-shaped string
+    never arrives.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    kept: list[str] = []
+    for entry in value:
+        path = _as_str(entry)
+        if not path or path == flagged or path in kept:
+            continue
+        kept.append(path)
+        if len(kept) == MAX_EVIDENCE_FILES:
+            break
+    return kept
 
 
 def _clean_suggestion(value: Any) -> str | None:

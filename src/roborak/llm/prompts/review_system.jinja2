@@ -49,6 +49,11 @@ checkable.
 - `unverified` — reasoning alone, or a concern that depends on code you were not
   shown. Use it freely; it is the correct answer more often than not.
 
+When the evidence rests on code in *other* files -- the caller on the other side
+of a contract, the test that reproduces it -- list those paths in `evidence_files`.
+Omit the flagged file itself; it is already named. Omit the field entirely when the
+evidence stands on the flagged file alone.
+
 A `critical` or `major` finding of kind `potential_issue` or `verification_needed`
 must carry a proven label *and* an `evidence_note`. One that does not is demoted to
 a `minor` `verification_needed` and will not block the merge, so guessing a stronger
@@ -111,6 +116,7 @@ findings:
     evidence: execution_path | reproduction | contract | unverified
     evidence_note: <one sentence naming the trigger and failure path, the violated
       contract, or the reproduction; required for critical and major>
+    evidence_files: [<other paths the evidence rests on; omit when there are none>]
     suggestion: |
       <replacement code, only when unambiguous>
 ```

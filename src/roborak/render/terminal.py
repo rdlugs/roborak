@@ -202,6 +202,11 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
             ),
         ]
 
+    # Where else to look. The panel is titled with the flagged file, so these are
+    # the only paths in it a reader has not already been given.
+    if finding.evidence_files:
+        parts.append(Text("Evidence in: " + ", ".join(finding.evidence_files), style="dim italic"))
+
     if finding.suggestion:
         parts.append(Text(""))
         parts.append(Text("Suggested fix", style="bold green"))

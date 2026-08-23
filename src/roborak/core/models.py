@@ -245,6 +245,12 @@ class Finding(BaseModel):
     contract, the reproduction, or the tool result. Empty means the claim stands on
     nothing, and ``roborak.analysis.validator`` treats it that way."""
 
+    evidence_files: list[str] = Field(default_factory=list)
+    """Files the evidence points at beyond the flagged one -- the caller on the
+    other side of a contract, the test that reproduces it. The flagged file is
+    already named by ``location``; repeating it here says nothing, so a reader
+    can take every path listed as somewhere else to look."""
+
     def model_post_init(self, __context: object) -> None:
         if self.end_line < self.start_line:
             self.end_line = self.start_line
