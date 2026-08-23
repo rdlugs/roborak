@@ -112,7 +112,7 @@ def publish_summary(
     *,
     post_path: str,
     ref: SummaryRef | None,
-    refreshed: bool,
+    refreshed: bool = True,
 ) -> str | None:
     """Put the overview where it belongs: over the old one, or beside nothing.
 
