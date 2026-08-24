@@ -30,6 +30,7 @@ class ReviewStatus(StrEnum):
 class OmissionReason(StrEnum):
     IGNORED = "ignored"
     BINARY = "binary"
+    EMPTY_FILE = "empty_file"
     FORGE_PATCH_UNAVAILABLE = "forge_patch_unavailable"
     CONTEXT_LIMIT = "context_limit"
     CHUNK_FAILED = "chunk_failed"
@@ -93,6 +94,15 @@ class ChangedFile(BaseModel):
     """Full post-change file body. Populated for path review and for AST context."""
 
     is_binary: bool = False
+    zero_byte: bool = False
+    """Both sides of the change are empty -- a placeholder such as ``.gitkeep``.
+
+    The forge supplies no patch for one, and reconstruction has nothing to
+    reconstruct, so it arrives looking exactly like a file whose patch could not
+    be recovered. It is not: there is nothing here to review, and nothing failed.
+    Kept apart from ``patch_unavailable`` so that a benign omission does not make
+    an otherwise complete review inconclusive."""
+
     patch_unavailable: bool = False
     """The forge omitted a text patch and reconstruction did not recover it."""
 
@@ -342,6 +352,13 @@ class ReviewResult(BaseModel):
     one it is rather than implying CI is gated when it is not."""
 
     def add_omission(self, path: str, reason: OmissionReason, detail: str | None = None) -> None:
+        """Record a file the review did not read, and whether that cost it coverage.
+
+        Only the reasons below leave the review inconclusive. An ignored, binary
+        or empty file is a deliberate or empty-handed omission: it is worth
+        listing, but the review still saw everything there was to see, so it stays
+        ``COMPLETE`` and its verdict still means something.
+        """
         omission = ReviewOmission(path=path, reason=reason, detail=detail)
         if omission not in self.coverage:
             self.coverage.append(omission)

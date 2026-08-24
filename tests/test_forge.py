@@ -304,6 +304,49 @@ def test_gitlab_marks_a_failed_or_oversized_recovery_unavailable():
     assert without_client.is_binary
 
 
+def test_gitlab_treats_a_zero_byte_file_as_empty_rather_than_unavailable():
+    """A ``.gitkeep`` has no patch because it has no content, and that is not a failure."""
+    from roborak.sources.gitlab import _files_from_changes
+
+    class Client:
+        def get_raw(self, path, **params):
+            return b""
+
+    target = Target("gitlab", "gitlab.com", "acme/web", 42)
+    [file] = _files_from_changes(
+        [{"old_path": "", "new_path": "routes/public/.gitkeep", "diff": "", "new_file": True}],
+        client=Client(),
+        target=target,
+        base_sha="base",
+        head_sha="head",
+    )
+    assert file.zero_byte
+    assert not file.patch_unavailable
+    assert not file.is_binary
+
+
+def test_github_treats_a_zero_byte_file_as_empty_rather_than_unavailable():
+    import base64
+
+    from roborak.sources.github import _to_changed_file
+
+    class Client:
+        def get(self, path, **params):
+            return {"encoding": "base64", "content": base64.b64encode(b"").decode()}
+
+    target = Target("github", "github.com", "acme/web", 42)
+    file = _to_changed_file(
+        {"filename": "routes/public/.gitkeep", "status": "added"},
+        Client(),
+        target,
+        "base",
+        "head",
+    )
+    assert file.zero_byte
+    assert not file.patch_unavailable
+    assert not file.is_binary
+
+
 GITHUB_PR = {
     "title": "Add session lookup",
     "body": "Adds a session cache.",

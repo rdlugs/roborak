@@ -225,7 +225,9 @@ class Reviewer:
         for file in original:
             if file.path in kept:
                 continue
-            if file.patch_unavailable:
+            if file.zero_byte:
+                result.add_omission(file.path, OmissionReason.EMPTY_FILE)
+            elif file.patch_unavailable:
                 result.add_omission(file.path, OmissionReason.FORGE_PATCH_UNAVAILABLE)
                 result.errors.append(f"forge did not provide a reviewable patch for {file.path}")
             elif file.is_binary:

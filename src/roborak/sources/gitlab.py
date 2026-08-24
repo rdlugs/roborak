@@ -17,7 +17,7 @@ from roborak.context.diff import detect_language, parse_diff
 from roborak.core.models import ChangedFile, ChangeSet, ChangeType, ForgeRef, Hunk
 from roborak.sources.base import SourceError
 from roborak.sources.discussion import load_change_discussions
-from roborak.sources.forge import ForgeClient, Target
+from roborak.sources.forge import ForgeClient, Recovery, Target
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ def _files_from_changes(
             hunks = parsed[0].hunks if parsed else []
 
         is_binary = False
+        zero_byte = False
         patch_unavailable = False
         change_type = _change_type(change)
         if not hunks and body == "":
@@ -135,8 +136,9 @@ def _files_from_changes(
                     if recovered is None:
                         is_binary = True
                     else:
-                        hunks = recovered
-                        patch_unavailable = not hunks
+                        hunks = recovered.hunks
+                        zero_byte = recovered.zero_byte
+                        patch_unavailable = not hunks and not zero_byte
                 except SourceError as exc:
                     log.warning("could not recover GitLab patch for %s: %s", path, exc)
                     patch_unavailable = True
@@ -151,6 +153,7 @@ def _files_from_changes(
                 language=detect_language(path),
                 hunks=hunks,
                 is_binary=is_binary,
+                zero_byte=zero_byte,
                 patch_unavailable=patch_unavailable,
             )
         )
@@ -177,7 +180,7 @@ def _recover_patch(
     base_sha: str,
     head_sha: str,
     max_bytes: int,
-) -> list[Hunk] | None:
+) -> Recovery | None:
     old = b"" if change_type == "added" else _gitlab_content(client, target, old_path, base_sha)
     new = b"" if change_type == "deleted" else _gitlab_content(client, target, new_path, head_sha)
     if len(old) > max_bytes or len(new) > max_bytes:
@@ -188,6 +191,8 @@ def _recover_patch(
         old_text, new_text = old.decode(), new.decode()
     except UnicodeDecodeError:
         return None
+    if not old_text and not new_text:
+        return Recovery([], zero_byte=True)
     body = "\n".join(
         difflib.unified_diff(
             old_text.splitlines(),
@@ -198,9 +203,9 @@ def _recover_patch(
         )
     )
     if not body:
-        return []
+        return Recovery([])
     parsed = parse_diff(f"diff --git a/{old_path} b/{new_path}\n{body}\n")
-    return parsed[0].hunks if parsed else []
+    return Recovery(parsed[0].hunks if parsed else [])
 
 
 def _gitlab_content(client: ForgeClient, target: Target, path: str, ref: str) -> bytes:

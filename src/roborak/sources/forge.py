@@ -19,6 +19,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from roborak.core.config import ForgeConfig
+from roborak.core.models import Hunk
 from roborak.sources.base import SourceError
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,22 @@ Provider = Literal["gitlab", "github"]
 DEFAULT_TIMEOUT = 30.0
 MAX_PAGES = 50
 """Pagination stops here; a PR with more pages than this is not reviewable anyway."""
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """What rebuilding a patch the forge withheld actually found.
+
+    No hunks can mean two opposite things. A recovery that came back empty-handed
+    leaves the file unreviewable, and the review inconclusive with it. A file that
+    is simply empty -- a placeholder such as ``.gitkeep`` -- has no hunks because
+    there is nothing to diff, and omitting it costs the review nothing. The two are
+    indistinguishable by the time only hunks are left, so recovery says which it
+    was and the sources carry it through to the omission.
+    """
+
+    hunks: list[Hunk]
+    zero_byte: bool = False
 
 
 @dataclass

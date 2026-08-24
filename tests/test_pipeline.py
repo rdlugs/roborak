@@ -15,8 +15,17 @@ import pytest
 from roborak.analysis.reviewer import Reviewer
 from roborak.context.diff import parse_diff
 from roborak.core.config import Config
-from roborak.core.models import ChangeSet, Finding, Issue, ReviewComment
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    Finding,
+    Issue,
+    OmissionReason,
+    ReviewComment,
+    ReviewStatus,
+)
 from roborak.core.severity import Category, Evidence, Kind, Severity
+from roborak.core.verdict import Verdict, gate_for
 from roborak.llm.client import LLMError, LLMResponse
 
 DIFF = textwrap.dedent(
@@ -812,3 +821,64 @@ def test_the_overview_pass_cannot_shrink_the_reviewed_diff(tmp_path):
 def test_no_llm_means_no_overview(tmp_path):
     reviewer = Reviewer(config=Config(), repo=tmp_path, llm=None)
     assert reviewer.walkthrough(make_changeset()) is None
+
+
+PATCH_BODY = DIFF.split("+++ b/app/auth.py\n", 1)[1]
+"""``DIFF`` without its header -- the shape GitLab returns in ``changes[].diff``."""
+
+
+def gitlab_changeset_with_a_gitkeep() -> ChangeSet:
+    """What GitLab hands back for an MR that adds a zero-byte placeholder.
+
+    The empty file arrives with no diff body, and recovery has nothing to
+    reconstruct, so it reaches the reviewer looking exactly like a patch the forge
+    withheld.
+    """
+    from roborak.sources.forge import Target
+    from roborak.sources.gitlab import _files_from_changes
+
+    class Client:
+        def get_raw(self, path, **params):
+            return b"" if path.endswith(".gitkeep/raw") else b"x = 1\n"
+
+    files = _files_from_changes(
+        [
+            {"old_path": "app/auth.py", "new_path": "app/auth.py", "diff": PATCH_BODY},
+            {"old_path": "", "new_path": "routes/public/.gitkeep", "diff": "", "new_file": True},
+        ],
+        client=Client(),
+        target=Target("gitlab", "gitlab.com", "acme/web", 42),
+        base_sha="base",
+        head_sha="head",
+    )
+    return ChangeSet(files=files, origin="gitlab", title="Add session lookup")
+
+
+def test_an_empty_gitkeep_is_omitted_without_costing_the_verdict(tmp_path):
+    """The regression behind #43: a benign omission must not turn PASS into ERROR."""
+    changeset = gitlab_changeset_with_a_gitkeep()
+    result = Reviewer(config=Config(), repo=tmp_path, llm=StubLLM(reply="findings: []")).review(
+        changeset
+    )
+    result.block_on = Severity.CRITICAL
+
+    assert result.errors == []
+    assert result.status is ReviewStatus.COMPLETE
+    assert result.skipped_files == []
+    assert [(o.path, o.reason) for o in result.coverage] == [
+        ("routes/public/.gitkeep", OmissionReason.EMPTY_FILE)
+    ]
+    assert gate_for(result).verdict is Verdict.PASS
+
+
+def test_a_genuinely_unavailable_patch_still_ends_the_review_inconclusive(tmp_path):
+    changeset = gitlab_changeset_with_a_gitkeep()
+    changeset.files.append(ChangedFile(path="vendor/blob.txt", patch_unavailable=True))
+
+    result = Reviewer(config=Config(), repo=tmp_path, llm=StubLLM(reply="findings: []")).review(
+        changeset
+    )
+
+    assert result.errors == ["forge did not provide a reviewable patch for vendor/blob.txt"]
+    assert result.status is ReviewStatus.PARTIAL
+    assert gate_for(result).verdict is Verdict.ERROR

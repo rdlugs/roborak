@@ -18,7 +18,7 @@ from roborak.context.diff import detect_language, parse_diff
 from roborak.core.models import ChangedFile, ChangeSet, ForgeRef, Hunk
 from roborak.sources.base import SourceError
 from roborak.sources.discussion import load_change_discussions
-from roborak.sources.forge import ForgeClient, Target
+from roborak.sources.forge import ForgeClient, Recovery, Target
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ def _to_changed_file(
 
     previous = entry.get("previous_filename")
     is_binary = False
+    zero_byte = False
     patch_unavailable = False
     if not hunks and _known_binary_path(path):
         is_binary = True
@@ -127,8 +128,11 @@ def _to_changed_file(
             if recovered is None:
                 is_binary = True
             else:
-                hunks = recovered
-                patch_unavailable = not hunks and str(entry.get("status")) != "removed"
+                hunks = recovered.hunks
+                zero_byte = recovered.zero_byte
+                patch_unavailable = (
+                    not hunks and not zero_byte and str(entry.get("status")) != "removed"
+                )
         except SourceError as exc:
             log.warning("could not recover GitHub patch for %s: %s", path, exc)
             patch_unavailable = True
@@ -141,6 +145,7 @@ def _to_changed_file(
         language=detect_language(path),
         hunks=hunks,
         is_binary=is_binary,
+        zero_byte=zero_byte,
         patch_unavailable=patch_unavailable,
     )
 
@@ -154,7 +159,7 @@ def _recover_patch(
     base_sha: str,
     head_sha: str,
     max_bytes: int,
-) -> list[Hunk] | None:
+) -> Recovery | None:
     old = b"" if status == "added" else _github_content(client, target, old_path, base_sha)
     new = b"" if status == "removed" else _github_content(client, target, new_path, head_sha)
     if len(old) > max_bytes or len(new) > max_bytes:
@@ -165,7 +170,9 @@ def _recover_patch(
         old_text, new_text = old.decode(), new.decode()
     except UnicodeDecodeError:
         return None
-    return _hunks_from_contents(old_path, new_path, old_text, new_text)
+    if not old_text and not new_text:
+        return Recovery([], zero_byte=True)
+    return Recovery(_hunks_from_contents(old_path, new_path, old_text, new_text))
 
 
 def _github_content(client: ForgeClient, target: Target, path: str, ref: str) -> bytes:
