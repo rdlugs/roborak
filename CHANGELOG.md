@@ -10,6 +10,22 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Fixed
+
+- **A zero-byte file no longer fails the review.** A placeholder such as
+  `.gitkeep` has no patch because it has no content, but the forge withholds a
+  patch for an unreadable file in exactly the same way, so roborak recorded every
+  one of them as an error. That forced the verdict to `error`, which
+  `output.post_check: true` published as a failed `roborak/review` commit status —
+  and because GitLab folds an external status into the pipeline for the same sha,
+  an otherwise green pipeline turned red and appeared to grow a job nobody
+  declared, on a review that had completed with no blocking findings. Recovery now
+  says whether it found an empty file or came back empty-handed. An empty one is
+  listed under review coverage as `empty file` and changes nothing else: the review
+  stays complete and its verdict still comes from the finding threshold. A patch
+  that genuinely could not be recovered is still an error, because a review that
+  could not read the change has nothing to say about it.
+
 ## [0.4.0] - 2026-08-23
 
 ### Added
