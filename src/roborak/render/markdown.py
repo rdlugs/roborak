@@ -147,9 +147,7 @@ def render(
         if walkthrough.file_summaries:
             sections.append(_walkthrough_table(result))
         if walkthrough.sequence_diagram:
-            sections.append(
-                "### Flow\n\n```mermaid\n" + walkthrough.sequence_diagram.strip() + "\n```"
-            )
+            sections.append(_flow_section(walkthrough.sequence_diagram, form=form))
 
     if impact := _impact_section(result.impact, form=form):
         sections.append(impact)
@@ -217,6 +215,32 @@ def _walkthrough_table(result: ReviewResult) -> str:
         for summary in result.walkthrough.file_summaries
     ]
     return "\n".join(rows)
+
+
+FLOW_SUMMARY = "🗺️ Flow"
+"""Labels the flow section in both forms, folded and open."""
+
+
+def _flow_section(diagram: str, *, form: Form) -> str:
+    """The change as a picture, folded away where a reader can fold it.
+
+    A diagram is the tallest thing in the document and the one section whose size
+    is set by the change rather than by the review, so left open it is what pushes
+    the findings off a reader's first screen. Published it folds, like every other
+    detailed section; the terminal keeps the heading it had, since nothing there
+    can unfold one and ``rich.Markdown`` would drop the HTML and the label with it.
+
+    Not ``nested``: that form wraps the body in a ``<blockquote>``, and a quote bar
+    beside a diagram is noise at best -- at worst it is what stops the forge
+    rendering the mermaid at all. The plain form already leaves the blank lines
+    around the fence that GitHub and GitLab need to see it as markdown.
+    """
+    return _details(
+        FLOW_SUMMARY,
+        f"```mermaid\n{diagram.strip()}\n```",
+        level=3,
+        collapsible=form is Form.PUBLISHED,
+    )
 
 
 IMPACT_LABEL: dict[ImpactStatus, str] = {
