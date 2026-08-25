@@ -882,3 +882,120 @@ def test_a_genuinely_unavailable_patch_still_ends_the_review_inconclusive(tmp_pa
     assert result.errors == ["forge did not provide a reviewable patch for vendor/blob.txt"]
     assert result.status is ReviewStatus.PARTIAL
     assert gate_for(result).verdict is Verdict.ERROR
+
+
+# --- blast radius -----------------------------------------------------------
+
+IMPACT_DIFF = textwrap.dedent(
+    """\
+    diff --git a/service.py b/service.py
+    --- a/service.py
+    +++ b/service.py
+    @@ -1,2 +1,2 @@
+    -def charge_card(amount):
+    +def charge_card(amount, currency):
+         return amount
+    """
+)
+
+CONSUMER_FINDING = textwrap.dedent(
+    """\
+    findings:
+      - file: checkout.py
+        start_line: 2
+        end_line: 2
+        severity: critical
+        category: bug
+        kind: potential_issue
+        effort: quick_win
+        title: Call site is missing the new argument
+        body: This caller passes one argument to a function that now takes two.
+        confidence: 0.95
+        evidence: contract
+        evidence_note: charge_card now requires currency and this call omits it.
+    """
+)
+
+
+def impact_repo(tmp_path: Path) -> Path:
+    (tmp_path / "service.py").write_text("def charge_card(amount, currency):\n    return amount\n")
+    (tmp_path / "checkout.py").write_text("def pay():\n    return charge_card(10)\n")
+    return tmp_path
+
+
+def impact_changeset(tmp_path: Path) -> ChangeSet:
+    files = parse_diff(IMPACT_DIFF)
+    files[0].new_content = (tmp_path / "service.py").read_text()
+    return ChangeSet(files=files, origin="local", title="Add a currency argument")
+
+
+def test_consumer_snippets_reach_the_prompt_without_becoming_review_surface(tmp_path):
+    """The invariant the whole feature rests on.
+
+    A consumer is shown to the model as evidence, and a finding anchored to one is
+    discarded -- otherwise the map would reintroduce exactly the untouched-line
+    noise roborak exists to suppress.
+    """
+    repo = impact_repo(tmp_path)
+    llm = StubLLM(reply=CONSUMER_FINDING)
+    reviewer = Reviewer(config=Config(), repo=repo, llm=llm)
+
+    result = reviewer.review(impact_changeset(repo))
+
+    assert "Blast radius" in llm.user
+    assert "checkout.py" in llm.user
+    assert result.findings == []
+
+
+def test_a_consumer_line_is_still_refused_under_full_file(tmp_path):
+    """``--full-file`` widens the diff, not the review to files that never changed."""
+    repo = impact_repo(tmp_path)
+    config = Config()
+    config.review.full_file = True
+
+    result = Reviewer(config=config, repo=repo, llm=StubLLM(reply=CONSUMER_FINDING)).review(
+        impact_changeset(repo)
+    )
+
+    assert result.findings == []
+
+
+def test_the_map_is_recorded_on_the_result(tmp_path):
+    repo = impact_repo(tmp_path)
+    result = Reviewer(config=Config(), repo=repo, llm=StubLLM(reply="findings: []")).review(
+        impact_changeset(repo)
+    )
+
+    assert result.impact is not None
+    names = {node.name for node in result.impact.nodes}
+    assert "charge_card" in names
+
+
+def test_no_impact_leaves_the_stage_unrun(tmp_path):
+    repo = impact_repo(tmp_path)
+    config = Config()
+    config.impact.enabled = False
+
+    llm = StubLLM(reply="findings: []")
+    result = Reviewer(config=config, repo=repo, llm=llm).review(impact_changeset(repo))
+
+    assert result.impact is None
+    assert "Blast radius" not in llm.user
+
+
+def test_a_failing_impact_stage_never_fails_the_review(tmp_path, monkeypatch):
+    from roborak.context import impact as impact_module
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("tree-sitter fell over")
+
+    monkeypatch.setattr(impact_module, "analyse", explode)
+    repo = impact_repo(tmp_path)
+
+    result = Reviewer(config=Config(), repo=repo, llm=StubLLM(reply="findings: []")).review(
+        impact_changeset(repo)
+    )
+
+    assert result.impact is None
+    assert result.status is ReviewStatus.COMPLETE
+    assert result.errors == []

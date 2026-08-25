@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from roborak.core.models import Finding, ReviewResult
+from roborak.core.models import Finding, ImpactMap, ReviewResult
 from roborak.core.verdict import gate_for, verdict_requested
 
 SCHEMA_VERSION = 2
@@ -40,6 +40,12 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
         },
         "findings": [_finding_dict(f, agent=agent) for f in result.sorted_findings()],
     }
+
+    # Present in both shapes. An agent deciding whether a change is safe needs the
+    # blast radius at least as much as a human does, and an absent key would read
+    # as "contained" to something parsing this.
+    if result.impact is not None:
+        payload["impact"] = _impact_dict(result.impact, agent=agent)
 
     # Absent rather than assumed: `describe` renders through here too and never
     # judged anything, so a verdict key would be a claim nobody made.
@@ -72,6 +78,34 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
             payload["walkthrough"] = result.walkthrough.model_dump(exclude_none=True)
 
     return payload
+
+
+def _impact_dict(impact: ImpactMap, *, agent: bool) -> dict[str, Any]:
+    """The map as data. The agent shape keeps what to act on and drops the prose.
+
+    Snippets go in particular: an agent has the repository open and can read the
+    consumer itself, so shipping it a copy is bytes it already has.
+    """
+    if not agent:
+        return impact.model_dump(mode="json")
+    return {
+        "status": impact.status.value,
+        "truncated": impact.truncated,
+        "notes": impact.notes,
+        "nodes": [
+            {
+                "name": node.name,
+                "kind": node.kind.value,
+                "file": node.file,
+                "line": node.line,
+                "status": node.status.value,
+                "consumers": [
+                    {"path": consumer.path, "line": consumer.line} for consumer in node.consumers
+                ],
+            }
+            for node in impact.nodes
+        ],
+    }
 
 
 def _finding_dict(finding: Finding, *, agent: bool) -> dict[str, Any]:

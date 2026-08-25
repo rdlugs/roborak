@@ -77,6 +77,24 @@ static:
   # Pass static findings to the model as evidence rather than reporting them raw.
   feed_to_llm: true
 
+impact:
+  # Work outward from the symbols and contracts the change touched to the
+  # unchanged code that depends on them, and show the model what it found. Every
+  # number below is a ceiling: what the search cannot finish is reported as
+  # truncated rather than passed off as "nothing uses this".
+  enabled: true
+  # Changed symbols, exports, routes, events, config keys and env vars traced per
+  # review. Parser-identified symbols get the budget before pattern-matched ones.
+  max_nodes: 12
+  max_consumers_per_node: 5
+  # Ceiling on the fallback walk, used when `git grep` is unavailable.
+  max_files_scanned: 2000
+  max_snippet_lines: 6
+  # Prompt tokens the consumer snippets may occupy, reserved out of the diff
+  # budget up front so the map can never squeeze out a changed file.
+  token_budget: 1500
+  timeout_seconds: 10
+
 output:
   # Spend a second model call on an overview of the change. It is what fills the
   # summary comment `--post` publishes; turn it off to halve the cost of a run.

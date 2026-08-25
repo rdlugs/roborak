@@ -106,6 +106,10 @@ def review(
     no_static: Annotated[
         bool, typer.Option("--no-static", help="Skip static analysis; model only.")
     ] = False,
+    no_impact: Annotated[
+        bool,
+        typer.Option("--no-impact", help="Skip blast-radius analysis of changed symbols."),
+    ] = False,
     trust_static: Annotated[
         bool,
         typer.Option(
@@ -189,6 +193,8 @@ def review(
         config.review.full_file = True
     if no_static:
         config.static.enabled = False
+    if no_impact:
+        config.impact.enabled = False
     if trust_static:
         from roborak.core.config import StaticExecution
 

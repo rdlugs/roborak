@@ -20,7 +20,7 @@ from rich.table import Table
 from rich.text import Text
 
 from roborak.core.buckets import BUCKET_TITLE, Bucket, group
-from roborak.core.models import Finding, ReviewResult
+from roborak.core.models import Finding, ImpactMap, ImpactStatus, ReviewResult
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
@@ -52,12 +52,50 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
     if changeset is None or not changeset.is_empty:
         _render_header(result, console)
 
+    _render_impact(result.impact, console)
+
     if not result.findings:
         _render_clean(result, console)
         return
 
     _render_buckets(result, console, repo)
     _render_summary(result, console)
+
+
+_IMPACT_STYLE: dict[ImpactStatus, str] = {
+    ImpactStatus.CONTAINED: "green",
+    ImpactStatus.CONSUMERS_FOUND: "cyan",
+    ImpactStatus.NO_REFERENCES_FOUND: "dim",
+    ImpactStatus.UNSUPPORTED: "dim",
+    ImpactStatus.LIMITED: "yellow",
+    ImpactStatus.UNAVAILABLE: "yellow",
+    ImpactStatus.NOT_APPLICABLE: "dim",
+}
+
+
+def _render_impact(impact: ImpactMap | None, console: Console) -> None:
+    """The blast radius in one line, since the panel view has no room for a table.
+
+    Printed before the findings and on a clean run alike: whether the change is
+    contained is most worth saying precisely when there is nothing else to say.
+    """
+    if impact is None:
+        return
+    label = impact.status.value.replace("_", " ")
+    style = _IMPACT_STYLE[impact.status]
+    console.print()
+    if impact.nodes:
+        console.print(
+            f"[{style}]blast radius: {label}[/] "
+            f"[dim]— {len(impact.nodes)} boundary(s), "
+            f"{impact.consumer_count} consumer(s)"
+            f"{', truncated' if impact.truncated else ''}[/]",
+            highlight=False,
+        )
+    else:
+        console.print(f"[{style}]blast radius: {label}[/]", highlight=False)
+    for note in impact.notes:
+        console.print(f"  [dim]{note}[/]", highlight=False)
 
 
 def _render_buckets(result: ReviewResult, console: Console, repo: Path) -> None:

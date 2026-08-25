@@ -32,6 +32,7 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 | 🔌 **Four sources, one pipeline** | Local git, GitLab MRs, GitHub PRs and raw paths all normalise into one IR, so output modes can never disagree. |
 | 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan with *your* config, and feeds the results to the model to confirm or explain. |
 | 💬 **Publishes where you're looking** | Inline threads for what's worth interrupting for, a summary comment for the rest, incremental so re-runs don't repeat themselves. |
+| 🧭 **Maps the blast radius** | Traces changed symbols, routes, events, config keys and env vars out to the unchanged code that depends on them, and says plainly when it could not look. |
 | 📋 **Issue-aware** | `--issue 42` judges the diff against what was actually asked, and reports the requirements it misses. |
 
 **Status: feature complete.** Local diffs, GitLab MRs, GitHub PRs, issue context,
@@ -427,6 +428,15 @@ static:
   enabled: true
   execution: auto     # local direct; CI sandboxed, or skipped if unavailable
   tools: null          # null = autodetect what is on PATH
+
+impact:
+  enabled: true           # trace changed symbols out to their consumers
+  max_nodes: 12           # boundaries traced per review
+  max_consumers_per_node: 5
+  max_files_scanned: 2000 # ceiling on the no-git fallback walk
+  max_snippet_lines: 6
+  token_budget: 1500      # prompt tokens the consumer snippets may occupy
+  timeout_seconds: 10
 
 output:
   walkthrough: true    # spend a second model call on the overview

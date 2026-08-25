@@ -10,6 +10,39 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Added
+
+- **Blast-radius mapping for changed symbols.** A review used to see the diff and
+  a repository-instruction file, and nothing else, so a signature change, a
+  flipped default or a renamed configuration key could read as locally correct
+  while breaking an unchanged consumer roborak never looked at. Before the model
+  is called, roborak now works outward from what the change touched — functions,
+  classes, exported constants, routes, event names, configuration keys,
+  environment variables and schema fields — and finds the code that depends on
+  them, with `git grep` over a checkout and a bounded directory walk where that is
+  unavailable. The consumers it finds are given to the model as evidence about the
+  *changed* lines and never as review surface: a finding anchored to a consumer is
+  discarded, so a contract break is reported against the line responsible for it
+  and names the consumer in `evidence_files`.
+- **A blast-radius map on every output mode.** The terminal report, `--markdown`,
+  the published summary comment, `--json` and `--agent` all carry the same
+  structured map: changed boundary, the consumers found, and what the analysis was
+  actually able to establish. It is rendered even when the answer is that nobody
+  could look, because a section that appears only on success teaches a reader that
+  its absence means the change was contained. `contained` is claimed only for a
+  symbol a parser identified, searched completely, with nothing matching anywhere —
+  and even then it names what remains possible. A search that merely found no
+  matching text says `no references found`, since an alias, a re-export or a
+  runtime lookup would not have matched either. A change fetched from a forge with
+  no matching local checkout reports `unavailable`; a directory with no git
+  repository reports `not applicable`, because every file in it is already under
+  review and there is no unchanged consumer left to find.
+- **An `impact` configuration section and `--no-impact`.** Nodes traced, consumers
+  per node, files walked, snippet lines, prompt tokens and wall clock all have
+  ceilings, and any of them biting is reported as truncation rather than passed off
+  as a clean result. The token budget is reserved out of the diff budget up front,
+  so the map can never squeeze a changed file out of its own review.
+
 ### Fixed
 
 - **A zero-byte file no longer fails the review.** A placeholder such as
