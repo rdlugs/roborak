@@ -215,6 +215,64 @@ def test_a_walk_that_runs_out_of_time_truncates_rather_than_running_on(repo, mon
     assert node is not None and node.status is not ImpactStatus.CONTAINED
 
 
+@requires_tree_sitter
+def test_git_searches_share_one_timeout_budget_across_terms(repo, monkeypatch):
+    """`timeout_seconds` bounds the search, not each term's share of it.
+
+    A dozen changed symbols against a slow repository must not cost a dozen
+    timeouts, so the second term is only searched with whatever the first left.
+    """
+    write(
+        repo,
+        "service.py",
+        """
+        def charge_card(amount):
+            return amount
+
+        def refund_card(amount):
+            return amount
+        """,
+    )
+    write(
+        repo,
+        "checkout.py",
+        """
+        def pay():
+            return charge_card(1)
+
+        def undo():
+            return refund_card(1)
+        """,
+    )
+    commit(repo)
+
+    timeouts: list[float] = []
+    real = subprocess.run
+
+    def record(args, *rest, **kwargs):
+        if args and args[0] == "git" and "grep" in args:
+            timeouts.append(kwargs["timeout"])
+        return real(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", record)
+    # Four seconds of fake clock per reading, against a ten second budget: the
+    # first term is searched with what is left, and the second never starts.
+    clock = itertools.count(step=4.0)
+    monkeypatch.setattr(impact.time, "monotonic", lambda: next(clock))
+
+    result = impact.analyse(changed(repo, "service.py"), repo, ImpactConfig(timeout_seconds=10))
+
+    assert result.method == "git-grep"
+    assert timeouts == [2.0]  # one search, and not the full ten seconds either
+    assert result.truncated
+    assert any("impact.timeout_seconds" in note for note in result.notes)
+    # The half of the map that was searched survives; the half that was not says so.
+    assert node_named(result, "charge_card").consumers[0].path == "checkout.py"
+    unsearched = node_named(result, "refund_card")
+    assert unsearched.consumers == []
+    assert unsearched.status is not ImpactStatus.CONTAINED
+
+
 # --- non-symbol contracts ---------------------------------------------------
 
 

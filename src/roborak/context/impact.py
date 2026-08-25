@@ -335,7 +335,7 @@ def _availability(changeset: ChangeSet, repo: Path) -> tuple[ImpactStatus | None
     ]
 
 
-def _git(repo: Path, *args: str, timeout: int = 10) -> str | None:
+def _git(repo: Path, *args: str, timeout: float = 10) -> str | None:
     """Run a git command, or ``None`` if git is unusable or the command failed."""
     try:
         done = subprocess.run(
@@ -583,20 +583,35 @@ class _Search:
     """Which ceiling bit, so the note can name the one the reviewer can raise."""
 
     def find(self, terms: list[str]) -> dict[str, list[_Hit]]:
-        """Every line in the repository mentioning each term, minus the change itself."""
+        """Every line in the repository mentioning each term, minus the change itself.
+
+        One deadline covers the whole search rather than one per term, because a
+        dozen changed symbols against a slow repository would otherwise cost a
+        dozen timeouts and `impact.timeout_seconds` would bound nothing a
+        reviewer actually waits on. What the budget does not reach is reported as
+        truncated, the same as any other ceiling.
+        """
+        deadline = time.monotonic() + self.config.timeout_seconds
         found: dict[str, list[_Hit] | None]
         if _git(self.repo, "rev-parse", "--git-dir", timeout=self.config.timeout_seconds) is None:
             self.method = "walk"
-            found = dict(self._walk(terms))
+            found = dict(self._walk(terms, deadline))
         else:
             self.method = "git-grep"
-            found = {term: self._git_grep(term) for term in terms}
-            if any(hits is None for hits in found.values()):
+            found = {term: [] for term in terms}
+            for term in terms:
+                if self._expired(deadline):
+                    break
+                found[term] = self._git_grep(term, deadline)
+            if not self.timed_out and any(hits is None for hits in found.values()):
                 # git answered `rev-parse` and then failed on a search: rather than
                 # report half a map, redo the lot the slow way so every node was
                 # searched the same way and the method on the map is the truth.
+                # A search that merely ran out of clock is not that: there is no
+                # budget left to redo it in, and the terms already searched are
+                # worth more than an empty map.
                 self.method = "walk"
-                found = dict(self._walk(terms))
+                found = dict(self._walk(terms, deadline))
 
         return {
             term: [hit for hit in (hits or []) if self._eligible(hit)]
@@ -607,7 +622,7 @@ class _Search:
         """A hit is a candidate consumer unless it is the change itself, or prose."""
         return hit.path not in self.changed and detect_language(hit.path) not in PROSE_LANGUAGES
 
-    def _git_grep(self, term: str) -> list[_Hit] | None:
+    def _git_grep(self, term: str, deadline: float) -> list[_Hit] | None:
         """Tracked *and* untracked-but-not-ignored files, so a repo with nothing
         committed yet and a review run with ``--include-untracked`` both still
         search the code that is actually there."""
@@ -625,16 +640,20 @@ class _Search:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=self.config.timeout_seconds,
+                timeout=self._left(deadline),
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            self.truncated = True
+            self.timed_out = True
+            return None
+        except OSError:
             return None
         if done.returncode > 1:  # 1 is "no matches", which is an answer
             return None
         return _parse_grep(done.stdout)
 
-    def _walk(self, terms: list[str]) -> dict[str, list[_Hit]]:
+    def _walk(self, terms: list[str], deadline: float) -> dict[str, list[_Hit]]:
         """One pass over the directory, matching every term as it goes.
 
         Deliberately one pass rather than one per term: the fallback is already
@@ -644,13 +663,12 @@ class _Search:
         Bounded twice over, because a file count is not a bound on the work: one
         half-megabyte file matched against a dozen terms is a lot of regex, and a
         tree of empty directories is a walk that scans nothing and still takes
-        time. The wall clock is the ceiling that holds in both cases, and this is
-        the path taken when git has *already* failed -- not the moment to run for
-        as long as it takes.
+        time. The wall clock is the ceiling that holds in both cases -- the same
+        one the caller opened, not a fresh one -- and this is the path taken when
+        git has *already* failed: not the moment to run for as long as it takes.
         """
         matchers = {term: _matcher(term) for term in terms}
         found: dict[str, list[_Hit]] = {term: [] for term in terms}
-        deadline = time.monotonic() + self.config.timeout_seconds
         scanned = 0
 
         for dirpath, dirnames, filenames in os.walk(self.repo, followlinks=False):
@@ -686,6 +704,10 @@ class _Search:
                         if matcher.search(line):
                             found[term].append(_Hit(relative, lineno, line))
         return found
+
+    def _left(self, deadline: float) -> float:
+        """Whatever is left of the one budget, for a call that takes a timeout."""
+        return max(0.0, deadline - time.monotonic())
 
     def _expired(self, deadline: float) -> bool:
         """Whether the wall clock has run out, recording it as it answers.
