@@ -7,6 +7,7 @@ is never reported as proof the change is contained.
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 import textwrap
 from pathlib import Path
@@ -191,6 +192,29 @@ def test_a_truncated_search_cannot_report_containment(repo, monkeypatch):
     assert node is not None and node.status is not ImpactStatus.CONTAINED
 
 
+@requires_tree_sitter
+def test_a_walk_that_runs_out_of_time_truncates_rather_than_running_on(repo, monkeypatch):
+    """The file count bounds how many files are opened, not how long that takes."""
+    write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
+    for n in range(5):
+        write(repo, f"filler_{n}.py", "x = 1\n" * 50)
+    commit(repo)
+    monkeypatch.setattr(impact, "_git", lambda *a, **k: None)  # force the walk
+
+    clock = itertools.count(step=0.1)  # each reading a tenth of a second later
+    monkeypatch.setattr(impact.time, "monotonic", lambda: next(clock))
+
+    config = ImpactConfig(timeout_seconds=1, max_files_scanned=1000)
+    result = impact.analyse(changed(repo, "service.py"), repo, config)
+
+    assert result.method == "walk"
+    assert result.truncated
+    assert any("impact.timeout_seconds" in note for note in result.notes)
+    assert not any("max_files_scanned" in note for note in result.notes)
+    node = node_named(result, "charge_card")
+    assert node is not None and node.status is not ImpactStatus.CONTAINED
+
+
 # --- non-symbol contracts ---------------------------------------------------
 
 
@@ -288,7 +312,7 @@ def test_the_consumer_budget_truncates_and_says_so(repo):
     node = trace(repo, "service.py", "charge_card", config)
     assert node is not None
     assert len(node.consumers) == 2
-    assert node.truncated and "references found" in node.note
+    assert node.truncated and "candidate matches found" in node.note
 
 
 @requires_tree_sitter
@@ -392,6 +416,23 @@ def test_a_language_with_no_grammar_reports_unsupported(repo, monkeypatch):
     result = impact.analyse(changed(repo, "service.py"), repo, ImpactConfig())
     assert result.status is ImpactStatus.UNSUPPORTED
     assert "tree-sitter" in result.notes[0]
+
+
+@requires_tree_sitter
+def test_a_parsed_file_with_no_named_symbol_is_not_reported_as_unparsed(repo):
+    """A module-level constant seeds no symbol, but the parser still read the file.
+
+    The distinction the note rests on: "found nothing named" is not "could not
+    look", and only the second one is worth warning a reader about.
+    """
+    write(repo, "settings.py", "MAX_RETRIES = 5\n")
+    write(repo, "worker.py", "from settings import MAX_RETRIES\n")
+    commit(repo)
+
+    result = impact.analyse(changed(repo, "settings.py"), repo, ImpactConfig())
+
+    assert node_named(result, "MAX_RETRIES") is not None
+    assert not any("No parser was available" in note for note in result.notes)
 
 
 def test_prose_is_never_a_consumer(repo):

@@ -1039,6 +1039,58 @@ def test_an_unavailable_map_says_so_rather_than_rendering_nothing():
     assert "unavailable" in document
 
 
+def test_an_unavailable_map_with_nothing_in_it_still_says_so():
+    """The status is the message; an empty map must not read as a clean one.
+
+    ``ImpactMap()`` defaults to ``unavailable``, so this is what a round-tripped
+    or partially built map looks like. The terminal form states it, and dropping
+    it here would leave a reader of the report unable to tell "we could not look"
+    from "nothing to worry about".
+    """
+    result = make_result()
+    result.impact = ImpactMap()
+
+    document = markdown.render(result)
+
+    assert "Blast radius" in document
+    assert "unavailable" in document
+    assert "no reason was recorded" in document
+
+
+def test_a_truncated_map_says_so_when_no_note_explains_it():
+    """A partial map presented whole is the same false confidence, one level down."""
+    result = make_result()
+    result.impact = ImpactMap(
+        status=ImpactStatus.CONSUMERS_FOUND,
+        truncated=True,
+        nodes=[
+            ImpactNode(
+                name="charge_card",
+                file="service.py",
+                line=1,
+                status=ImpactStatus.CONSUMERS_FOUND,
+            )
+        ],
+    )
+
+    document = markdown.render(result)
+
+    assert "`charge_card`" in document
+    assert "The map is partial" in document
+
+
+def test_a_truncation_note_is_not_restated():
+    """The notes name the bound that bit; a generic line next to them is noise."""
+    result = make_result()
+    result.impact = impact_map()
+    result.impact.truncated = True
+
+    document = markdown.render(result)
+
+    assert "impact.max_nodes" in document
+    assert "The map is partial" not in document
+
+
 def test_no_map_renders_no_section():
     assert "Blast radius" not in markdown.render(make_result())
 

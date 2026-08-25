@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -277,10 +278,12 @@ def analyse(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> ImpactMap
         )
     if search.truncated:
         truncated = True
-        notes.append(
-            f"The search stopped after {config.max_files_scanned} files "
-            f"(`impact.max_files_scanned`); containment cannot be claimed."
+        limit = (
+            f"{config.timeout_seconds}s (`impact.timeout_seconds`)"
+            if search.timed_out
+            else f"{config.max_files_scanned} files (`impact.max_files_scanned`)"
         )
+        notes.append(f"The search stopped after {limit}; containment cannot be claimed.")
     truncated = _fit_budget(nodes, config, notes) or truncated
 
     if limited:
@@ -351,7 +354,13 @@ def _git(repo: Path, *args: str, timeout: int = 10) -> str | None:
 
 
 def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode], bool]:
-    """Every changed boundary worth tracing, and whether a parser found any of it."""
+    """Every changed boundary worth tracing, and whether a parser read any of it.
+
+    Parsed once here and handed down, because "a parser ran" and "a parser found
+    a named symbol" are different answers. A change confined to module-level code
+    yields no symbol from a file the grammar read perfectly well, and reporting
+    that as an absent parser understates what the map actually knows.
+    """
     nodes: list[ImpactNode] = []
     seen: set[tuple[str, str]] = set()
     parsed_any = False
@@ -359,9 +368,9 @@ def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode],
     for file in changeset.files:
         if file.is_binary or file.change_type == "deleted" or file.new_content is None:
             continue
-        found = _symbols(file)
-        parsed_any = parsed_any or bool(found)
-        for node in (*found, *_exports(file), *_contracts(file)):
+        tree = ast_context.parse(file.language, file.new_content)
+        parsed_any = parsed_any or tree is not None
+        for node in (*_symbols(file, tree), *_exports(file), *_contracts(file, tree)):
             key = (node.kind.value, node.name)
             if key in seen:
                 continue
@@ -372,7 +381,7 @@ def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode],
     return nodes, parsed_any
 
 
-def _symbols(file: ChangedFile) -> list[ImpactNode]:
+def _symbols(file: ChangedFile, tree: Any | None) -> list[ImpactNode]:
     """Named symbols the change touched, from the parse tree.
 
     The mirror of ``ast_context.enclosing_symbol``: that one wants the symbol
@@ -380,8 +389,6 @@ def _symbols(file: ChangedFile) -> list[ImpactNode]:
     because a one-line edit inside a function still changes that function's
     contract for everyone who calls it.
     """
-    assert file.new_content is not None
-    tree = ast_context.parse(file.language, file.new_content)
     if tree is None:
         return []
 
@@ -434,7 +441,7 @@ def _exports(file: ChangedFile) -> list[ImpactNode]:
     return out
 
 
-def _contracts(file: ChangedFile) -> list[ImpactNode]:
+def _contracts(file: ChangedFile, tree: Any | None) -> list[ImpactNode]:
     """Routes, events, config keys, env vars and schema fields the change touched.
 
     None of these is a symbol any parser will hand you -- they are names two
@@ -460,10 +467,10 @@ def _contracts(file: ChangedFile) -> list[ImpactNode]:
                             verification=Verification.TEXTUAL,
                         )
                     )
-    return [*out, *_schema_fields(file)]
+    return [*out, *_schema_fields(file, tree)]
 
 
-def _schema_fields(file: ChangedFile) -> list[ImpactNode]:
+def _schema_fields(file: ChangedFile, tree: Any | None) -> list[ImpactNode]:
     """Fields added to a declared schema class, found with the parser rather than a regex.
 
     Deliberately not pattern-matched. ``name: str`` indented four spaces is the
@@ -472,8 +479,6 @@ def _schema_fields(file: ChangedFile) -> list[ImpactNode]:
     in, and whether that class derives from a schema base, is the difference
     between a field on a serialised model and a local variable annotation.
     """
-    assert file.new_content is not None
-    tree = ast_context.parse(file.language, file.new_content)
     if tree is None:
         return []
 
@@ -574,6 +579,8 @@ class _Search:
     changed: set[str]
     method: Literal["git-grep", "walk", "none"] = "none"
     truncated: bool = False
+    timed_out: bool = False
+    """Which ceiling bit, so the note can name the one the reviewer can raise."""
 
     def find(self, terms: list[str]) -> dict[str, list[_Hit]]:
         """Every line in the repository mentioning each term, minus the change itself."""
@@ -633,12 +640,22 @@ class _Search:
         Deliberately one pass rather than one per term: the fallback is already
         the slow path, and re-reading every file once per changed symbol would
         make it the unusable one.
+
+        Bounded twice over, because a file count is not a bound on the work: one
+        half-megabyte file matched against a dozen terms is a lot of regex, and a
+        tree of empty directories is a walk that scans nothing and still takes
+        time. The wall clock is the ceiling that holds in both cases, and this is
+        the path taken when git has *already* failed -- not the moment to run for
+        as long as it takes.
         """
         matchers = {term: _matcher(term) for term in terms}
         found: dict[str, list[_Hit]] = {term: [] for term in terms}
+        deadline = time.monotonic() + self.config.timeout_seconds
         scanned = 0
 
         for dirpath, dirnames, filenames in os.walk(self.repo, followlinks=False):
+            if self._expired(deadline):
+                return found
             here = Path(dirpath)
             dirnames[:] = sorted(
                 name
@@ -648,6 +665,8 @@ class _Search:
             for name in sorted(filenames):
                 if scanned >= self.config.max_files_scanned:
                     self.truncated = True
+                    return found
+                if self._expired(deadline):
                     return found
                 path = here / name
                 relative = path.relative_to(self.repo).as_posix()
@@ -661,10 +680,24 @@ class _Search:
                     continue
                 scanned += 1
                 for lineno, line in enumerate(text.splitlines(), start=1):
+                    if self._expired(deadline):
+                        return found
                     for term, matcher in matchers.items():
                         if matcher.search(line):
                             found[term].append(_Hit(relative, lineno, line))
         return found
+
+    def _expired(self, deadline: float) -> bool:
+        """Whether the wall clock has run out, recording it as it answers.
+
+        Checked between files and between lines rather than only between files,
+        so a single large file cannot outlast the deadline on its own.
+        """
+        if time.monotonic() < deadline:
+            return False
+        self.truncated = True
+        self.timed_out = True
+        return True
 
 
 def _matcher(term: str) -> re.Pattern[str]:
@@ -729,7 +762,7 @@ def _resolve(node: ImpactNode, hits: list[_Hit], search: _Search) -> None:
     notes: list[str] = []
     if node.truncated:
         notes.append(
-            f"{len(verified)} references found; the first "
+            f"{len(hits)} candidate matches found; the first "
             f"{config.max_consumers_per_node} are shown."
         )
     if literals:

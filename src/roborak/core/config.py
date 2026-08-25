@@ -128,6 +128,9 @@ class ImpactConfig(ConfigModel):
     budget up front, so adding this section can never squeeze out a changed file."""
 
     timeout_seconds: int = Field(default=10, ge=1)
+    """Wall clock for the reference search, whether it runs as ``git grep`` or as the
+    fallback walk. A file count bounds how many files are opened, not how long
+    reading them takes."""
 
 
 class LLMConfig(ConfigModel):

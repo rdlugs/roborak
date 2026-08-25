@@ -19,6 +19,7 @@ from roborak.core.models import (
     ChangedFile,
     ChangeSet,
     Finding,
+    ImpactStatus,
     Issue,
     OmissionReason,
     ReviewComment,
@@ -996,6 +997,11 @@ def test_a_failing_impact_stage_never_fails_the_review(tmp_path, monkeypatch):
         impact_changeset(repo)
     )
 
-    assert result.impact is None
+    # Not None: a failed stage has to be distinguishable from --no-impact, or a
+    # reader takes the missing section for a contained change.
+    assert result.impact is not None
+    assert result.impact.status is ImpactStatus.UNAVAILABLE
+    assert result.impact.notes
+    assert "tree-sitter fell over" not in " ".join(result.impact.notes)
     assert result.status is ReviewStatus.COMPLETE
     assert result.errors == []

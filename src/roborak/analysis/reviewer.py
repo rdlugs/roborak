@@ -21,6 +21,7 @@ from roborak.core.models import (
     ChangeSet,
     Finding,
     ImpactMap,
+    ImpactStatus,
     Issue,
     LLMCallUsage,
     OmissionReason,
@@ -230,7 +231,13 @@ class Reviewer:
             return impact.analyse(changeset, self.repo, self.config.impact)
         except Exception as exc:  # noqa: BLE001 - context is optional; a review is not
             log.warning("blast-radius analysis failed; reviewing without it: %s", exc)
-            return None
+            return ImpactMap(
+                status=ImpactStatus.UNAVAILABLE,
+                notes=[
+                    "The blast-radius analysis did not complete, so no consumer was "
+                    "searched for. The run log has the reason."
+                ],
+            )
 
     def _prepare(self, changeset: ChangeSet, result: ReviewResult) -> bool:
         """Filter in place. Returns False when nothing is left to review.

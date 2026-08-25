@@ -242,18 +242,25 @@ def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
     Rendered even when the answer is "we could not look". A section that appears
     only on success teaches a reader that its absence means the change was
     contained, which is the exact false confidence this analysis exists to
-    remove -- so ``unavailable`` and ``not applicable`` say so in words.
+    remove -- so ``unavailable`` and ``not applicable`` say so in words, on the
+    status alone when the map carries neither a boundary nor a note. Only
+    ``impact is None`` -- nobody asked -- renders nothing at all.
     """
     if impact is None:
         return ""
 
     body = _impact_rows(impact) if impact.nodes else ""
-    notes = "\n\n".join(_wrap(f"_{note}_") for note in impact.notes)
+    notes = list(impact.notes)
+    if impact.truncated and not notes:
+        notes.append("The map is partial: not everything the change reaches was traced.")
     if not body and not notes:
-        return ""
+        if impact.searched:
+            return ""
+        notes.append("Nothing was traced, and no reason was recorded.")
 
     summary = f"🧭 Blast radius — {IMPACT_LABEL[impact.status].split(' ', 1)[1].lower()}"
-    inner = "\n\n".join(part for part in (body, notes) if part)
+    rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
+    inner = "\n\n".join(part for part in (body, rendered) if part)
     return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
 
 

@@ -433,7 +433,7 @@ impact:
   enabled: true           # trace changed symbols out to their consumers
   max_nodes: 12           # boundaries traced per review
   max_consumers_per_node: 5
-  max_files_scanned: 2000 # ceiling on the no-git fallback walk
+  max_files_scanned: 2000 # ceiling on the fallback walk when git grep is unavailable
   max_snippet_lines: 6
   token_budget: 1500      # prompt tokens the consumer snippets may occupy
   timeout_seconds: 10
