@@ -34,6 +34,7 @@ from roborak.core.severity import (
 from roborak.core.verdict import Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
+from roborak.render.markdown import FLOW_SUMMARY
 
 SEVERITY_ICON = {
     Severity.CRITICAL: "✖",
@@ -162,6 +163,17 @@ def _render_header(result: ReviewResult, console: Console) -> None:
             table.add_row(summary.path, " ".join(summary.summary.split()))
         console.print()
         console.print(table)
+
+    if walkthrough.sequence_diagram:
+        # The default terminal view prints the diagram as an ordinary fenced
+        # block, so the panel view printing nothing was the odd one out: it
+        # carried the other two walkthrough sections and silently dropped this
+        # one. Shares FLOW_SUMMARY with the report for the same reason the rest
+        # of this header does -- one label, so the views cannot disagree.
+        console.print()
+        console.print(Text(FLOW_SUMMARY, style="bold"))
+        console.print()
+        console.print(Text(walkthrough.sequence_diagram.strip(), style="dim"))
 
 
 def _meta_parts(result: ReviewResult) -> list[str]:

@@ -488,7 +488,23 @@ def test_terminal_header_carries_the_walkthrough():
     assert "Introduces a session cache keyed by user id." in text
     assert "app/auth.py" in text
     assert "review effort 3/5" in text
-    assert "sequenceDiagram" not in text
+
+
+def test_the_panel_header_carries_the_flow_diagram():
+    """The panel view carried every walkthrough section but this one."""
+    text = render_terminal(_with_flow(), width=120)
+
+    assert markdown.FLOW_SUMMARY in text
+    assert "flowchart TD" in text
+    assert "Boot --> Routes" in text
+
+
+def test_the_panel_header_says_nothing_when_there_is_no_diagram():
+    result = make_result(walkthrough=True)
+    assert result.walkthrough is not None
+    result.walkthrough.sequence_diagram = None
+
+    assert markdown.FLOW_SUMMARY not in render_terminal(result, width=120)
 
 
 def test_terminal_header_survives_a_review_with_no_walkthrough():
