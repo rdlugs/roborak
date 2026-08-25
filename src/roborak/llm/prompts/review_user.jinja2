@@ -48,6 +48,34 @@ simply repeat them.
 ## Stack notes
 {{ language_notes }}
 {% endif %}
+{% if impact_nodes %}
+## Blast radius
+
+What this change touches, and the unchanged code that depends on it. These
+consumer files are NOT under review: they are evidence about the changed lines.
+Do not report a finding on a consumer line. When a change breaks one of them,
+anchor the finding to the changed line responsible, name the consumer file in
+`evidence_files`, and use `evidence: contract`.
+
+A boundary listed as `contained` was searched and nothing outside the change used
+it. One listed as `no references found` was searched by name only: an alias, a
+re-export or a runtime lookup would not have matched, so it is not proof of
+anything.
+{% for node in impact_nodes %}
+### `{{ node.name }}` — {{ node.kind }} in `{{ node.file }}`:{{ node.line }} — {{ node.status }}
+{% if node.note %}
+{{ node.note }}
+{% endif %}
+{% for consumer in node.consumers %}
+- `{{ consumer.path }}`:{{ consumer.line }} ({{ consumer.relation }})
+{% if consumer.snippet %}
+```
+{{ consumer.snippet }}
+```
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}
 
 ## Diff to review
 

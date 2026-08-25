@@ -29,7 +29,7 @@ _GRAMMAR = {
     "terraform": "terraform",
 }
 
-_SYMBOL_TYPES = frozenset(
+SYMBOL_TYPES = frozenset(
     {
         "arrow_function",
         "class",
@@ -77,11 +77,11 @@ class SymbolSpan:
 
 
 def available() -> bool:
-    return _load_parser("python") is not None
+    return load_parser("python") is not None
 
 
 @lru_cache(maxsize=32)
-def _load_parser(language: str) -> Any | None:
+def load_parser(language: str) -> Any | None:
     """Load a grammar once per language, or return None if unavailable."""
     try:
         from tree_sitter_language_pack import get_parser
@@ -96,18 +96,44 @@ def _load_parser(language: str) -> Any | None:
         return None
 
 
-def enclosing_symbol(file: ChangedFile, hunk: Hunk) -> SymbolSpan | None:
-    """Find the smallest named symbol fully containing ``hunk``."""
-    if file.language is None or file.new_content is None:
+def parse(language: str | None, source: str) -> Any | None:
+    """A parse tree for ``source``, or ``None`` when there is honestly none.
+
+    The three ways this fails -- no language detected, no grammar installed, a file
+    the grammar chokes on -- are all the same answer to the caller: carry on with
+    less context. Shared with ``roborak.context.impact``, so both passes agree on
+    what "parseable" means.
+    """
+    if language is None:
         return None
-    parser = _load_parser(file.language)
+    parser = load_parser(language)
     if parser is None:
         return None
-
     try:
-        tree = parser.parse(file.new_content.encode("utf-8"))
+        return parser.parse(source.encode("utf-8"))
     except Exception:  # noqa: BLE001 - a broken parse is normal mid-review
-        log.debug("could not parse %s", file.path)
+        log.debug("could not parse a %s file", language)
+        return None
+
+
+def node_at(tree: Any, row: int, column: int) -> Any | None:
+    """The smallest node covering a 0-based ``row``/``column``.
+
+    What the blast-radius pass uses to tell a real reference from the same
+    characters sitting inside a comment or a string literal.
+    """
+    try:
+        return tree.root_node.descendant_for_point_range((row, column), (row, column))
+    except Exception:  # noqa: BLE001 - grammars disagree about out-of-range points
+        return None
+
+
+def enclosing_symbol(file: ChangedFile, hunk: Hunk) -> SymbolSpan | None:
+    """Find the smallest named symbol fully containing ``hunk``."""
+    if file.new_content is None:
+        return None
+    tree = parse(file.language, file.new_content)
+    if tree is None:
         return None
 
     target_start = hunk.new_start - 1
@@ -115,13 +141,13 @@ def enclosing_symbol(file: ChangedFile, hunk: Hunk) -> SymbolSpan | None:
 
     best: SymbolSpan | None = None
     root = tree.root_node
-    for node in _walk(root):
-        if node is root or node.type not in _SYMBOL_TYPES:
+    for node in walk(root):
+        if node is root or node.type not in SYMBOL_TYPES:
             continue
         if node.start_point[0] > target_start or node.end_point[0] < target_end:
             continue
         span = SymbolSpan(
-            name=_node_name(node),
+            name=node_name(node),
             kind=node.type,
             start_line=node.start_point[0] + 1,
             end_line=node.end_point[0] + 1,
@@ -140,13 +166,13 @@ def enclosing_symbol(file: ChangedFile, hunk: Hunk) -> SymbolSpan | None:
     return best
 
 
-def _walk(node: Any) -> Any:
+def walk(node: Any) -> Any:
     yield node
     for child in node.children:
-        yield from _walk(child)
+        yield from walk(child)
 
 
-def _node_name(node: Any) -> str:
+def node_name(node: Any) -> str:
     """Best-effort symbol name, across grammars that disagree about field names."""
     for field in ("name", "declarator"):
         child = node.child_by_field_name(field)

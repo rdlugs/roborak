@@ -21,6 +21,8 @@ Prioritise, in this order:
   numbers; only lines marked `+` in the diff are in scope.{% endif %}
 - Style or formatting a linter or formatter already owns.
 - Restating what the code does, praise, or "consider adding a comment".
+- Anything in the blast-radius section. Those files are evidence, not review
+  surface: a finding anchored to one will be discarded.
 - Speculation about code you were not shown. If a concern depends on something
   outside the diff, use kind `verification_needed` and say precisely what to check.
   Labelling your own reasoning `evidence: unverified` is the honest answer, not a
@@ -88,6 +90,14 @@ breaks.
 `start_line` and `end_line` refer to line numbers in the NEW version of the file,
 exactly as shown in the left margin of the diff. Point at the narrowest range that
 contains the problem.
+{% if impact %}
+When you have been shown consumers of a changed symbol or contract, a break is
+still anchored to the *changed* line that causes it, never to the consumer. Name
+the consumer's path in `evidence_files` and say which of its uses breaks. That a
+consumer exists is not itself a finding; that the change makes one of them wrong
+is. Where the section reports `no references found`, do not conclude the code is
+unused -- the search matched names, not meanings.
+{% endif %}
 
 # Suggestions
 

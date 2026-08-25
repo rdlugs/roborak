@@ -318,6 +318,135 @@ class Walkthrough(BaseModel):
     estimated_effort: int | None = Field(default=None, ge=1, le=5)
 
 
+class BoundaryKind(StrEnum):
+    """What sort of contract a changed thing exposes to the rest of the repository.
+
+    A function is not the only thing a change can break from a distance. A route
+    string, an event name, a configuration key, an environment variable and a
+    schema field are all names that something else depends on by spelling them the
+    same way, and none of them is a symbol any parser will hand you.
+    """
+
+    SYMBOL = "symbol"
+    EXPORT = "export"
+    ROUTE = "route"
+    EVENT = "event"
+    CONFIG_KEY = "config_key"
+    ENV_VAR = "env_var"
+    SCHEMA_FIELD = "schema_field"
+
+
+class Verification(StrEnum):
+    """How hard the evidence behind a consumer list is.
+
+    The distinction this exists to preserve: finding the name and finding a *use*
+    of it are not the same claim, and only the second one can support containment.
+    """
+
+    PARSED = "parsed"
+    """A parser confirmed the match is an identifier, not a comment or a string."""
+
+    TEXTUAL = "textual"
+    """The name was matched as text. Aliases and dynamic dispatch are invisible."""
+
+    NONE = "none"
+    """Nothing was searched."""
+
+
+class ImpactStatus(StrEnum):
+    """What the blast-radius analysis was able to establish."""
+
+    CONTAINED = "contained"
+    """Searched with a parser, and nothing outside the change uses this."""
+
+    CONSUMERS_FOUND = "consumers_found"
+    NO_REFERENCES_FOUND = "no_references_found"
+    """Nothing matched, but only as text -- which is not the same as contained."""
+
+    UNSUPPORTED = "unsupported"
+    """No parser for this language, so nothing could be seeded."""
+
+    LIMITED = "limited"
+    """Searched a checkout that may not hold exactly the code under review."""
+
+    UNAVAILABLE = "unavailable"
+    """There was nothing to search: a forge diff with no matching checkout."""
+
+    NOT_APPLICABLE = "not_applicable"
+    """There is no *unchanged* consumer to look for -- every file is under review."""
+
+
+class ConsumerRelation(StrEnum):
+    """How a consumer touches the changed thing."""
+
+    CALL = "call"
+    IMPORT = "import"
+    """An import or a re-export: it carries the name onward rather than using it."""
+
+    TEST = "test"
+    CONFIG = "config"
+
+
+class Consumer(BaseModel):
+    """One place outside the change that names something the change touched."""
+
+    path: str
+    line: int
+    relation: ConsumerRelation = ConsumerRelation.CALL
+    snippet: str = ""
+    """A few lines around the reference, for the prompt. Empty when not collected."""
+
+
+class ImpactNode(BaseModel):
+    """One changed contract and what depends on it.
+
+    ``changed symbol -> direct consumers -> affected boundary -> verification``,
+    which is the whole shape of the analysis in one record.
+    """
+
+    name: str
+    kind: BoundaryKind = BoundaryKind.SYMBOL
+    file: str
+    line: int = 1
+    consumers: list[Consumer] = Field(default_factory=list)
+    status: ImpactStatus = ImpactStatus.NO_REFERENCES_FOUND
+    verification: Verification = Verification.NONE
+    note: str = ""
+    truncated: bool = False
+    """More consumers exist than were kept; the list is the head of a longer one."""
+
+
+class ImpactMap(BaseModel):
+    """The blast radius of a change, as evidence rather than as prose.
+
+    Deliberately structured. The walkthrough narrates a change file by file, which
+    cannot answer the one question a reader of a clean review has -- whether the
+    change is contained, or whether nobody was able to look. A map that carries its
+    own ``status`` can say which of those two it is, on every surface, without the
+    renderer having to guess.
+    """
+
+    nodes: list[ImpactNode] = Field(default_factory=list)
+    status: ImpactStatus = ImpactStatus.UNAVAILABLE
+    method: Literal["git-grep", "walk", "none"] = "none"
+    truncated: bool = False
+    notes: list[str] = Field(default_factory=list)
+    """Every bound that bit and every limitation that applies, in plain words."""
+
+    @property
+    def consumer_count(self) -> int:
+        return sum(len(node.consumers) for node in self.nodes)
+
+    @property
+    def searched(self) -> bool:
+        """Whether anything was actually looked for."""
+        return self.status not in {
+            ImpactStatus.UNAVAILABLE,
+            ImpactStatus.NOT_APPLICABLE,
+            ImpactStatus.UNSUPPORTED,
+        }
+
+
 class ReviewResult(BaseModel):
     """Everything a review produced, ready for any renderer or publisher."""
 
@@ -327,6 +456,15 @@ class ReviewResult(BaseModel):
     model: str | None = None
     issue: Issue | None = None
     """The issue this review was judged against, when ``--issue`` was given."""
+
+    impact: ImpactMap | None = None
+    """What the change reaches beyond the lines it touched.
+
+    ``None`` means the stage never ran -- ``describe``, ``--no-llm``, or the
+    analysis switched off -- which is a different statement from an ``ImpactMap``
+    whose status is ``unavailable``. One says nobody asked; the other says we asked
+    and could not find out, and a reader deciding whether to trust a clean review
+    needs to be able to tell them apart."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE

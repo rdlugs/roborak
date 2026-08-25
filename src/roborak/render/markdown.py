@@ -36,7 +36,13 @@ from roborak.core.buckets import (
     by_file,
     group,
 )
-from roborak.core.models import Finding, ReviewResult, Walkthrough
+from roborak.core.models import (
+    Finding,
+    ImpactMap,
+    ImpactStatus,
+    ReviewResult,
+    Walkthrough,
+)
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
@@ -145,6 +151,9 @@ def render(
                 "### Flow\n\n```mermaid\n" + walkthrough.sequence_diagram.strip() + "\n```"
             )
 
+    if impact := _impact_section(result.impact, form=form):
+        sections.append(impact)
+
     if not grouped:
         sections.append(_nothing_to_report(result))
     else:
@@ -207,6 +216,66 @@ def _walkthrough_table(result: ReviewResult) -> str:
         f"| `{summary.path}` | {_escape_cell(summary.summary)} |"
         for summary in result.walkthrough.file_summaries
     ]
+    return "\n".join(rows)
+
+
+IMPACT_LABEL: dict[ImpactStatus, str] = {
+    ImpactStatus.CONTAINED: "✅ Contained",
+    ImpactStatus.CONSUMERS_FOUND: "🔗 Consumers found",
+    ImpactStatus.NO_REFERENCES_FOUND: "❔ No references found",
+    ImpactStatus.UNSUPPORTED: "🚫 Not supported",
+    ImpactStatus.LIMITED: "⚠️ Limited",
+    ImpactStatus.UNAVAILABLE: "⚠️ Unavailable",
+    ImpactStatus.NOT_APPLICABLE: "⚪ Not applicable",
+}
+
+MAX_IMPACT_CONSUMERS_SHOWN = 4
+"""Consumer paths printed per row before the rest are counted.
+
+The row is a pointer, not the evidence; a reader who needs all fifteen callers
+wants their editor, not a table cell."""
+
+
+def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
+    """What the change reaches, and how much of that we could establish.
+
+    Rendered even when the answer is "we could not look". A section that appears
+    only on success teaches a reader that its absence means the change was
+    contained, which is the exact false confidence this analysis exists to
+    remove -- so ``unavailable`` and ``not applicable`` say so in words, on the
+    status alone when the map carries neither a boundary nor a note. Only
+    ``impact is None`` -- nobody asked -- renders nothing at all.
+    """
+    if impact is None:
+        return ""
+
+    body = _impact_rows(impact) if impact.nodes else ""
+    notes = list(impact.notes)
+    if impact.truncated and not notes:
+        notes.append("The map is partial: not everything the change reaches was traced.")
+    if not body and not notes:
+        if impact.searched:
+            return ""
+        notes.append("Nothing was traced, and no reason was recorded.")
+
+    summary = f"🧭 Blast radius — {IMPACT_LABEL[impact.status].split(' ', 1)[1].lower()}"
+    rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
+    inner = "\n\n".join(part for part in (body, rendered) if part)
+    return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
+
+
+def _impact_rows(impact: ImpactMap) -> str:
+    rows = ["| Changed | Boundary | Consumers | Status |", "| --- | --- | --- | --- |"]
+    for node in impact.nodes:
+        shown = [f"`{c.path}`:{c.line}" for c in node.consumers[:MAX_IMPACT_CONSUMERS_SHOWN]]
+        rest = len(node.consumers) - len(shown)
+        consumers = ", ".join(shown) + (f" and {rest} more" if rest > 0 else "")
+        rows.append(
+            f"| `{node.name}` <sub>`{node.file}`:{node.line}</sub> "
+            f"| {node.kind.value.replace('_', ' ')} "
+            f"| {consumers or '—'} "
+            f"| {IMPACT_LABEL[node.status]} |"
+        )
     return "\n".join(rows)
 
 

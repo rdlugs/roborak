@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from roborak.analysis import validator
+from roborak.context import impact
 from roborak.context.chunker import chunk, needs_chunking
 from roborak.context.compressor import compress, filter_files
 from roborak.core.config import Config
@@ -19,6 +20,8 @@ from roborak.core.models import (
     ChangedFile,
     ChangeSet,
     Finding,
+    ImpactMap,
+    ImpactStatus,
     Issue,
     LLMCallUsage,
     OmissionReason,
@@ -68,6 +71,7 @@ class Reviewer:
     _rules_key: str | None = field(default=None, repr=False)
     _usage: list[LLMCallUsage] = field(default_factory=list, repr=False)
     _contexts: dict[str, str] = field(default_factory=dict, repr=False)
+    _impact: ImpactMap | None = field(default=None, repr=False)
 
     def rules_for(self, changeset: ChangeSet) -> list[dict[str, str]]:
         """The team's own rules that apply to this change, ready for the prompt."""
@@ -97,6 +101,8 @@ class Reviewer:
 
         if not self._prepare(changeset, result):
             return result
+
+        result.impact = self._impact = self._blast_radius(changeset)
 
         findings = list(self.static_findings)
         if self.llm is not None:
@@ -211,6 +217,28 @@ class Reviewer:
         )
         return self._complete("ask", prompt.system, prompt.user).text.strip()
 
+    def _blast_radius(self, changeset: ChangeSet) -> ImpactMap | None:
+        """What the change reaches, or ``None`` when nobody asked.
+
+        Non-fatal by construction, the same way the overview pass is. A review
+        that fell over because an optional context stage could not read the
+        working tree would be a worse review than one without the map, so every
+        failure here degrades to a note rather than to an error.
+        """
+        if not self.config.impact.enabled or self.llm is None:
+            return None
+        try:
+            return impact.analyse(changeset, self.repo, self.config.impact)
+        except Exception as exc:  # noqa: BLE001 - context is optional; a review is not
+            log.warning("blast-radius analysis failed; reviewing without it: %s", exc)
+            return ImpactMap(
+                status=ImpactStatus.UNAVAILABLE,
+                notes=[
+                    "The blast-radius analysis did not complete, so no consumer was "
+                    "searched for. The run log has the reason."
+                ],
+            )
+
     def _prepare(self, changeset: ChangeSet, result: ReviewResult) -> bool:
         """Filter in place. Returns False when nothing is left to review.
 
@@ -315,6 +343,7 @@ class Reviewer:
             static_findings=self._static_for_prompt(prompt_changeset),
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
+            impact=self._impact,
             collect_requirement_evidence=collect_requirement_evidence,
         )
         total = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
@@ -346,6 +375,7 @@ class Reviewer:
             static_findings=self._static_for_prompt(prompt_changeset),
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
+            impact=self._impact,
             collect_requirement_evidence=collect_requirement_evidence,
         )
         response = self._complete("review", prompt.system, prompt.user, chunk_index=chunk_index)
@@ -406,7 +436,11 @@ class Reviewer:
             and self.config.review.check_requirements,
         )
         overhead = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
-        return max(1, self.llm.context_budget - overhead - 200)
+        # The blast-radius section is reserved rather than measured: it is capped
+        # before it is ever rendered, and reserving the ceiling up front is what
+        # stops a large map from squeezing a changed file out of its own review.
+        reserved = self.config.impact.token_budget if self._impact is not None else 0
+        return max(1, self.llm.context_budget - overhead - reserved - 200)
 
     def _static_for_prompt(self, changeset: ChangeSet) -> list[Finding]:
         """Only the static findings for files in this pass, so chunks stay focused."""

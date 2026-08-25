@@ -13,10 +13,15 @@ import pytest
 from rich.console import Console
 
 from roborak.core.models import (
+    BoundaryKind,
     ChangedFile,
     ChangeSet,
+    Consumer,
     FileSummary,
     Finding,
+    ImpactMap,
+    ImpactNode,
+    ImpactStatus,
     Issue,
     LLMCallUsage,
     ReviewComment,
@@ -25,7 +30,7 @@ from roborak.core.models import (
 )
 from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
-from roborak.render import json_out, markdown, prompt_only
+from roborak.render import json_out, markdown, prompt_only, terminal
 
 
 def test_result_accumulates_usage_metadata():
@@ -968,3 +973,181 @@ def test_the_terminal_prints_the_evidence_note_and_not_just_its_label():
     result.findings = [next(f for f in result.findings if f.source == "llm")]
     text = render_terminal(result, width=120)
     assert "user_id reaches line 11 unescaped" in text
+
+
+# --- blast radius -----------------------------------------------------------
+
+
+def impact_map() -> ImpactMap:
+    return ImpactMap(
+        status=ImpactStatus.CONSUMERS_FOUND,
+        method="git-grep",
+        notes=["Traced the first 2 of 9 changed boundaries (`impact.max_nodes`)."],
+        nodes=[
+            ImpactNode(
+                name="charge_card",
+                file="service.py",
+                line=1,
+                status=ImpactStatus.CONSUMERS_FOUND,
+                consumers=[Consumer(path="checkout.py", line=2, snippet="    charge_card(10)")],
+            ),
+            ImpactNode(
+                name="helper",
+                file="service.py",
+                line=9,
+                status=ImpactStatus.CONTAINED,
+            ),
+        ],
+    )
+
+
+def test_markdown_renders_the_blast_radius_map():
+    result = make_result()
+    result.impact = impact_map()
+
+    document = markdown.render(result)
+
+    assert "Blast radius" in document
+    assert "`charge_card`" in document
+    assert "`checkout.py`:2" in document
+    assert "✅ Contained" in document
+    assert "impact.max_nodes" in document
+
+
+def test_the_terminal_form_carries_the_same_map():
+    """The terminal may show less about the run; never less of the review."""
+    result = make_result()
+    result.impact = impact_map()
+
+    document = markdown.render(result, form=markdown.Form.TERMINAL)
+
+    assert "Blast radius" in document
+    assert "`checkout.py`:2" in document
+    assert "✅ Contained" in document
+
+
+def test_an_unavailable_map_says_so_rather_than_rendering_nothing():
+    """Silence would read as "contained", which is the mistake being prevented."""
+    result = make_result()
+    result.impact = ImpactMap(
+        status=ImpactStatus.UNAVAILABLE,
+        notes=["This change was fetched from the forge and the working directory..."],
+    )
+
+    document = markdown.render(result)
+    assert "Blast radius" in document
+    assert "unavailable" in document
+
+
+def test_an_unavailable_map_with_nothing_in_it_still_says_so():
+    """The status is the message; an empty map must not read as a clean one.
+
+    ``ImpactMap()`` defaults to ``unavailable``, so this is what a round-tripped
+    or partially built map looks like. The terminal form states it, and dropping
+    it here would leave a reader of the report unable to tell "we could not look"
+    from "nothing to worry about".
+    """
+    result = make_result()
+    result.impact = ImpactMap()
+
+    document = markdown.render(result)
+
+    assert "Blast radius" in document
+    assert "unavailable" in document
+    assert "no reason was recorded" in document
+
+
+def test_a_truncated_map_says_so_when_no_note_explains_it():
+    """A partial map presented whole is the same false confidence, one level down."""
+    result = make_result()
+    result.impact = ImpactMap(
+        status=ImpactStatus.CONSUMERS_FOUND,
+        truncated=True,
+        nodes=[
+            ImpactNode(
+                name="charge_card",
+                file="service.py",
+                line=1,
+                status=ImpactStatus.CONSUMERS_FOUND,
+            )
+        ],
+    )
+
+    document = markdown.render(result)
+
+    assert "`charge_card`" in document
+    assert "The map is partial" in document
+
+
+def test_a_truncation_note_is_not_restated():
+    """The notes name the bound that bit; a generic line next to them is noise."""
+    result = make_result()
+    result.impact = impact_map()
+    result.impact.truncated = True
+
+    document = markdown.render(result)
+
+    assert "impact.max_nodes" in document
+    assert "The map is partial" not in document
+
+
+def test_no_map_renders_no_section():
+    assert "Blast radius" not in markdown.render(make_result())
+
+
+def test_json_carries_the_whole_map():
+    result = make_result()
+    result.impact = impact_map()
+
+    payload = json.loads(json_out.render(result))["impact"]
+
+    assert payload["status"] == "consumers_found"
+    assert payload["method"] == "git-grep"
+    assert payload["nodes"][0]["consumers"][0]["path"] == "checkout.py"
+    assert payload["nodes"][0]["consumers"][0]["snippet"] == "    charge_card(10)"
+    assert payload["nodes"][1]["status"] == "contained"
+
+
+def test_the_agent_shape_keeps_the_map_and_drops_the_snippets():
+    result = make_result()
+    result.impact = impact_map()
+
+    payload = json.loads(json_out.render(result, agent=True))["impact"]
+
+    assert payload["nodes"][0]["name"] == "charge_card"
+    assert payload["nodes"][0]["consumers"] == [{"path": "checkout.py", "line": 2}]
+    assert payload["nodes"][1]["status"] == "contained"
+
+
+def test_a_boundary_kind_is_named_in_the_table():
+    result = make_result()
+    result.impact = ImpactMap(
+        status=ImpactStatus.NO_REFERENCES_FOUND,
+        nodes=[
+            ImpactNode(
+                name="BILLING_API_KEY",
+                kind=BoundaryKind.ENV_VAR,
+                file="settings.py",
+                line=4,
+                status=ImpactStatus.NO_REFERENCES_FOUND,
+            )
+        ],
+    )
+
+    document = markdown.render(result)
+    assert "env var" in document
+    assert "❔ No references found" in document
+
+
+def test_the_panel_view_states_the_blast_radius_in_one_line():
+    """The dense view has no room for a table, but must not drop the map."""
+    result = make_result()
+    result.impact = impact_map()
+    console = Console(record=True, width=100)
+
+    terminal.render(result, console, Path("/nonexistent"))
+    output = console.export_text()
+
+    assert "blast radius: consumers found" in output
+    assert "2 boundary(s), 1 consumer(s)" in output
+    assert "impact.max_nodes" in output

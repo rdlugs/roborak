@@ -158,6 +158,38 @@ export default function Configuration() {
         &quot;run it&quot;.
       </P>
 
+      <H3>impact</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "impact:",
+          "  enabled: true             # trace changed symbols out to their consumers",
+          "  max_nodes: 12             # boundaries traced per review",
+          "  max_consumers_per_node: 5",
+          "  max_files_scanned: 2000   # ceiling on the fallback walk",
+          "  max_snippet_lines: 6",
+          "  token_budget: 1500        # prompt tokens the consumer snippets may occupy",
+          "  timeout_seconds: 10",
+        ].join("\n")}
+      />
+      <P>
+        Before the review runs, roborak works outward from the functions, classes, exported
+        constants, routes, event names, configuration keys, environment variables and schema
+        fields the change touched, and finds the unchanged code that depends on them. The
+        consumers it finds are shown to the model as evidence about the changed lines, never as
+        review surface: a finding anchored to a consumer is discarded, so a contract break is
+        reported against the line that caused it.
+      </P>
+      <P>
+        Every number is a ceiling, and a search that hits one says so rather than reporting an
+        empty result. That distinction is the point — <Code>contained</Code> is only ever claimed
+        for a symbol a parser identified and a search that completed, while{" "}
+        <Code>no references found</Code> means the name did not match anywhere, which an alias, a
+        re-export or a runtime lookup would also produce. A review of a directory with no git
+        repository reports <Code>not applicable</Code>: every file is already under review, so
+        there is no unchanged consumer to find.
+      </P>
+
       <H3>output</H3>
       <CodeBlock
         label=".roborak.yaml"

@@ -29,6 +29,39 @@ the real range, so a reader who needs the rest knows exactly where to look.
 """
 
 
+def window(
+    repo: Path,
+    path: str,
+    start_line: int,
+    end_line: int,
+    *,
+    context: int = CONTEXT_LINES,
+    limit: int = MAX_LINES,
+) -> tuple[str, int] | None:
+    """Lines ``start_line``..``end_line`` of ``path`` plus ``context`` either side.
+
+    The one definition of how much of a file is worth quoting back. A finding's
+    code context and a blast-radius consumer snippet are the same problem -- show
+    enough of the line to read it, not enough to bury the point -- and reading them
+    through one function is what keeps the two from drifting apart.
+
+    ``None`` when there is nothing honest to show: no such file, not text, or a
+    range that starts past the end of it.
+    """
+    try:
+        lines = (repo / path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    start = max(1, start_line - context)
+    end = min(len(lines), end_line + context)
+    if start > len(lines):
+        return None
+
+    end = min(end, start + limit - 1)
+    return "\n".join(lines[start - 1 : end]), start
+
+
 def read(
     finding: Finding,
     repo: Path,
@@ -42,19 +75,14 @@ def read(
     all of. ``None`` when there is nothing honest to show at all -- no such file,
     not text, or a finding pointing past the end of it.
     """
-    path = repo / finding.file
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    start = max(1, finding.start_line - context)
-    end = min(len(lines), finding.end_line + context)
-    if start > len(lines):
-        return None
-
-    end = min(end, start + limit - 1)
-    return "\n".join(lines[start - 1 : end]), start
+    return window(
+        repo,
+        finding.file,
+        finding.start_line,
+        finding.end_line,
+        context=context,
+        limit=limit,
+    )
 
 
 def syntax(

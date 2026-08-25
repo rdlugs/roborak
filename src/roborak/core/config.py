@@ -104,6 +104,35 @@ class StaticConfig(ConfigModel):
     max_findings_in_prompt: int = Field(default=40, ge=0)
 
 
+class ImpactConfig(ConfigModel):
+    """Bounds on the blast-radius search.
+
+    Every number here is a ceiling rather than a target: the analysis is a
+    best-effort pass that runs before every review, so it has to be cheap enough
+    that nobody thinks about switching it off. What it cannot finish it reports as
+    truncated instead of pretending it looked.
+    """
+
+    enabled: bool = True
+    max_nodes: int = Field(default=12, ge=1)
+    """Changed symbols and contracts to trace. Beyond this the largest change would
+    spend more on mapping itself than on being reviewed."""
+
+    max_consumers_per_node: int = Field(default=5, ge=1)
+    max_files_scanned: int = Field(default=2000, ge=1)
+    """Ceiling on the fallback walk, matching ``sources.paths.MAX_FILES``."""
+
+    max_snippet_lines: int = Field(default=6, ge=1)
+    token_budget: int = Field(default=1500, ge=0)
+    """Prompt tokens the consumer snippets may occupy. Reserved out of the diff
+    budget up front, so adding this section can never squeeze out a changed file."""
+
+    timeout_seconds: int = Field(default=10, ge=1)
+    """Wall clock for the reference search, whether it runs as ``git grep`` or as the
+    fallback walk. A file count bounds how many files are opened, not how long
+    reading them takes."""
+
+
 class LLMConfig(ConfigModel):
     model: str = "anthropic/claude-sonnet-5"
     fallback_models: list[str] = Field(default_factory=list)
@@ -196,6 +225,7 @@ class Config(ConfigModel):
     version: Literal[1] = 1
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     static: StaticConfig = Field(default_factory=StaticConfig)
+    impact: ImpactConfig = Field(default_factory=ImpactConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -297,6 +327,8 @@ def _env_layer() -> dict[str, Any]:
         layer.setdefault("static", {})["enabled"] = False
     if execution := os.getenv("ROBORAK_STATIC_EXECUTION"):
         layer.setdefault("static", {})["execution"] = execution
+    if (impact_off := os.getenv("ROBORAK_NO_IMPACT")) and impact_off not in {"0", "false", ""}:
+        layer.setdefault("impact", {})["enabled"] = False
     return layer
 
 

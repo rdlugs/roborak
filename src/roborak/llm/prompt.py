@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -11,8 +12,16 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from roborak.context.ast_context import symbol_context
 from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
+from roborak.context.impact import for_prompt
 from roborak.core.config import Config
-from roborak.core.models import ChangedFile, ChangeSet, Finding, Issue, ReviewComment
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    Finding,
+    ImpactMap,
+    Issue,
+    ReviewComment,
+)
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -120,8 +129,10 @@ def build_review_prompt(
     static_findings: list[Finding] | None = None,
     repo_context: str = "",
     issue: Issue | None = None,
+    impact: ImpactMap | None = None,
     collect_requirement_evidence: bool = False,
 ) -> RenderedPrompt:
+    impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
     system = _system(
         "review_system.jinja2",
         categories=[c.value for c in config.review.categories],
@@ -129,6 +140,7 @@ def build_review_prompt(
         committable_suggestions=config.review.committable_suggestions,
         full_file=config.review.full_file,
         require_evidence=config.review.require_evidence,
+        impact=bool(impact_nodes),
         check_requirements=issue is not None
         and config.review.check_requirements
         and not collect_requirement_evidence,
@@ -151,6 +163,7 @@ requirement is missing merely because this part does not contain it.
         static_findings=static_findings,
         repo_context=repo_context,
         issue=issue,
+        impact_nodes=impact_nodes,
     )
     return RenderedPrompt(system=system, user=user)
 
@@ -200,6 +213,7 @@ def _review_user(
     static_findings: list[Finding] | None = None,
     repo_context: str = "",
     issue: Issue | None = None,
+    impact_nodes: list[dict[str, Any]] | None = None,
 ) -> str:
     return _env.get_template("review_user.jinja2").render(
         title=_escape_untrusted(changeset.title),
@@ -224,6 +238,7 @@ def _review_user(
             for finding in (static_findings or [])
         ],
         language_notes=_escape_untrusted(_language_notes(changeset, config)),
+        impact_nodes=_safe_impact(impact_nodes or []),
         files=_file_dicts(changeset),
         omitted_files=changeset.omitted_files,
     )
@@ -249,6 +264,33 @@ def _escape_untrusted(value: object) -> str:
     if value is None:
         return ""
     return str(value).replace("```", "\\`\\`\\`")
+
+
+def _safe_impact(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Consumer code is repository text, so it is escaped like every other input.
+
+    A snippet pulled out of an unchanged file has had no more review than the diff
+    has, and it arrives in the prompt wearing the same fences.
+    """
+    return [
+        {
+            **{
+                key: _escape_untrusted(node[key])
+                for key in ("name", "kind", "file", "status", "note")
+            },
+            "line": node["line"],
+            "consumers": [
+                {
+                    "path": _escape_untrusted(consumer["path"]),
+                    "line": consumer["line"],
+                    "relation": _escape_untrusted(consumer["relation"]),
+                    "snippet": _escape_untrusted(consumer["snippet"]),
+                }
+                for consumer in node["consumers"]
+            ],
+        }
+        for node in nodes
+    ]
 
 
 def _safe_issue(issue: Issue | None) -> Issue | None:
