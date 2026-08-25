@@ -321,15 +321,38 @@ def test_markdown_walkthrough_and_diagram():
     assert "`feature` `security`" in text
 
 
-def test_markdown_renders_a_general_mermaid_flow():
+def _with_flow(diagram: str = "flowchart TD\n  Boot --> Routes"):
     result = make_result(walkthrough=True)
     assert result.walkthrough is not None
-    result.walkthrough.sequence_diagram = "flowchart TD\n  Boot --> Routes"
+    result.walkthrough.sequence_diagram = diagram
+    return result
 
-    text = markdown.render(result)
 
-    assert "### Flow" in text
+def test_markdown_renders_a_general_mermaid_flow():
+    text = markdown.render(_with_flow())
+
+    assert markdown.FLOW_SUMMARY in text
     assert "```mermaid\nflowchart TD" in text
+
+
+def test_the_published_flow_diagram_is_folded_away():
+    """A large diagram left open is what pushes the findings off the screen."""
+    text = markdown.render(_with_flow())
+
+    opened = text.index(f"<summary>{markdown.FLOW_SUMMARY}</summary>")
+    section = text[opened : text.index("</details>", opened)]
+
+    assert "```mermaid\nflowchart TD\n  Boot --> Routes\n```" in section
+    assert "<blockquote>" not in section, "a quote bar can stop the forge rendering it"
+    assert "\n\n```mermaid" in section, "the forges need the blank line to see the fence"
+
+
+def test_the_terminal_flow_diagram_stays_open():
+    """Nothing in a terminal can unfold a section, so nothing there is folded."""
+    text = _terminal(_with_flow())
+
+    assert f"### {markdown.FLOW_SUMMARY}\n\n```mermaid\nflowchart TD" in text
+    assert "<details>" not in text
 
 
 def test_markdown_escapes_pipes_in_table_cells():
