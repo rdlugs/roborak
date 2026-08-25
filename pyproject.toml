@@ -35,6 +35,10 @@ dependencies = [
     "questionary>=2.0",
     # litellm imports tenacity for its num_retries path but does not declare it
     "tenacity>=9.0",
+    # the parser behind both AST passes: ast_context looks inward from a hunk to
+    # the symbol containing it, impact looks outward to what depends on it
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.4",
 ]
 
 [project.urls]
@@ -43,12 +47,6 @@ Documentation = "https://roborak.pages.dev"
 Source = "https://github.com/rdlugs/roborak"
 Issues = "https://github.com/rdlugs/roborak/issues"
 Changelog = "https://github.com/rdlugs/roborak/blob/main/CHANGELOG.md"
-
-[project.optional-dependencies]
-ast = [
-    "tree-sitter>=0.23",
-    "tree-sitter-language-pack>=0.4",
-]
 
 [dependency-groups]
 dev = [

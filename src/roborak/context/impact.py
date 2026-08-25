@@ -246,8 +246,8 @@ def analyse(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> ImpactMap
             status=ImpactStatus.UNSUPPORTED,
             notes=[
                 *notes,
-                "No changed symbol or contract could be identified: install the `ast` extra "
-                "for tree-sitter support, or this change touches no traceable boundary.",
+                "No changed symbol or contract could be identified: no tree-sitter grammar "
+                "covers these files, or this change touches no traceable boundary.",
             ],
         )
 

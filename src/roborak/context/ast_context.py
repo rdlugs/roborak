@@ -6,8 +6,9 @@ control flow, and guesses are what false positives are made of. Here we use
 tree-sitter to find the enclosing function or class and report its bounds, so the
 prompt can carry a complete symbol instead.
 
-tree-sitter is an optional dependency. Everything here degrades to "no extra
-context" when it is missing, so a review still runs.
+tree-sitter ships with roborak, but a grammar for every language does not, and no
+grammar reads every file cleanly. Everything here degrades to "no extra context"
+rather than raising, so a review still runs.
 """
 
 from __future__ import annotations
