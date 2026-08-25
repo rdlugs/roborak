@@ -10,6 +10,8 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-25
+
 ### Added
 
 - **Blast-radius mapping for changed symbols.** A review used to see the diff and
@@ -233,7 +235,8 @@ works without a checkout.
 - **Any LiteLLM model**, with keys from the environment or the config file.
 - `--version` / `-V` on the CLI.
 
-[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rdlugs/roborak/releases/tag/v0.5.0
 [0.4.0]: https://github.com/rdlugs/roborak/releases/tag/v0.4.0
 [0.3.1]: https://github.com/rdlugs/roborak/releases/tag/v0.3.1
 [0.3.0]: https://github.com/rdlugs/roborak/releases/tag/v0.3.0
