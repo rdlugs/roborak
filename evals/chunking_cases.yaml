@@ -1,0 +1,42 @@
+- id: contract-caller-split
+  context_budget: 30
+  expected_category: bug
+  expected_file: zzz/public/api.py
+  expected_line: 1
+  files:
+    - {path: aaa00/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa01/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa02/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa03/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa04/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa05/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa06/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa07/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa08/leaf.py, before: "x = 0", after: "x = 1"}
+    - path: zzz/public/api.py
+      before: "def load(limit=10):\n    return limit"
+      after: "def load(limit):\n    return limit"
+    - path: zzz_client/client.py
+      before: "from zzz.public.api import load\nresult = load()"
+      after: "from zzz.public.api import load\nresult = load()\nprint(result)"
+
+- id: compatible-contract-caller
+  context_budget: 30
+  expected_category: null
+  expected_line: null
+  files:
+    - {path: aaa00/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa01/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa02/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa03/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa04/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa05/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa06/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa07/leaf.py, before: "x = 0", after: "x = 1"}
+    - {path: aaa08/leaf.py, before: "x = 0", after: "x = 1"}
+    - path: zzz/public/api.py
+      before: "def load(limit=10):\n    return limit"
+      after: "def load(limit=20):\n    return limit"
+    - path: zzz_client/client.py
+      before: "from zzz.public.api import load\nresult = load()"
+      after: "from zzz.public.api import load\nresult = load()\nprint(result)"

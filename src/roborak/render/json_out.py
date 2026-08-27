@@ -13,7 +13,7 @@ from typing import Any
 from roborak.core.models import Finding, ImpactMap, ReviewResult
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -40,6 +40,13 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
         },
         "findings": [_finding_dict(f, agent=agent) for f in result.sorted_findings()],
     }
+    if result.review_plan is not None:
+        payload["coverage"]["file_plan"] = [
+            file.model_dump(mode="json", exclude_none=True) for file in result.review_plan.files
+        ]
+        payload["coverage"]["omitted_roles"] = {
+            role.value: count for role, count in result.review_plan.omitted_roles.items()
+        }
 
     # Present in both shapes. An agent deciding whether a change is safe needs the
     # blast radius at least as much as a human does, and an absent key would read

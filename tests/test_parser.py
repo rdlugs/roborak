@@ -14,6 +14,7 @@ from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
     MAX_EVIDENCE_FILES,
     ParseError,
+    parse_compatibility_evidence,
     parse_findings,
     parse_requirement_evidence,
     parse_walkthrough,
@@ -321,6 +322,27 @@ requirement_evidence:
         }
     ]
     assert parse_requirement_evidence("findings: []\nrequirement_evidence: nope") == []
+
+
+def test_compatibility_evidence_is_optional_and_tolerates_bad_entries():
+    text = """
+findings: []
+compatibility_evidence:
+  - contract: create_job
+    file: worker.py
+    status: incompatible
+    evidence: The worker still calls the removed argument.
+  - nonsense
+  - contract: no-explanation
+"""
+    assert parse_compatibility_evidence(text) == [
+        {
+            "contract": "create_job",
+            "file": "worker.py",
+            "status": "incompatible",
+            "evidence": "The worker still calls the removed argument.",
+        }
+    ]
 
 
 def _one(**fields: object):

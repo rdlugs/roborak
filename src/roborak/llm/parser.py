@@ -113,6 +113,30 @@ def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
     return evidence
 
 
+def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:
+    """Read bounded cross-chunk contract evidence from a review response."""
+    data = load_yaml_mapping(text)
+    raw = data.get("compatibility_evidence") or []
+    if not isinstance(raw, list):
+        return []
+    evidence: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        contract = _as_str(entry.get("contract"))
+        explanation = _as_str(entry.get("evidence"))
+        if contract and explanation:
+            evidence.append(
+                {
+                    "contract": contract,
+                    "file": _as_str(entry.get("file")),
+                    "status": _as_str(entry.get("status")) or "unknown",
+                    "evidence": explanation,
+                }
+            )
+    return evidence
+
+
 def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Finding | None:
     path = _as_str(entry.get("file"))
     if not path:

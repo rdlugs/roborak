@@ -10,6 +10,17 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Added
+
+- **Contract-first planning for large diffs.** Files now receive deterministic
+  semantic roles, so public contracts, migrations, schemas, configuration and
+  deployment boundaries are reviewed before leaf code when the eight-pass ceiling
+  cannot cover everything. Direct consumers and tests are co-located when they
+  fit, generated and low-signal files go last, and bounded contract metadata plus
+  one global reconciliation pass expose mismatches between independently reviewed
+  chunks. JSON schema v3 and human-readable coverage report the semantic order,
+  pass assignment and roles omitted.
+
 ## [0.5.0] - 2026-08-25
 
 ### Added

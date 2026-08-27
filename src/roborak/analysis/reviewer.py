@@ -13,7 +13,12 @@ from pathlib import Path
 
 from roborak.analysis import validator
 from roborak.context import impact
-from roborak.context.chunker import chunk, needs_chunking
+from roborak.context.chunker import (
+    ChunkStrategy,
+    ContractContext,
+    needs_chunking,
+    plan_chunks,
+)
 from roborak.context.compressor import compress, filter_files
 from roborak.core.config import Config
 from roborak.core.models import (
@@ -33,6 +38,7 @@ from roborak.core.severity import Kind
 from roborak.llm.client import LLMClient, LLMError, LLMResponse
 from roborak.llm.parser import (
     ParseError,
+    parse_compatibility_evidence,
     parse_findings,
     parse_requirement_evidence,
     parse_walkthrough,
@@ -41,7 +47,7 @@ from roborak.llm.prompt import (
     build_ask_prompt,
     build_describe_prompt,
     build_improve_prompt,
-    build_requirement_reducer_prompt,
+    build_reconciliation_prompt,
     build_review_prompt,
     render_file_diff,
 )
@@ -62,6 +68,9 @@ class Reviewer:
     repo: Path
     llm: LLMClient | None = None
     """``None`` runs the static-analysis-only path (``--no-llm``)."""
+
+    chunk_strategy: ChunkStrategy = "semantic"
+    """The directory strategy exists only for quality comparisons in ``evals``."""
 
     static_findings: list[Finding] = field(default_factory=list)
     issue: Issue | None = None
@@ -274,27 +283,49 @@ class Reviewer:
 
         budget = self._diff_budget(changeset)
         if not needs_chunking(changeset, budget, self.llm.count_tokens, render_for_prompt):
-            single_findings, _ = self._review_chunk(changeset, result, chunk_index=1)
+            single_findings, _, _ = self._review_chunk(changeset, result, chunk_index=1)
             return single_findings
 
-        chunks = chunk(changeset, budget, self.llm.count_tokens, render_for_prompt)
+        plan = plan_chunks(
+            changeset,
+            budget,
+            self.llm.count_tokens,
+            render_for_prompt,
+            impact=self._impact,
+            strategy=self.chunk_strategy,
+        )
+        chunks = plan.chunks
+        result.review_plan = plan.review
         log.info("reviewing in %d passes", len(chunks))
 
         findings: list[Finding] = []
-        evidence: list[dict[str, str]] = []
+        requirement_evidence: list[dict[str, str]] = []
+        compatibility_evidence: list[dict[str, str]] = []
         successful_passes = 0
+        chunk_by_path = {file.path: file.chunk for file in plan.review.files}
+        reviewed_paths = {file.path for file in plan.review.files if file.reviewed}
+        reviewed_contracts = [
+            contract for contract in plan.contracts if contract.path in reviewed_paths
+        ]
         for index, piece in enumerate(chunks, start=1):
             changeset.omitted_files.extend(piece.omitted_files)
+            carried_contracts = [
+                contract
+                for contract in reviewed_contracts
+                if (source_chunk := chunk_by_path.get(contract.path)) is not None
+                and source_chunk < index
+            ]
             try:
-                chunk_findings, chunk_evidence = self._review_chunk(
+                chunk_findings, chunk_requirements, chunk_compatibility = self._review_chunk(
                     piece,
                     result,
                     chunk_index=index,
-                    collect_requirement_evidence=self.issue is not None
-                    and self.config.review.check_requirements,
+                    contract_contexts=carried_contracts,
+                    collect_reconciliation_evidence=True,
                 )
                 findings.extend(chunk_findings)
-                evidence.extend(chunk_evidence)
+                requirement_evidence.extend(chunk_requirements)
+                compatibility_evidence.extend(chunk_compatibility)
                 successful_passes += 1
             except (LLMError, ParseError) as exc:
                 log.error("pass %d of %d failed: %s", index, len(chunks), exc)
@@ -309,21 +340,35 @@ class Reviewer:
                 result.errors.append(message)
         if successful_passes == 0 and result.errors:
             result.status = ReviewStatus.FAILED
-        if (
-            self.issue is not None
-            and self.config.review.check_requirements
-            and result.status is ReviewStatus.COMPLETE
-        ):
+        should_reconcile = bool(reviewed_contracts) or (
+            self.issue is not None and self.config.review.check_requirements
+        )
+        if should_reconcile and result.status is ReviewStatus.COMPLETE:
             try:
-                prompt = build_requirement_reducer_prompt(
-                    self.issue, evidence, [file.path for file in changeset.files]
+                prompt = build_reconciliation_prompt(
+                    issue=(
+                        self.issue
+                        if self.issue is not None and self.config.review.check_requirements
+                        else None
+                    ),
+                    requirement_evidence=requirement_evidence,
+                    compatibility_evidence=compatibility_evidence,
+                    contracts=reviewed_contracts,
+                    files=[file.path for file in changeset.files],
                 )
-                response = self._complete("requirements", prompt.system, prompt.user)
-                gaps = parse_findings(response.text, valid_files={f.path for f in changeset.files})
-                findings.extend(finding for finding in gaps if finding.kind is Kind.REQUIREMENT_GAP)
+                response = self._complete("reconciliation", prompt.system, prompt.user)
+                reconciled = parse_findings(
+                    response.text, valid_files={file.path for file in changeset.files}
+                )
+                findings.extend(
+                    finding
+                    for finding in reconciled
+                    if finding.kind is not Kind.REQUIREMENT_GAP
+                    or (self.issue is not None and self.config.review.check_requirements)
+                )
             except (LLMError, ParseError) as exc:
                 result.status = ReviewStatus.PARTIAL
-                result.errors.append(f"requirement reducer failed: {exc}")
+                result.errors.append(f"reconciliation failed: {exc}")
         return findings
 
     def _review_chunk(
@@ -332,8 +377,9 @@ class Reviewer:
         result: ReviewResult,
         *,
         chunk_index: int,
-        collect_requirement_evidence: bool = False,
-    ) -> tuple[list[Finding], list[dict[str, str]]]:
+        contract_contexts: list[ContractContext] | None = None,
+        collect_reconciliation_evidence: bool = False,
+    ) -> tuple[list[Finding], list[dict[str, str]], list[dict[str, str]]]:
         assert self.llm is not None
         prompt_changeset = changeset.model_copy(deep=True)
         prompt = build_review_prompt(
@@ -344,7 +390,8 @@ class Reviewer:
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
             impact=self._impact,
-            collect_requirement_evidence=collect_requirement_evidence,
+            contract_contexts=contract_contexts,
+            collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
         total = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
         if self.llm.context_budget >= 1000 and total > self.llm.context_budget:
@@ -363,6 +410,11 @@ class Reviewer:
             )
             for path in prompt_changeset.omitted_files:
                 result.add_omission(path, OmissionReason.CONTEXT_LIMIT)
+                if result.review_plan is not None:
+                    for planned in result.review_plan.files:
+                        if planned.path == path:
+                            planned.reviewed = False
+                            planned.chunk = None
                 error = f"context budget omitted {path}"
                 if error not in result.errors:
                     result.errors.append(error)
@@ -376,7 +428,8 @@ class Reviewer:
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
             impact=self._impact,
-            collect_requirement_evidence=collect_requirement_evidence,
+            contract_contexts=contract_contexts,
+            collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
         response = self._complete("review", prompt.system, prompt.user, chunk_index=chunk_index)
         log.debug("model returned %d chars", len(response.text))
@@ -384,11 +437,12 @@ class Reviewer:
             response.text,
             valid_files={f.path for f in prompt_changeset.files},
         )
-        if collect_requirement_evidence:
+        if collect_reconciliation_evidence:
             findings = [finding for finding in findings if finding.kind is not Kind.REQUIREMENT_GAP]
         return (
             findings,
-            parse_requirement_evidence(response.text) if collect_requirement_evidence else [],
+            parse_requirement_evidence(response.text) if collect_reconciliation_evidence else [],
+            parse_compatibility_evidence(response.text) if collect_reconciliation_evidence else [],
         )
 
     def _complete(
@@ -432,8 +486,7 @@ class Reviewer:
             self.config,
             repo_context=self._repo_context(empty),
             issue=self.issue,
-            collect_requirement_evidence=self.issue is not None
-            and self.config.review.check_requirements,
+            collect_reconciliation_evidence=True,
         )
         overhead = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
         # The blast-radius section is reserved rather than measured: it is capped

@@ -1,4 +1,4 @@
-from evals.run import score
+from evals.run import compare_chunking, score
 
 
 def test_eval_metrics_are_computed_from_case_outcomes():
@@ -88,3 +88,23 @@ def test_rows_without_a_blocker_label_are_left_out_of_both_metrics():
     )
     assert metrics["unproven_blocker_rate"] == 0.0
     assert metrics["blocker_recall"] == 1.0
+
+
+def test_chunking_comparison_reports_recall_and_false_positive_deltas():
+    defect = _row(expect_blocker=True, blockers=1)
+    missed = defect | {"matched": False, "matched_blocker": False, "blockers": 0}
+    clean = {
+        "expected_category": None,
+        "matched": False,
+        "exact_anchor": False,
+        "findings": 0,
+        "blockers": 0,
+        "errors": [],
+        "tokens": 1,
+    }
+    noisy = clean | {"findings": 1}
+
+    comparison = compare_chunking([missed, noisy], [defect, clean])
+
+    assert comparison["recall_delta"] == 1.0
+    assert comparison["clean_false_positive_rate_delta"] == -1.0

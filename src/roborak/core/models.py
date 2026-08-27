@@ -27,6 +27,42 @@ class ReviewStatus(StrEnum):
     FAILED = "failed"
 
 
+class ReviewRole(StrEnum):
+    """Why a changed file occupies its position in a multi-pass review."""
+
+    CONTRACT = "contract"
+    SCHEMA_CONFIG = "schema_config"
+    IMPLEMENTATION = "implementation"
+    CONSUMER = "consumer"
+    TEST = "test"
+    LOW_SIGNAL = "low_signal"
+
+
+class ReviewPlanFile(BaseModel):
+    """One file's semantic assignment in the bounded review plan."""
+
+    path: str
+    role: ReviewRole
+    order: int = Field(ge=1)
+    chunk: int | None = Field(default=None, ge=1)
+    reviewed: bool = True
+
+
+class ReviewPlan(BaseModel):
+    """Explainable order and coverage for a multi-pass review."""
+
+    files: list[ReviewPlanFile] = Field(default_factory=list)
+    chunks: int = Field(default=0, ge=0)
+
+    @property
+    def omitted_roles(self) -> dict[ReviewRole, int]:
+        counts: dict[ReviewRole, int] = {}
+        for file in self.files:
+            if not file.reviewed:
+                counts[file.role] = counts.get(file.role, 0) + 1
+        return counts
+
+
 class OmissionReason(StrEnum):
     IGNORED = "ignored"
     BINARY = "binary"
@@ -465,6 +501,9 @@ class ReviewResult(BaseModel):
     whose status is ``unavailable``. One says nobody asked; the other says we asked
     and could not find out, and a reader deciding whether to trust a clean review
     needs to be able to tell them apart."""
+
+    review_plan: ReviewPlan | None = None
+    """Semantic order and pass assignment, present when the diff was chunked."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE
