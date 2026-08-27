@@ -34,11 +34,13 @@ CLEAN_INSTALL_CHECK = (
 
 
 def fail(message: str) -> None:
+    """Report a GitHub Actions error annotation and stop the check."""
     print(f"::error::{message}")
     raise SystemExit(1)
 
 
 def find_wheel() -> Path:
+    """Return the sole built wheel, failing when ``dist`` is ambiguous."""
     wheels = sorted(Path("dist").glob("*.whl"))
     if len(wheels) != 1:
         fail(f"expected exactly one wheel in dist/, found {len(wheels)}")
@@ -99,6 +101,7 @@ def check_clean_install(wheel: Path) -> None:
 
 
 def main() -> int:
+    """Validate the built wheel's metadata and clean-install behavior."""
     wheel = find_wheel()
     check_metadata(wheel)
     check_clean_install(wheel)
