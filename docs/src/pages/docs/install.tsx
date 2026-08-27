@@ -61,17 +61,7 @@ export default function Install() {
 
       <H2>From a checkout</H2>
       <P>Working on roborak itself, or running an unreleased revision:</P>
-      <CodeBlock
-        shell
-        code={
-          "uv sync                  # or: uv sync --all-extras, for tree-sitter AST context\nuv run roborak review"
-        }
-      />
-      <P>
-        The <Code>ast</Code> extra pulls in tree-sitter for AST context.{" "}
-        <Code>uvx roborak[ast]</Code> and <Code>uv tool install &quot;roborak[ast]&quot;</Code> get
-        the same thing from the released package.
-      </P>
+      <CodeBlock shell code={"uv sync\nuv run roborak review"} />
 
       <H2>Keys in the config file</H2>
       <P>

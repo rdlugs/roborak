@@ -1750,13 +1750,9 @@ dependencies = [
     { name = "questionary" },
     { name = "rich" },
     { name = "tenacity" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-ast = [
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -1779,11 +1775,10 @@ requires-dist = [
     { name = "questionary", specifier = ">=2.0" },
     { name = "rich", specifier = ">=13.9" },
     { name = "tenacity", specifier = ">=9.0" },
-    { name = "tree-sitter", marker = "extra == 'ast'", specifier = ">=0.23" },
-    { name = "tree-sitter-language-pack", marker = "extra == 'ast'", specifier = ">=0.4" },
+    { name = "tree-sitter", specifier = ">=0.23" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.4" },
     { name = "typer", specifier = ">=0.15" },
 ]
-provides-extras = ["ast"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -25,10 +25,6 @@ from roborak.core.models import (
     ReviewRole,
 )
 
-requires_tree_sitter = pytest.mark.skipif(
-    not ast_context.available(), reason="tree-sitter not installed"
-)
-
 PYTHON_SRC = textwrap.dedent(
     """\
     import os
@@ -54,7 +50,15 @@ def hunk_at(start: int, lines: int = 1) -> Hunk:
     return Hunk(old_start=start, old_lines=lines, new_start=start, new_lines=lines, content="")
 
 
-@requires_tree_sitter
+def test_tree_sitter_is_a_required_dependency():
+    """A required dependency, so its absence is a failure and never a skip.
+
+    Everything below silently proves nothing if the parser is not installed, and a
+    green run that never touched the AST path is worse than a red one.
+    """
+    assert ast_context.available()
+
+
 def test_finds_the_innermost_symbol():
     """The function, not the class that contains it."""
     file = ChangedFile(path="svc.py", language="python", new_content=PYTHON_SRC)
@@ -65,21 +69,21 @@ def test_finds_the_innermost_symbol():
     assert span.start_line == 8
 
 
-@requires_tree_sitter
 def test_finds_a_module_level_function():
+    """Find a function declared directly at module scope."""
     file = ChangedFile(path="svc.py", language="python", new_content=PYTHON_SRC)
     span = ast_context.enclosing_symbol(file, hunk_at(15))
     assert span is not None and span.name == "helper"
 
 
-@requires_tree_sitter
 def test_no_symbol_at_module_level():
+    """Do not invent a symbol for a hunk at module scope."""
     file = ChangedFile(path="svc.py", language="python", new_content=PYTHON_SRC)
     assert ast_context.enclosing_symbol(file, hunk_at(1)) is None
 
 
-@requires_tree_sitter
 def test_a_hunk_spanning_two_functions_falls_back_to_the_class():
+    """Use the class when a hunk crosses multiple methods."""
     file = ChangedFile(path="svc.py", language="python", new_content=PYTHON_SRC)
     span = ast_context.enclosing_symbol(
         file, Hunk(old_start=5, old_lines=7, new_start=5, new_lines=7, content="")
@@ -87,13 +91,12 @@ def test_a_hunk_spanning_two_functions_falls_back_to_the_class():
     assert span is not None and span.name == "Service"
 
 
-@requires_tree_sitter
 def test_symbol_context_is_a_readable_note():
+    """Render the enclosing symbol as a concise prompt note."""
     file = ChangedFile(path="svc.py", language="python", new_content=PYTHON_SRC)
     assert ast_context.symbol_context(file, hunk_at(9)) == "within function `run` (lines 8-11)"
 
 
-@requires_tree_sitter
 def test_an_oversized_symbol_is_not_reported():
     """Naming a 500-line function does not help; it just costs tokens."""
     big = "def enormous():\n" + "\n".join(f"    x{i} = {i}" for i in range(300))
@@ -101,7 +104,6 @@ def test_an_oversized_symbol_is_not_reported():
     assert ast_context.enclosing_symbol(file, hunk_at(50)) is None
 
 
-@requires_tree_sitter
 @pytest.mark.parametrize(
     ("language", "source", "line", "expected"),
     [
@@ -111,6 +113,7 @@ def test_an_oversized_symbol_is_not_reported():
     ],
 )
 def test_other_languages(language, source, line, expected):
+    """Resolve symbols with bundled non-Python grammars."""
     file = ChangedFile(path=f"a.{language}", language=language, new_content=source)
     span = ast_context.enclosing_symbol(file, hunk_at(line))
     assert span is not None and span.name == expected
@@ -126,15 +129,14 @@ def test_missing_content_or_language_is_survivable():
     )
 
 
-@requires_tree_sitter
 def test_a_syntactically_broken_file_does_not_raise():
     """Mid-review, half-written code is normal."""
     file = ChangedFile(path="a.py", language="python", new_content="def broken(:\n  ???\n")
     assert ast_context.symbol_context(file, hunk_at(1)) == ""
 
 
-@requires_tree_sitter
 def test_an_unknown_language_is_survivable():
+    """Ignore a file whose language has no bundled grammar."""
     file = ChangedFile(path="a.zzz", language="klingon", new_content="whatever")
     assert ast_context.enclosing_symbol(file, hunk_at(1)) is None
 

@@ -59,12 +59,9 @@ Everything below is optional.
 <br>
 
 ```bash
-uv sync                  # or: uv sync --all-extras, for tree-sitter AST context
+uv sync
 uv run roborak review
 ```
-
-The `ast` extra pulls in tree-sitter for AST context; `uvx roborak[ast]` and
-`uv tool install "roborak[ast]"` get the same thing from the released package.
 
 </details>
 
@@ -384,7 +381,7 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
   `requirement_gap` name what the issue asked for that the diff does not do. A gap
   is the one finding with no honest line to point at, so it is exempt from line
   anchoring and is published in the summary comment rather than inline.
-- **AST context** (optional, via tree-sitter) names the function or class each
+- **AST context** (via tree-sitter, installed by default) names the function or class each
   hunk sits inside. A diff hunk is a window with arbitrary edges; a model that
   knows it is looking at the middle of `run()` stops guessing at the surrounding
   control flow, which is where many false positives come from.

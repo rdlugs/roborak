@@ -26,10 +26,6 @@ from roborak.core.models import (
     Verification,
 )
 
-requires_tree_sitter = pytest.mark.skipif(
-    not ast_context.available(), reason="tree-sitter not installed"
-)
-
 
 def git(repo: Path, *args: str) -> None:
     subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
@@ -80,7 +76,6 @@ def trace(repo: Path, path: str, name: str, config: ImpactConfig | None = None):
 # --- finding consumers ------------------------------------------------------
 
 
-@requires_tree_sitter
 def test_finds_a_direct_caller_in_an_unchanged_file(repo):
     write(repo, "service.py", "def charge_card(amount, currency):\n    return amount\n")
     write(repo, "checkout.py", "from service import charge_card\n\ncharge_card(10, 'usd')\n")
@@ -96,7 +91,6 @@ def test_finds_a_direct_caller_in_an_unchanged_file(repo):
     assert result.status is ImpactStatus.CONSUMERS_FOUND
 
 
-@requires_tree_sitter
 def test_an_import_is_labelled_as_one(repo):
     """A re-export carries the name onward; it is not the same as calling it."""
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
@@ -108,7 +102,6 @@ def test_an_import_is_labelled_as_one(repo):
     assert node.consumers[0].relation is ConsumerRelation.IMPORT
 
 
-@requires_tree_sitter
 def test_a_test_file_is_labelled_as_one(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "tests/test_service.py", "from service import charge_card\n\ncharge_card(1)\n")
@@ -119,7 +112,6 @@ def test_a_test_file_is_labelled_as_one(repo):
     assert all(c.relation is ConsumerRelation.TEST for c in node.consumers)
 
 
-@requires_tree_sitter
 def test_a_consumer_carries_the_lines_around_the_reference(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "checkout.py", "def pay():\n    return charge_card(10)\n")
@@ -133,7 +125,6 @@ def test_a_consumer_carries_the_lines_around_the_reference(repo):
 # --- containment, and the refusal to claim it -------------------------------
 
 
-@requires_tree_sitter
 def test_an_unused_symbol_is_reported_as_contained(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "unrelated.py", "def other():\n    return 1\n")
@@ -146,7 +137,6 @@ def test_an_unused_symbol_is_reported_as_contained(repo):
     assert "outside it" in node.note  # the residual risk is still stated
 
 
-@requires_tree_sitter
 def test_containment_is_never_claimed_for_a_pattern_matched_contract(repo):
     """A route is a name two files agree on, not a symbol a parser identified."""
     write(repo, "routes.py", 'app.get("/widgets/new")\n')
@@ -160,7 +150,6 @@ def test_containment_is_never_claimed_for_a_pattern_matched_contract(repo):
     assert "alias" in node.note
 
 
-@requires_tree_sitter
 def test_a_mention_in_a_string_is_not_a_consumer_and_blocks_containment(repo):
     """Dynamic-reference uncertainty: the name is there, a use of it is not."""
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
@@ -174,7 +163,6 @@ def test_a_mention_in_a_string_is_not_a_consumer_and_blocks_containment(repo):
     assert "string literals" in node.note
 
 
-@requires_tree_sitter
 def test_a_truncated_search_cannot_report_containment(repo, monkeypatch):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     for n in range(3):
@@ -192,7 +180,6 @@ def test_a_truncated_search_cannot_report_containment(repo, monkeypatch):
     assert node is not None and node.status is not ImpactStatus.CONTAINED
 
 
-@requires_tree_sitter
 def test_a_walk_that_runs_out_of_time_truncates_rather_than_running_on(repo, monkeypatch):
     """The file count bounds how many files are opened, not how long that takes."""
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
@@ -215,7 +202,6 @@ def test_a_walk_that_runs_out_of_time_truncates_rather_than_running_on(repo, mon
     assert node is not None and node.status is not ImpactStatus.CONTAINED
 
 
-@requires_tree_sitter
 def test_git_searches_share_one_timeout_budget_across_terms(repo, monkeypatch):
     """`timeout_seconds` bounds the search, not each term's share of it.
 
@@ -276,7 +262,6 @@ def test_git_searches_share_one_timeout_budget_across_terms(repo, monkeypatch):
 # --- non-symbol contracts ---------------------------------------------------
 
 
-@requires_tree_sitter
 @pytest.mark.parametrize(
     ("source", "name", "kind"),
     [
@@ -303,7 +288,6 @@ def test_recognises_a_config_key(repo):
     assert node is not None and node.kind is BoundaryKind.CONFIG_KEY
 
 
-@requires_tree_sitter
 def test_recognises_a_schema_field_and_finds_who_reads_it(repo):
     write(
         repo,
@@ -322,7 +306,6 @@ def test_recognises_a_schema_field_and_finds_who_reads_it(repo):
     assert node.consumers[0].path == "report.py"
 
 
-@requires_tree_sitter
 def test_a_plain_annotation_outside_a_schema_class_is_not_a_field(repo):
     """``name: str`` is the most common line in Python; it is not a contract."""
     write(repo, "plain.py", "class Helper:\n    retry_budget: int = 3\n")
@@ -332,7 +315,6 @@ def test_a_plain_annotation_outside_a_schema_class_is_not_a_field(repo):
     assert node_named(result, "retry_budget") is None
 
 
-@requires_tree_sitter
 def test_recognises_an_exported_constant(repo):
     write(repo, "limits.py", "MAX_RETRY_BUDGET = 5\n")
     write(repo, "client.py", "from limits import MAX_RETRY_BUDGET\n")
@@ -347,7 +329,6 @@ def test_recognises_an_exported_constant(repo):
 # --- bounds -----------------------------------------------------------------
 
 
-@requires_tree_sitter
 def test_the_node_budget_truncates_and_says_so(repo):
     body = "".join(f"def handler_{n}(x):\n    return x\n\n\n" for n in range(6))
     write(repo, "handlers.py", body)
@@ -359,7 +340,6 @@ def test_the_node_budget_truncates_and_says_so(repo):
     assert any("max_nodes" in note for note in result.notes)
 
 
-@requires_tree_sitter
 def test_the_consumer_budget_truncates_and_says_so(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     for n in range(5):
@@ -373,7 +353,6 @@ def test_the_consumer_budget_truncates_and_says_so(repo):
     assert node.truncated and "candidate matches found" in node.note
 
 
-@requires_tree_sitter
 def test_the_token_budget_trims_the_map(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "checkout.py", "def pay():\n    return charge_card(10)\n")
@@ -417,7 +396,6 @@ def test_a_forge_change_without_a_matching_checkout_is_unavailable(repo):
     assert "no checkout to search" in result.notes[0]
 
 
-@requires_tree_sitter
 def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "checkout.py", "def pay():\n    return charge_card(1)\n")
@@ -434,7 +412,6 @@ def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
     assert "may not hold exactly the code under review" in result.notes[0]
 
 
-@requires_tree_sitter
 def test_an_unusable_git_falls_back_to_walking_the_directory(repo, monkeypatch):
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "checkout.py", "def pay():\n    return charge_card(1)\n")
@@ -455,7 +432,6 @@ def test_an_unusable_git_falls_back_to_walking_the_directory(repo, monkeypatch):
     assert any("git grep" in note for note in result.notes)
 
 
-@requires_tree_sitter
 def test_an_untracked_consumer_in_a_repo_with_no_commits_is_found(repo):
     """Nothing is committed, so only ``--untracked`` can see the caller."""
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
@@ -476,7 +452,6 @@ def test_a_language_with_no_grammar_reports_unsupported(repo, monkeypatch):
     assert "tree-sitter" in result.notes[0]
 
 
-@requires_tree_sitter
 def test_a_parsed_file_with_no_named_symbol_is_not_reported_as_unparsed(repo):
     """A module-level constant seeds no symbol, but the parser still read the file.
 
@@ -504,7 +479,6 @@ def test_prose_is_never_a_consumer(repo):
     assert "CHANGELOG.md" not in paths
 
 
-@requires_tree_sitter
 def test_call_sites_win_the_consumer_budget_over_config_matches(repo):
     """``.github`` sorts before ``src``; relevance must beat alphabetical order."""
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")

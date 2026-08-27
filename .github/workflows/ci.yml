@@ -37,13 +37,13 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --dev
 
       - name: Lint
-        run: uv run ruff check src tests evals
+        run: uv run ruff check src tests evals .github/scripts
 
       - name: Check formatting
-        run: uv run ruff format --check src tests evals
+        run: uv run ruff format --check src tests evals .github/scripts
 
       - name: Type-check
         run: uv run mypy src
@@ -53,6 +53,11 @@ jobs:
 
       - name: Build the package
         run: uv build
+
+      # The parser is a required dependency now, and only the wheel's own metadata
+      # can prove a plain `pip install roborak` still gets one.
+      - name: Check the wheel ships AST support by default
+        run: uv run --no-project python .github/scripts/check_wheel.py
 
       - name: Smoke-test the CLI
         run: uv run roborak --help
