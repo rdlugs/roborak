@@ -10,7 +10,7 @@ Everyone taking part here is expected to follow the
 ## Getting set up
 
 ```bash
-uv sync --all-extras --dev     # runtime, tree-sitter AST extra, and dev tools
+uv sync --dev                  # runtime and dev tools
 uv run roborak --help          # smoke-test the CLI
 ```
 

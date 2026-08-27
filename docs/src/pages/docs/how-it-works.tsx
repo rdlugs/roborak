@@ -202,12 +202,12 @@ export default function HowItWorks() {
 
       <H2>AST context</H2>
       <P>
-        Optional, via tree-sitter. It names the function or class each hunk sits inside. A diff hunk
-        is a window with arbitrary edges; a model that knows it is looking at the middle of{" "}
+        Via tree-sitter, which is installed by default. It names the function or class each hunk
+        sits inside. A diff hunk is a window with arbitrary edges; a model that knows it is looking
+        at the middle of{" "}
         <Code>run()</Code> stops guessing at the surrounding control flow, which is where many false
         positives come from.
       </P>
-      <CodeBlock shell code={"uv tool install \"roborak[ast]\"   # or: uvx roborak[ast]"} />
     </>
   );
 }

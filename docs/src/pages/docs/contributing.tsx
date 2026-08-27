@@ -51,7 +51,7 @@ export default function Contributing() {
       <PageHead title="Contributing" description="Set up the repo, run the checks CI runs, and the invariants to read before changing the pipeline." />
       <H1>Contributing</H1>
       <Lead>
-        The short version: <Code>uv sync --all-extras --dev</Code>, run the checks below before you
+        The short version: <Code>uv sync --dev</Code>, run the checks below before you
         push, and read the invariants before you change anything in the middle of the pipeline.
       </Lead>
 
@@ -59,7 +59,7 @@ export default function Contributing() {
       <CodeBlock
         shell
         code={[
-          "uv sync --all-extras --dev     # runtime, tree-sitter AST extra, and dev tools",
+          "uv sync --dev                  # runtime and dev tools",
           "uv run roborak --help          # smoke-test the CLI",
         ].join("\n")}
       />

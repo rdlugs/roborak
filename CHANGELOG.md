@@ -10,6 +10,22 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Changed
+
+- **AST support is part of a default installation.** `tree-sitter` and
+  `tree-sitter-language-pack` were behind an `ast` extra, so `uvx roborak`,
+  `pip install roborak` and `uv tool install roborak` all ran without a parser
+  unless the user knew to ask for one. That installation silently lost the two
+  things the parser backs: the enclosing-symbol note that tells the model it is
+  looking at the middle of `run()` rather than a fragment, and the symbol seeding
+  that lets blast-radius analysis identify a changed boundary at all — reducing it
+  to pattern matching, which can never claim `contained`. Both packages are now
+  required dependencies and the `ast` extra is gone; `roborak[ast]` is no longer a
+  thing to install. This grows the install by the grammar bundle, which is the
+  price of the documented behaviour being the behaviour you get. Languages with no
+  grammar and files a grammar cannot read degrade exactly as before, and CI now
+  installs the built wheel with no extras named and asserts the parser is there.
+
 ## [0.5.0] - 2026-08-25
 
 ### Added
