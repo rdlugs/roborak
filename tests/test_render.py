@@ -102,6 +102,7 @@ def make_result(*, walkthrough: bool = False) -> ReviewResult:
 
 
 def test_json_is_valid_and_sorted_by_severity():
+    """Consumers read the top of the list first, and private discussion must stay out."""
     result = make_result()
     assert result.changeset is not None
     result.changeset.discussions = [ReviewComment(author="sam", body="Private context")]
@@ -111,6 +112,7 @@ def test_json_is_valid_and_sorted_by_severity():
         "total": 2,
         "by_severity": {"critical": 1, "minor": 1},
         "has_blocking": True,
+        "verified": False,
     }
     assert [f["severity"] for f in payload["findings"]] == ["critical", "minor"]
     assert payload["model"] == "test/model"

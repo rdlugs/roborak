@@ -21,6 +21,7 @@ forms: the terminal may show less *about* the run, never less of the review.
 from __future__ import annotations
 
 import base64
+import re
 import textwrap
 import zlib
 from collections.abc import Iterable
@@ -41,6 +42,9 @@ from roborak.core.models import (
     ImpactMap,
     ImpactStatus,
     ReviewResult,
+    VerificationReport,
+    VerificationRun,
+    VerificationStatus,
     Walkthrough,
 )
 from roborak.core.severity import (
@@ -148,6 +152,9 @@ def render(
             sections.append(_walkthrough_table(result))
         if walkthrough.sequence_diagram:
             sections.append(_flow_section(walkthrough.sequence_diagram, form=form))
+
+    if verification := _verification_section(result.verification, form=form):
+        sections.append(verification)
 
     if impact := _impact_section(result.impact, form=form):
         sections.append(impact)
@@ -301,6 +308,95 @@ def _impact_rows(impact: ImpactMap) -> str:
             f"| {IMPACT_LABEL[node.status]} |"
         )
     return "\n".join(rows)
+
+
+VERIFICATION_LABEL: dict[VerificationStatus, str] = {
+    VerificationStatus.PASSED: "✅ Passed",
+    VerificationStatus.FAILED: "❌ Failed",
+    VerificationStatus.TIMED_OUT: "⏱️ Timed out",
+    VerificationStatus.ERRORED: "⚠️ Could not run",
+    VerificationStatus.SKIPPED: "⚪ Not executed",
+}
+
+MAX_VERIFICATION_OUTPUT_LINES = 20
+"""Output lines carried into the document per failing command.
+
+The runner already bounds what it captures; this bounds again at the point of
+rendering, because a report is published into a comment box and the reader who
+needs the forty-first line needs their own terminal."""
+
+
+def _verification_section(report: VerificationReport | None, *, form: Form) -> str:
+    """What the project's own checks said, or that they did not get to say it.
+
+    Rendered whenever the stage produced a report, including when every command
+    was skipped. A section that appeared only on a green run would teach a reader
+    that its absence means the tests passed, which is the exact false confidence
+    running them was supposed to remove -- so ``not executed`` says so in words,
+    in the same place a pass would have. ``report is None`` -- verification was
+    never configured -- renders nothing, and the review is static-only.
+    """
+    if report is None:
+        return ""
+
+    body = _verification_rows(report) if report.runs else ""
+    # A run's own note is the only place a reader learns why one command errored
+    # while its neighbour passed, so it is lifted out of the row rather than left
+    # in a cell that has nowhere to put a sentence.
+    notes = [
+        f"`{_escape_cell(run.display_command)}`: {run.note}"
+        for run in report.runs
+        if run.note and run.status is not VerificationStatus.PASSED
+    ]
+    notes += [note for note in report.notes if note not in {run.note for run in report.runs}]
+    if report.source and report.executed:
+        notes.append(f"Commands were read from {report.source}.")
+    if not body and not notes:
+        return ""
+
+    failures = "\n\n".join(_verification_output(run) for run in report.failing if run.output)
+    rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
+    inner = "\n\n".join(part for part in (body, failures, rendered) if part)
+    summary = f"🧪 Verification — {VERIFICATION_LABEL[report.status].split(' ', 1)[1].lower()}"
+    return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
+
+
+def _verification_rows(report: VerificationReport) -> str:
+    """One row per command: what ran, how it was selected, how it ended, and how long it took."""
+    rows = ["| Check | Scope | Result | Time |", "| --- | --- | --- | --- |"]
+    for run in report.runs:
+        exit_code = "" if run.exit_code is None else f" <sub>exit {run.exit_code}</sub>"
+        duration = f"{run.duration_ms / 1000:.1f}s" if run.executed else "—"
+        rows.append(
+            f"| `{_escape_cell(run.display_command)}` "
+            f"| {run.scope.value} "
+            f"| {VERIFICATION_LABEL[run.status]}{exit_code} "
+            f"| {duration} |"
+        )
+    return "\n".join(rows)
+
+
+def _verification_output(run: VerificationRun) -> str:
+    """A failing command's tail, in a fence it cannot climb out of.
+
+    This block is the one part of a published review whose content a contributor
+    sets exactly, without touching a reviewed line: a test that prints three
+    backticks would close an ordinary fence early and have the rest of its output
+    rendered as markdown -- or HTML -- on the merge request. Widening the fence
+    past the longest run inside it keeps the output verbatim and still contained.
+    """
+    all_lines = run.output.splitlines()
+    lines = all_lines[-MAX_VERIFICATION_OUTPUT_LINES:]
+    elided = "\n\n_Output truncated._" if run.truncated or len(lines) < len(all_lines) else ""
+    body = "\n".join(lines)
+    fence = _fence_for(body)
+    return f"`{_escape_cell(run.display_command)}`:\n\n{fence}\n{body}\n{fence}{elided}"
+
+
+def _fence_for(body: str) -> str:
+    """A fence longer than the longest backtick run in ``body``, so it cannot close early."""
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def _nothing_to_report(result: ReviewResult) -> str:
@@ -587,6 +683,7 @@ def _global_agent_prompt(grouped: dict[Bucket, list[Finding]], *, collapsible: b
 
 
 def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
+    """The run's own provenance -- source, issue, revisions -- folded away beneath it."""
     blocks: list[str] = []
     changeset = result.changeset
 
@@ -618,6 +715,27 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         blocks.append(
             _details(
                 f"📒 Files selected for processing ({len(changeset.files)})",
+                listed,
+                level=3,
+                collapsible=collapsible,
+            )
+        )
+
+    if result.verification is not None:
+        report = result.verification
+        listed = (
+            "\n".join(
+                f"* `{run.display_command}` — {run.status.value.replace('_', ' ')}"
+                + (f": {run.note}" if run.note else "")
+                for run in report.runs
+            )
+            or "* no command matched the changed files"
+        )
+        if report.source:
+            listed += f"\n* commands read from {report.source}"
+        blocks.append(
+            _details(
+                f"🧪 Verification ({report.status.value.replace('_', ' ')})",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -722,6 +840,8 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     floor_source = "`--fail-on`" if gate.explicit else "`review.block_on`"
     lines.append(f"Judged against **{gate.floor}** and above, from {floor_source}.")
     lines.append(f"Findings: {gate.counts_line()}.")
+    if note := _verification_verdict_note(result.verification):
+        lines.append(note)
     if not gate.explicit:
         lines.append(f"_Not gated: pass `--fail-on {gate.floor}` for the exit code too._")
     body = "\n\n".join(lines)
@@ -729,6 +849,30 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     if form is Form.TERMINAL:
         return f"{heading}\n\n{body}"
     return f"{heading}\n\n{_callout(_VERDICT_CALLOUT[gate.verdict], body)}"
+
+
+def _verification_verdict_note(report: VerificationReport | None) -> str:
+    """One line beside the verdict when the tests disagree with it.
+
+    The verdict is a statement about findings and stays one -- a failing suite
+    does not move it, and does not move the exit code either. But "pass" printed
+    directly above a red test run is a sentence a reader will take as covering
+    both, so the block says which of the two it is not talking about.
+    """
+    if report is None:
+        return ""
+    if report.status is VerificationStatus.FAILED:
+        return "**Verification failed.** This verdict counts findings, not test results."
+    if report.status is VerificationStatus.TIMED_OUT:
+        return "**Verification timed out.** This verdict counts findings, not test results."
+    if report.status is VerificationStatus.ERRORED:
+        return (
+            "**Verification could not complete.** The selected checks never ran, so nothing "
+            "here was checked by execution."
+        )
+    if report.status is VerificationStatus.PASSED:
+        return ""
+    return "_Verification did not run, so nothing here was checked by execution._"
 
 
 def _signature(*, form: Form) -> str:
@@ -783,6 +927,12 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
 
     if result.errors:
         lines.append("**Errors:**\n" + "\n".join(f"* {error}" for error in result.errors))
+
+    if result.verification is not None:
+        report = result.verification
+        state = report.status.value.replace("_", " ")
+        counted = f"{len(report.runs)} check(s)" if report.runs else "no matching check"
+        lines.append(f"_verification: {state} · {counted}_")
 
     if result.review_plan is not None:
         roles = ", ".join(

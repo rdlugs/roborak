@@ -10,13 +10,20 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from roborak.core.models import Finding, ImpactMap, ReviewResult
+from roborak.core.models import (
+    Finding,
+    ImpactMap,
+    ReviewResult,
+    VerificationReport,
+    VerificationStatus,
+)
 from roborak.core.verdict import gate_for, verdict_requested
 
 SCHEMA_VERSION = 3
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
+    """The whole review as plain data. ``agent=True`` trims it to what an agent can act on."""
     omitted_paths = {item.path for item in result.coverage}
     reviewed_files = (
         [file.path for file in result.changeset.files if file.path not in omitted_paths]
@@ -53,6 +60,17 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     # as "contained" to something parsing this.
     if result.impact is not None:
         payload["impact"] = _impact_dict(result.impact, agent=agent)
+
+    # Also present in both shapes, and for the same reason: an absent key has to
+    # mean "verification was never configured", so a run that was selected and
+    # then skipped must be able to say so rather than looking like one that
+    # passed. `summary.verified` is the one-field answer for a consumer that only
+    # wants to know whether this review has an execution record behind it.
+    if result.verification is not None:
+        payload["verification"] = _verification_dict(result.verification, agent=agent)
+    payload["summary"]["verified"] = (
+        result.verification is not None and result.verification.executed
+    )
 
     # Absent rather than assumed: `describe` renders through here too and never
     # judged anything, so a verdict key would be a claim nobody made.
@@ -111,6 +129,34 @@ def _impact_dict(impact: ImpactMap, *, agent: bool) -> dict[str, Any]:
                 ],
             }
             for node in impact.nodes
+        ],
+    }
+
+
+def _verification_dict(report: VerificationReport, *, agent: bool) -> dict[str, Any]:
+    """The execution record as data.
+
+    The agent shape keeps the command and what it did, and keeps the output only
+    where the output is the finding -- a green suite's summary is bytes an agent
+    can regenerate by running the same command it was just handed.
+    """
+    if not agent:
+        return report.model_dump(mode="json") | {
+            "status": report.status.value,
+            "executed": report.executed,
+        }
+    return {
+        "status": report.status.value,
+        "executed": report.executed,
+        "runs": [
+            {
+                "command": run.command,
+                "status": run.status.value,
+                "exit_code": run.exit_code,
+                "scope": run.scope.value,
+                "output": run.output if run.status is not VerificationStatus.PASSED else "",
+            }
+            for run in report.runs
         ],
     }
 

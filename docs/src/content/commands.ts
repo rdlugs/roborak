@@ -32,12 +32,20 @@ const PIPELINE: FlagGroup = {
     { name: "--no-llm", help: "Static analysis only; makes no model calls." },
     { name: "--no-static", help: "Skip static analysis; model only." },
     {
+      name: "--no-verify",
+      help: "Skip the configured test-verification commands.",
+    },
+    {
       name: "--no-impact",
       help: "Skip blast-radius analysis of changed symbols.",
     },
     {
       name: "--trust-static",
       help: "Allow repository-provided static tools to execute directly in CI.",
+    },
+    {
+      name: "--trust-verify",
+      help: "Allow repository-provided test commands to execute directly in CI.",
     },
     { name: "--model, -m", arg: "str", help: "Override the configured model." },
     { name: "--config", arg: "path", help: "Path to a config file." },

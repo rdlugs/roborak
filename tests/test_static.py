@@ -20,13 +20,14 @@ from roborak.context.diff import parse_diff
 from roborak.core.config import StaticConfig
 from roborak.core.models import ChangeSet
 from roborak.core.severity import Category, Severity
+from roborak.sandbox import safe_environment
 from roborak.static.adapters.eslint import EslintAdapter
 from roborak.static.adapters.mypy import MypyAdapter
 from roborak.static.adapters.phpstan import PhpstanAdapter
 from roborak.static.adapters.ruff import RuffAdapter
 from roborak.static.adapters.semgrep import SemgrepAdapter
 from roborak.static.normalize import classify_ruff, classify_semgrep
-from roborak.static.runner import StaticRunner, _safe_environment
+from roborak.static.runner import StaticRunner
 
 RUFF_OUTPUT = json.dumps(
     [
@@ -253,10 +254,11 @@ def test_disabled_runner_does_nothing(repo: Path):
 
 
 def test_static_subprocess_environment_drops_credentials(monkeypatch):
+    """A linter runs project-supplied configuration, so it must not inherit the caller's tokens."""
     monkeypatch.setenv("GITHUB_TOKEN", "secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     monkeypatch.setenv("PATH", "/bin")
-    env = _safe_environment()
+    env = safe_environment()
     assert env["PATH"] == "/bin"
     assert "GITHUB_TOKEN" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
@@ -264,7 +266,7 @@ def test_static_subprocess_environment_drops_credentials(monkeypatch):
 
 def test_static_scratch_directory_follows_the_platform():
     """Windows has no /tmp; a hardcoded one hands every linter a bad cache dir."""
-    env = _safe_environment()
+    env = safe_environment()
     scratch = tempfile.gettempdir()
     assert env["HOME"] == scratch
     assert env["TMPDIR"] == scratch
@@ -273,15 +275,16 @@ def test_static_scratch_directory_follows_the_platform():
 
 def test_sandboxed_static_run_keeps_the_tmpfs_path():
     """The sandbox mounts --tmpfs /tmp, so inside it /tmp is the only scratch there is."""
-    env = _safe_environment("/tmp")
+    env = safe_environment("/tmp")
     assert env["HOME"] == "/tmp"
     assert env["TMPDIR"] == "/tmp"
     assert env["XDG_CACHE_HOME"] == str(Path("/tmp") / "roborak-static-cache")
 
 
 def test_auto_static_analysis_refuses_unsandboxed_ci(repo: Path, monkeypatch, caplog):
+    """An untrusted checkout with no sandbox to contain it is a case for running nothing."""
     monkeypatch.setenv("CI", "true")
-    monkeypatch.setattr("roborak.static.runner.shutil.which", lambda name: None)
+    monkeypatch.setattr("roborak.sandbox.shutil.which", lambda name: None)
     assert StaticRunner(repo=repo, config=StaticConfig()).run(ChangeSet()) == []
     assert "bubblewrap is unavailable" in caplog.text
 

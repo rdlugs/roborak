@@ -2,14 +2,21 @@
 
 Precedence, highest first: CLI flags, environment (``ROBORAK_*``), the project's
 ``.roborak.yaml``, the user's ``~/.config/roborak/config.yaml``, then defaults.
-The shape is four sections: categories, a severity floor, path ignores, and a
-static-analysis section.
+The shape is a section per stage -- review, static analysis, verification, blast
+radius, the model, forge credentials, output -- plus path ignores and a rules
+directory.
+
+One section is deliberately outside that layering. ``verification`` names
+executables to run, so ``load_verification`` reads it from the base revision
+rather than the working tree; everything else here is layered normally, because
+the worst a hostile config can otherwise do is ask for a different model.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +25,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from roborak.core.severity import Category, Severity
+from roborak.sandbox import in_ci
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +57,21 @@ class ConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class StaticExecution(StrEnum):
+class Execution(StrEnum):
+    """How much the checkout is trusted to run its own commands.
+
+    Shared by every stage that executes repository-controlled code, so a project
+    that trusts one of them phrases the decision the same way for all of them.
+    """
+
     AUTO = "auto"
     TRUSTED = "trusted"
     OFF = "off"
+
+
+StaticExecution = Execution
+"""The name the static section has always used. Kept so ``--trust-static`` and
+existing configuration keep meaning what they meant."""
 
 
 class ReviewConfig(ConfigModel):
@@ -93,7 +112,7 @@ class ReviewConfig(ConfigModel):
 
 class StaticConfig(ConfigModel):
     enabled: bool = True
-    execution: StaticExecution = StaticExecution.AUTO
+    execution: Execution = Execution.AUTO
     """``auto`` is direct for local work and sandboxed in CI; ``trusted`` is an
     explicit opt-in to direct execution, and ``off`` disables static tools."""
     tools: list[str] | None = None
@@ -102,6 +121,72 @@ class StaticConfig(ConfigModel):
     timeout_seconds: int = Field(default=90, ge=1)
     feed_to_llm: bool = True
     max_findings_in_prompt: int = Field(default=40, ge=0)
+
+
+class VerificationCommand(ConfigModel):
+    """One test command, and the changed paths that make it worth running."""
+
+    paths: list[str] = Field(min_length=1)
+    """Globs, matched against repo-relative changed paths. ``**/`` is optional at
+    the front of a pattern, matching ``ignore_paths`` and rule ``paths``."""
+
+    command: list[str] = Field(min_length=1)
+    """Argv, never a shell string. A command assembled from a string would let a
+    pipeline, a redirect or a ``;`` ride along inside what reads as one check."""
+
+    name: str = ""
+    """What to call this check in the report. Defaults to the command itself."""
+
+    @field_validator("command")
+    @classmethod
+    def _no_blank_arguments(cls, command: list[str]) -> list[str]:
+        """A blank argument is never what a project meant, and argv hides it."""
+        if any(not argument.strip() for argument in command):
+            raise ValueError("verification commands cannot contain an empty argument.")
+        return command
+
+
+class VerificationConfig(ConfigModel):
+    """Running the project's own tests as part of a review.
+
+    Off until a project says otherwise -- not by a flag, but by there being
+    nothing to run. ``commands`` and ``fallback`` are both empty by default, and
+    an empty selection is how the stage stays absent from a review that never
+    asked for it.
+    """
+
+    enabled: bool = True
+    execution: Execution = Execution.AUTO
+    """``auto`` is direct for local work and sandboxed in CI; ``trusted`` is an
+    explicit opt-in to direct execution, and ``off`` disables verification."""
+
+    commands: list[VerificationCommand] = Field(default_factory=list)
+    fallback: list[str] = Field(default_factory=list)
+    """The broad check: what to run when no targeted command matches the change,
+    and what ``broaden_paths`` escalates to. Empty means there is no broad check,
+    and a change matching nothing is simply not verified."""
+
+    broaden_paths: list[str] = Field(default_factory=list)
+    """Globs for the files a targeted check cannot speak for -- a shared contract,
+    a schema, a migration, the build configuration. One of these in the change
+    replaces the targeted selection with ``fallback``."""
+
+    timeout_seconds: int = Field(default=300, ge=1)
+    max_commands: int = Field(default=4, ge=1)
+    """Ceiling on how many commands one review runs, after selection."""
+
+    max_output_lines: int = Field(default=40, ge=1)
+    """Lines of output kept per command. It is a citation, not a build log."""
+
+    feed_to_llm: bool = True
+
+    @field_validator("fallback")
+    @classmethod
+    def _no_blank_arguments(cls, command: list[str]) -> list[str]:
+        """The broad check is argv too, and a blank argument in it is just as invisible."""
+        if any(not argument.strip() for argument in command):
+            raise ValueError("verification commands cannot contain an empty argument.")
+        return command
 
 
 class ImpactConfig(ConfigModel):
@@ -225,6 +310,7 @@ class Config(ConfigModel):
     version: Literal[1] = 1
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     static: StaticConfig = Field(default_factory=StaticConfig)
+    verification: VerificationConfig = Field(default_factory=VerificationConfig)
     impact: ImpactConfig = Field(default_factory=ImpactConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
@@ -250,7 +336,7 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
         if not explicit_path.is_file():
             raise FileNotFoundError(f"Config file not found: {explicit_path}")
         layers.append(_read_yaml(explicit_path))
-    elif not _in_ci():
+    elif not in_ci():
         for name in PROJECT_CONFIG_NAMES:
             candidate = repo / name
             if candidate.is_file():
@@ -268,6 +354,147 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
     for layer in layers:
         merged = _deep_merge(merged, layer)
     return Config.model_validate(merged)
+
+
+def load_verification(
+    repo: Path, *, ref: str = "HEAD", explicit_path: Path | None = None
+) -> tuple[VerificationConfig, str, list[str]]:
+    """The verification section, read from somewhere the change cannot have written.
+
+    Every other section is layered from the working tree, because the worst a
+    hostile one can do is ask for a different model or a lower severity floor.
+    This section names executables and their arguments, so a checked-out branch
+    that could write it would be a branch that runs whatever it likes on the
+    machine reviewing it -- which is precisely the review a person is most likely
+    to be running on somebody else's code.
+
+    So the project layer comes from the *base revision* instead, exactly as
+    ``rules.loader.load_rules_at_ref`` reads a team's rules from the revision
+    being merged into. The consequence is worth stating plainly: a change that
+    adds a verification command does not get verified by it until it lands. An
+    explicit ``--config`` still wins, since choosing that path is itself the
+    trust decision, and the user's own configuration and environment are theirs.
+
+    ``ref`` defaults to ``HEAD`` because the commonest local review is a working
+    tree against the commit behind it, and there the edits under review are
+    exactly what ``HEAD`` does not contain. An empty ``ref`` means the caller has
+    no revision to offer -- a directory with no git history -- and then there is
+    no trusted project layer at all rather than a fallback to the working tree.
+
+    Returns the section, where its project layer came from, and any note a reader
+    needs in order to understand why a command they configured did not run.
+    """
+    notes: list[str] = []
+    layers: list[dict[str, Any]] = []
+    project: dict[str, Any] = {}
+
+    if USER_CONFIG_PATH.is_file():
+        layers.append(_verification_of(_read_yaml(USER_CONFIG_PATH)))
+
+    if explicit_path is not None:
+        if not explicit_path.is_file():
+            raise FileNotFoundError(f"Config file not found: {explicit_path}")
+        project = _verification_of(_read_yaml(explicit_path))
+        source = f"{explicit_path}"
+    elif ref:
+        at_ref = _project_config_at_ref(repo, ref)
+        if at_ref is None:
+            source = "user and environment configuration"
+            notes.append(
+                f"No project configuration could be read from {ref}, so only user and "
+                "environment configuration was consulted."
+            )
+        else:
+            project = _verification_of(at_ref)
+            source = f"base revision {ref[:12]}"
+    else:
+        source = "user and environment configuration"
+        notes.append(
+            "There is no base revision to read trusted verification commands from, so only "
+            "user and environment configuration was consulted."
+        )
+
+    layers.append(project)
+    layers.append(_verification_of(_env_layer()))
+
+    merged: dict[str, Any] = {}
+    for layer in layers:
+        merged = _deep_merge(merged, layer)
+    config = VerificationConfig.model_validate(merged)
+
+    # Only worth saying when the checkout is asking for something *different*. A
+    # committed configuration reads identically from both places, and a note on
+    # every run would train the reader to skip the one run where it matters.
+    working_tree = _working_tree_verification(repo)
+    if explicit_path is None and working_tree is not None and working_tree != project:
+        notes.append(
+            "Verification commands in the working tree's project configuration were not used: "
+            "they are read from the base revision, so a change cannot define the command that "
+            "verifies it. Commit them, or pass --config with a path you trust."
+        )
+    return config, source, notes
+
+
+def _verification_of(data: dict[str, Any]) -> dict[str, Any]:
+    """The ``verification`` section of a parsed config file, or ``{}`` when there is none."""
+    section = data.get("verification")
+    return dict(section) if isinstance(section, dict) else {}
+
+
+def _project_config_at_ref(repo: Path, ref: str) -> dict[str, Any] | None:
+    """The project configuration as of ``ref``, or ``None`` if it cannot be read.
+
+    ``None`` covers a directory that is not a git repository, a revision that no
+    longer exists, and a repository with no commits yet. All three mean the same
+    thing here -- there is no trusted copy -- and none of them is an error.
+    """
+    for name in PROJECT_CONFIG_NAMES:
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{ref}:{name}"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if shown.returncode != 0:
+            continue
+        try:
+            data = yaml.safe_load(shown.stdout)
+        except yaml.YAMLError as exc:
+            log.warning("%s at %s is not valid YAML; ignoring it: %s", name, ref, exc)
+            return None
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            log.warning("%s at %s is not a YAML mapping; ignoring it", name, ref)
+            return None
+        return data
+    return None
+
+
+def _working_tree_verification(repo: Path) -> dict[str, Any] | None:
+    """What the checkout asks for, so we can say when we did not use it.
+
+    ``None`` means the checkout asks for nothing, which is the ordinary case and
+    is never worth a note.
+    """
+    for name in PROJECT_CONFIG_NAMES:
+        candidate = repo / name
+        if not candidate.is_file():
+            continue
+        try:
+            data = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            return None
+        section = _verification_of(data) if isinstance(data, dict) else {}
+        return section or None
+    return None
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -327,14 +554,13 @@ def _env_layer() -> dict[str, Any]:
         layer.setdefault("static", {})["enabled"] = False
     if execution := os.getenv("ROBORAK_STATIC_EXECUTION"):
         layer.setdefault("static", {})["execution"] = execution
+    if (verify_off := os.getenv("ROBORAK_NO_VERIFY")) and verify_off not in {"0", "false", ""}:
+        layer.setdefault("verification", {})["enabled"] = False
+    if execution := os.getenv("ROBORAK_VERIFY_EXECUTION"):
+        layer.setdefault("verification", {})["execution"] = execution
     if (impact_off := os.getenv("ROBORAK_NO_IMPACT")) and impact_off not in {"0", "false", ""}:
         layer.setdefault("impact", {})["enabled"] = False
     return layer
-
-
-def _in_ci() -> bool:
-    value = os.getenv("CI", "").strip().lower()
-    return value not in {"", "0", "false", "no"}
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

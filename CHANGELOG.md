@@ -12,6 +12,24 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **Proportional test verification.** A review can now run the project's own tests
+  and report what they said, instead of noting missing coverage and leaving the
+  reader to go and find out. `verification.commands` maps changed paths to argv
+  arrays; a review runs the narrowest matching set, deduplicated and capped, and
+  `broaden_paths` escalates a change that crosses a shared contract, schema or
+  build file to the `fallback` command *instead of* the targeted ones. Each run
+  records its command, exit status, duration, bounded output and whether it passed,
+  failed, timed out, could not run, or was not executed, and every surface —
+  terminal, markdown, JSON (`summary.verified`) and the published comment — carries
+  it, including when nothing ran, so a static-only review can never be mistaken for
+  a verified one. Failures reach the model as evidence with their output framed as
+  data. Commands are read from the **base revision**, never the working tree, so a
+  branch cannot define the command that verifies it; verification obeys the static
+  pass's trust model otherwise (direct locally, sandboxed in CI, skipped without
+  Bubblewrap, `--trust-verify` to opt in), is never run for forge diffs that are not
+  checked out, and installs nothing. A failing suite prints beside the pre-merge
+  verdict without moving it: that verdict counts findings.
+
 - **Contract-first planning for large diffs.** Files now receive deterministic
   semantic roles, so public contracts, migrations, schemas, configuration and
   deployment boundaries are reviewed before leaf code when the eight-pass ceiling
@@ -22,6 +40,19 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   pass assignment and roles omitted.
 
 ### Changed
+
+- **The CI sandbox isolates commands from the host's devices, processes and
+  terminal.** Static analysis and verification both run repository-controlled
+  commands, and the bubblewrap prefix they share bind-mounted the host's whole
+  `/dev`, mounted a `/proc` that still listed every process on the machine — their
+  command lines and environments included — and left the sandboxed process in the
+  terminal's session. It now mounts a private device filesystem with the standard
+  nodes, adds `--unshare-pid` so that `/proc` shows only the sandbox, and adds
+  `--new-session` so a command cannot push characters back onto the terminal that
+  started the review. The PID namespace is also the kill boundary: a suite that
+  hits the timeout no longer leaves its own spawned children running. Output is
+  captured through pipes, so nothing in either stage wanted a controlling terminal
+  to begin with.
 
 - **AST support is part of a default installation.** `tree-sitter` and
   `tree-sitter-language-pack` were behind an `ast` extra, so `uvx roborak`,
