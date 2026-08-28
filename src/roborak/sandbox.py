@@ -120,5 +120,6 @@ def sandbox_prefix(repo: Path) -> list[str] | None:
 
 
 def in_ci() -> bool:
+    """Whether ``CI`` is set to anything that is not an explicit denial."""
     value = os.getenv("CI", "").strip().lower()
     return value not in {"", "0", "false", "no"}

@@ -44,6 +44,7 @@ class StaticRunner:
     adapters: list[Adapter] = field(default_factory=lambda: list(ALL_ADAPTERS))
 
     def run(self, changeset: ChangeSet) -> list[Finding]:
+        """Every applicable adapter over the changed files, narrowed to the changed lines."""
         if not self.config.enabled or self.config.execution is StaticExecution.OFF:
             return []
 
@@ -78,6 +79,7 @@ class StaticRunner:
     def _run_one(
         self, adapter: Adapter, files: list[ChangedFile], *, sandboxed: list[str] | None
     ) -> list[Finding]:
+        """One adapter over the files it applies to, behind the sandbox prefix when there is one."""
         executable = adapter.find_binary(self.repo)
         if executable is None:
             return []

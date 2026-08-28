@@ -140,6 +140,7 @@ class VerificationCommand(ConfigModel):
     @field_validator("command")
     @classmethod
     def _no_blank_arguments(cls, command: list[str]) -> list[str]:
+        """A blank argument is never what a project meant, and argv hides it."""
         if any(not argument.strip() for argument in command):
             raise ValueError("verification commands cannot contain an empty argument.")
         return command
@@ -182,6 +183,7 @@ class VerificationConfig(ConfigModel):
     @field_validator("fallback")
     @classmethod
     def _no_blank_arguments(cls, command: list[str]) -> list[str]:
+        """The broad check is argv too, and a blank argument in it is just as invisible."""
         if any(not argument.strip() for argument in command):
             raise ValueError("verification commands cannot contain an empty argument.")
         return command
@@ -434,6 +436,7 @@ def load_verification(
 
 
 def _verification_of(data: dict[str, Any]) -> dict[str, Any]:
+    """The ``verification`` section of a parsed config file, or ``{}`` when there is none."""
     section = data.get("verification")
     return dict(section) if isinstance(section, dict) else {}
 

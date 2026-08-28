@@ -52,6 +52,7 @@ SEVERITY_ICON = {
 
 
 def render(result: ReviewResult, console: Console, repo: Path) -> None:
+    """The review in the order a terminal reader takes it: errors, what ran, the findings."""
     if result.errors:
         for error in result.errors:
             console.print(f"[bold red]error[/] {error}")

@@ -23,6 +23,7 @@ SCHEMA_VERSION = 3
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
+    """The whole review as plain data. ``agent=True`` trims it to what an agent can act on."""
     omitted_paths = {item.path for item in result.coverage}
     reviewed_files = (
         [file.path for file in result.changeset.files if file.path not in omitted_paths]

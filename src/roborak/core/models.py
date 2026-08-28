@@ -543,6 +543,7 @@ class VerificationRun(BaseModel):
 
     @property
     def display_command(self) -> str:
+        """The command as a reader would type it, for a report cell or a log line."""
         return " ".join(self.command)
 
 
@@ -565,6 +566,7 @@ class VerificationReport(BaseModel):
 
     @property
     def executed(self) -> bool:
+        """Whether anything ran, which is what separates a verified review from a quiet one."""
         return any(run.executed for run in self.runs)
 
     @property
@@ -589,6 +591,7 @@ class VerificationReport(BaseModel):
 
     @property
     def failing(self) -> list[VerificationRun]:
+        """The runs a reader has to act on -- a failure or a timeout, never a skip."""
         return [
             run
             for run in self.runs

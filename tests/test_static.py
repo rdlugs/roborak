@@ -254,6 +254,7 @@ def test_disabled_runner_does_nothing(repo: Path):
 
 
 def test_static_subprocess_environment_drops_credentials(monkeypatch):
+    """A linter runs project-supplied configuration, so it must not inherit the caller's tokens."""
     monkeypatch.setenv("GITHUB_TOKEN", "secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
     monkeypatch.setenv("PATH", "/bin")
@@ -281,6 +282,7 @@ def test_sandboxed_static_run_keeps_the_tmpfs_path():
 
 
 def test_auto_static_analysis_refuses_unsandboxed_ci(repo: Path, monkeypatch, caplog):
+    """An untrusted checkout with no sandbox to contain it is a case for running nothing."""
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("roborak.sandbox.shutil.which", lambda name: None)
     assert StaticRunner(repo=repo, config=StaticConfig()).run(ChangeSet()) == []

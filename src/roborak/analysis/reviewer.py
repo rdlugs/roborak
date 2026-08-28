@@ -113,6 +113,7 @@ class Reviewer:
         return rules_for_prompt(matched)
 
     def review(self, changeset: ChangeSet) -> ReviewResult:
+        """One change in, one result out: static findings, the model's, and how to explain both."""
         self._usage.clear()
         result = ReviewResult(
             changeset=changeset,
@@ -474,6 +475,7 @@ class Reviewer:
         contract_contexts: list[ContractContext] | None = None,
         collect_reconciliation_evidence: bool = False,
     ) -> tuple[list[Finding], list[dict[str, str]], list[dict[str, str]]]:
+        """One model pass over one chunk: the findings, and the evidence to reconcile them."""
         assert self.llm is not None
         prompt_changeset = changeset.model_copy(deep=True)
         prompt = build_review_prompt(

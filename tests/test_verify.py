@@ -44,6 +44,7 @@ PYTHON = sys.executable
 
 
 def changeset(*paths: str, origin: str = "local") -> ChangeSet:
+    """A change over ``paths``, checked out locally unless the caller says otherwise."""
     return ChangeSet(
         files=[ChangedFile(path=path) for path in paths],
         origin=origin,  # type: ignore[arg-type]
@@ -52,6 +53,7 @@ def changeset(*paths: str, origin: str = "local") -> ChangeSet:
 
 
 def config(**overrides: object) -> VerificationConfig:
+    """A two-command configuration with a broad fallback, which every selection test varies from."""
     defaults: dict[str, object] = {
         "commands": [
             VerificationCommand(paths=["src/context/**"], command=["true", "context"]),
@@ -67,17 +69,20 @@ def config(**overrides: object) -> VerificationConfig:
 
 
 def test_the_narrowest_matching_command_is_chosen():
+    """Selection is the whole point: a one-module change should not pay for the whole suite."""
     runs = select(config(), changeset("src/context/diff.py"))
     assert [run.command for run in runs] == [["true", "context"]]
     assert runs[0].scope is VerificationScope.TARGETED
 
 
 def test_every_matching_command_is_chosen_when_a_change_spans_modules():
+    """Neither suite covers the other, so running one leaves half the change unverified."""
     runs = select(config(), changeset("src/context/diff.py", "src/core/verdict.py"))
     assert [run.command for run in runs] == [["true", "context"], ["true", "core"]]
 
 
 def test_one_command_behind_two_path_rules_runs_once():
+    """Two rules on the same argv describe one check; running it twice proves nothing."""
     duplicated = config(
         commands=[
             VerificationCommand(paths=["src/a/**"], command=["true", "shared"]),
@@ -96,16 +101,19 @@ def test_a_shared_boundary_escalates_to_the_broad_check_alone():
 
 
 def test_an_unmatched_change_falls_back_to_the_broad_check():
+    """A file no rule anticipated is the case most in need of a check, not least."""
     runs = select(config(), changeset("docs/index.md"))
     assert [run.command for run in runs] == [["true", "all"]]
     assert runs[0].scope is VerificationScope.BROAD
 
 
 def test_an_unmatched_change_selects_nothing_when_there_is_no_fallback():
+    """Without a broad check there is nothing honest to run, and inventing one would be worse."""
     assert select(config(fallback=[]), changeset("docs/index.md")) == []
 
 
 def test_selection_is_capped():
+    """``max_commands`` is what keeps a wide refactor from turning a review into a CI run."""
     many = config(
         commands=[
             VerificationCommand(paths=[f"src/m{i}/**"], command=["true", str(i)]) for i in range(6)
@@ -117,6 +125,7 @@ def test_selection_is_capped():
 
 
 def test_deleted_and_binary_files_do_not_select_a_command():
+    """There is no source in either to break, so neither is a reason to spend a suite."""
     only_removals = ChangeSet(
         files=[
             ChangedFile(path="src/context/diff.py", change_type="deleted"),
@@ -127,6 +136,7 @@ def test_deleted_and_binary_files_do_not_select_a_command():
 
 
 def test_patterns_may_omit_the_leading_globstar():
+    """Configuration is written by hand, and ``**/*.php`` is what a person types."""
     matched = config(commands=[VerificationCommand(paths=["**/*.php"], command=["true"])])
     runs = select(matched, changeset("app/Http/Controller.php"))
     assert [run.command for run in runs] == [["true"]]
@@ -136,14 +146,17 @@ def test_patterns_may_omit_the_leading_globstar():
 
 
 def runner(tmp_path: Path, cfg: VerificationConfig) -> VerificationRunner:
+    """A runner over ``tmp_path``, carrying the provenance a report is expected to state."""
     return VerificationRunner(repo=tmp_path, config=cfg, source="base revision abc123")
 
 
 def script(body: str) -> list[str]:
+    """``body`` as an argv the test can actually run, using the interpreter running the tests."""
     return [PYTHON, "-c", body]
 
 
 def test_a_passing_command_is_recorded_with_its_exit_status(tmp_path: Path):
+    """A pass must carry its exit code and output, or the report only asserts optimism."""
     cfg = config(commands=[], fallback=script("print('42 passed')"))
     report = runner(tmp_path, cfg).run(changeset("src/x.py"))
     assert report is not None
@@ -156,6 +169,7 @@ def test_a_passing_command_is_recorded_with_its_exit_status(tmp_path: Path):
 
 
 def test_a_non_zero_exit_is_a_failure_and_keeps_its_output(tmp_path: Path):
+    """The output is the value of a failure: without it a reader has to rerun the suite."""
     cfg = config(commands=[], fallback=script("print('1 failed'); raise SystemExit(1)"))
     report = runner(tmp_path, cfg).run(changeset("src/x.py"))
     assert report is not None
@@ -167,6 +181,7 @@ def test_a_non_zero_exit_is_a_failure_and_keeps_its_output(tmp_path: Path):
 
 
 def test_a_hanging_command_times_out_rather_than_hanging_the_review(tmp_path: Path):
+    """One misconfigured command must not be able to hold a review open indefinitely."""
     cfg = config(commands=[], fallback=script("import time; time.sleep(30)"), timeout_seconds=1)
     report = runner(tmp_path, cfg).run(changeset("src/x.py"))
     assert report is not None
@@ -185,6 +200,7 @@ def test_a_missing_executable_is_an_error_not_a_test_failure(tmp_path: Path):
 
 
 def test_output_is_bounded_to_its_tail(tmp_path: Path):
+    """A runner's last lines carry its verdict; its first five hundred carry a progress bar."""
     cfg = config(
         commands=[],
         fallback=script("[print(f'line {i}') for i in range(500)]"),
@@ -198,6 +214,7 @@ def test_output_is_bounded_to_its_tail(tmp_path: Path):
 
 
 def test_commands_never_see_the_callers_credentials(tmp_path: Path, monkeypatch):
+    """Verification runs repository-authored argv, so the caller's tokens must be gone."""
     monkeypatch.setenv("GITHUB_TOKEN", "s3cret")
     cfg = config(commands=[], fallback=script("import os; print(os.environ.get('GITHUB_TOKEN'))"))
     report = runner(tmp_path, cfg).run(changeset("src/x.py"))
@@ -216,6 +233,7 @@ def test_a_remote_diff_is_never_verified(tmp_path: Path):
 
 
 def test_ci_without_a_sandbox_refuses_to_run_anything(tmp_path: Path, monkeypatch):
+    """An untrusted checkout with nothing to contain it is a case for running nothing."""
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("roborak.verify.runner.sandbox_prefix", lambda repo: None)
     cfg = config(commands=[], fallback=script("print('ran')"))
@@ -226,6 +244,7 @@ def test_ci_without_a_sandbox_refuses_to_run_anything(tmp_path: Path, monkeypatc
 
 
 def test_trusted_execution_runs_directly_in_ci(tmp_path: Path, monkeypatch):
+    """``trusted`` is the explicit opt-in for a project that vouches for its own checkout."""
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("roborak.verify.runner.sandbox_prefix", lambda repo: None)
     cfg = config(commands=[], fallback=script("print('ran')"), execution=Execution.TRUSTED)
@@ -235,6 +254,7 @@ def test_trusted_execution_runs_directly_in_ci(tmp_path: Path, monkeypatch):
 
 
 def test_ci_prefixes_the_sandbox_when_one_is_available(tmp_path: Path, monkeypatch):
+    """Containment is not silent: the report has to say the commands ran behind a sandbox."""
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("roborak.verify.runner.sandbox_prefix", lambda repo: [PYTHON, "-c", "pass"])
     cfg = config(commands=[], fallback=["ignored"])
@@ -245,16 +265,19 @@ def test_ci_prefixes_the_sandbox_when_one_is_available(tmp_path: Path, monkeypat
 
 
 def test_nothing_configured_means_the_stage_never_ran(tmp_path: Path):
+    """No report at all is how a review that was never asked to verify stays quiet about it."""
     empty = VerificationConfig()
     assert runner(tmp_path, empty).run(changeset("src/x.py")) is None
 
 
 def test_disabling_the_stage_is_not_the_same_as_a_skip(tmp_path: Path):
+    """Switching the stage off is a decision, not an outcome, and it leaves nothing to report."""
     assert runner(tmp_path, config(enabled=False)).run(changeset("src/x.py")) is None
     assert runner(tmp_path, config(execution=Execution.OFF)).run(changeset("src/x.py")) is None
 
 
 def test_a_configured_stage_that_matches_nothing_says_so(tmp_path: Path):
+    """A project that asked for verification deserves to be told why it got none."""
     cfg = config(fallback=[])
     report = runner(tmp_path, cfg).run(changeset("docs/index.md"))
     assert report is not None
@@ -266,11 +289,13 @@ def test_a_configured_stage_that_matches_nothing_says_so(tmp_path: Path):
 
 
 def git(repo: Path, *args: str) -> None:
+    """Run a git subcommand in ``repo``, failing the test if it does not succeed."""
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
+    """A one-commit repository: the smallest thing with a base revision to read from."""
     git(tmp_path, "init", "-q", "-b", "main")
     git(tmp_path, "config", "user.email", "t@e.com")
     git(tmp_path, "config", "user.name", "T")
@@ -295,6 +320,7 @@ verification:
 
 
 def test_commands_are_read_from_the_base_revision(repo: Path):
+    """Committed configuration is the trusted copy, and the report has to say where it came from."""
     (repo / ".roborak.yaml").write_text(TRUSTED_YAML)
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "add config")
@@ -318,6 +344,7 @@ def test_a_working_tree_cannot_define_the_command_that_verifies_it(repo: Path):
 
 
 def test_an_explicit_config_path_is_trusted(repo: Path, tmp_path: Path):
+    """``--config`` is the caller vouching for a file, a different trust question."""
     explicit = tmp_path / "trusted.yaml"
     explicit.write_text(TRUSTED_YAML)
     config_, source, _ = load_verification(repo, ref="HEAD", explicit_path=explicit)
@@ -339,6 +366,7 @@ def test_uncommitted_work_is_verified_against_the_commit_behind_it(repo: Path):
 
 
 def test_a_directory_with_no_history_has_no_trusted_project_layer(tmp_path: Path):
+    """With no commits there is no base revision, so there is no project layer to trust."""
     config_, source, notes = load_verification(tmp_path)
     assert config_.fallback == []
     assert source == "user and environment configuration"
@@ -346,12 +374,14 @@ def test_a_directory_with_no_history_has_no_trusted_project_layer(tmp_path: Path
 
 
 def test_a_caller_with_no_revision_at_all_reads_no_project_layer(tmp_path: Path):
+    """An empty ref is not HEAD; reading the working tree would undo the trust model."""
     config_, _, notes = load_verification(tmp_path, ref="")
     assert config_.fallback == []
     assert any("no base revision" in note.lower() for note in notes)
 
 
 def test_a_command_cannot_be_a_shell_string():
+    """Every rejected shape here is one where a ``;`` or a redirect could ride along unnoticed."""
     with pytest.raises(ValueError):
         VerificationCommand(paths=["**/*.py"], command=[])
     with pytest.raises(ValueError):
@@ -364,6 +394,7 @@ def test_a_command_cannot_be_a_shell_string():
 
 
 def report_with(status: VerificationStatus, **overrides: object) -> VerificationReport:
+    """A one-run report in ``status``, which the reporting tests differ from field by field."""
     defaults: dict[str, object] = {
         "name": "pytest tests/test_context.py",
         "command": ["pytest", "tests/test_context.py"],
@@ -380,6 +411,7 @@ def report_with(status: VerificationStatus, **overrides: object) -> Verification
 
 
 def test_the_report_distinguishes_a_pass_from_a_skip():
+    """A reader who cannot tell these apart reads every clean review as a verified one."""
     passed = markdown.render(ReviewResult(verification=report_with(VerificationStatus.PASSED)))
     skipped = markdown.render(ReviewResult(verification=report_with(VerificationStatus.SKIPPED)))
     assert "Verification — passed" in passed
@@ -387,6 +419,7 @@ def test_the_report_distinguishes_a_pass_from_a_skip():
 
 
 def test_a_static_only_review_makes_no_verification_claim():
+    """Silence is the only honest output when the stage never ran."""
     assert "Verification" not in markdown.render(ReviewResult())
 
 
@@ -404,6 +437,7 @@ def test_failing_output_cannot_close_the_fence_it_is_printed_in():
 
 
 def test_json_reports_verification_in_both_shapes():
+    """A gate reads ``summary``; an agent reads the runs. Both have to find the same answer."""
     result = ReviewResult(verification=report_with(VerificationStatus.FAILED, output="boom"))
     full = json_out.to_dict(result)
     assert full["summary"]["verified"] is True
@@ -416,6 +450,7 @@ def test_json_reports_verification_in_both_shapes():
 
 
 def test_json_says_unverified_when_nothing_ran():
+    """``verified`` is a claim about execution, so a skip must not be able to satisfy it."""
     assert json_out.to_dict(ReviewResult())["summary"]["verified"] is False
     skipped = json_out.to_dict(ReviewResult(verification=report_with(VerificationStatus.SKIPPED)))
     assert skipped["summary"]["verified"] is False
@@ -423,6 +458,7 @@ def test_json_says_unverified_when_nothing_ran():
 
 
 def test_the_panel_view_states_the_verification_status(capsys):
+    """The terminal is where most reviews are read, so a failing suite cannot be markdown-only."""
     console = terminal.Console(force_terminal=False, width=100)
     terminal.render(
         ReviewResult(verification=report_with(VerificationStatus.FAILED)), console, Path(".")
@@ -451,12 +487,14 @@ def test_the_verdict_says_it_is_not_speaking_for_the_tests():
 
 
 def test_a_passing_suite_adds_nothing_to_the_verdict():
+    """The caveat corrects a misreading; over a green suite it only creates one."""
     result = ReviewResult(verification=report_with(VerificationStatus.PASSED))
     result.block_on = Severity.CRITICAL
     assert "This verdict counts findings" not in markdown.render(result)
 
 
 def test_a_run_that_could_not_start_explains_itself_in_the_report():
+    """ "Errored" alone reads as a fault in the change, and the note is what says otherwise."""
     report = report_with(
         VerificationStatus.ERRORED,
         exit_code=None,
@@ -468,6 +506,7 @@ def test_a_run_that_could_not_start_explains_itself_in_the_report():
 
 
 def test_the_footer_states_verification_even_in_the_terminal_form():
+    """The terminal form drops the tables, so the footer is the only place left to say it."""
     document = markdown.render(
         ReviewResult(verification=report_with(VerificationStatus.SKIPPED)),
         form=markdown.Form.TERMINAL,
@@ -485,6 +524,7 @@ def test_a_run_that_never_started_is_not_an_execution_record():
 
 
 def test_the_verdict_says_verification_could_not_complete():
+    """Not the same sentence as a failure: nothing ran, so nothing was proved either way."""
     result = ReviewResult(verification=report_with(VerificationStatus.ERRORED, exit_code=None))
     result.block_on = Severity.CRITICAL
     assert "**Verification could not complete.**" in markdown.render(result)

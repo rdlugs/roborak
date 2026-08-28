@@ -108,6 +108,7 @@ def select(config: VerificationConfig, changeset: ChangeSet) -> list[Verificatio
 
 
 def _broad_run(config: VerificationConfig) -> VerificationRun | None:
+    """The broad check as a run, or ``None`` when the project configured no fallback."""
     if not config.fallback:
         return None
     return VerificationRun(
@@ -118,6 +119,7 @@ def _broad_run(config: VerificationConfig) -> VerificationRun | None:
 
 
 def _any_match(paths: list[str], patterns: list[str]) -> bool:
+    """Whether any of ``paths`` matches any of ``patterns``."""
     return any(_matches(path, pattern) for path in paths for pattern in patterns)
 
 
@@ -176,6 +178,7 @@ class VerificationRunner:
         return report
 
     def _configured(self) -> bool:
+        """Whether the project asked for verification: enabled, not off, something to run."""
         return (
             self.config.enabled
             and self.config.execution is not Execution.OFF
@@ -203,9 +206,11 @@ class VerificationRunner:
         return ""
 
     def _needs_sandbox(self) -> bool:
+        """``auto`` in CI is the one case that must not run the repository's argv directly."""
         return self.config.execution is Execution.AUTO and in_ci()
 
     def _execute(self, run: VerificationRun, *, sandboxed: list[str] | None) -> None:
+        """Run one command and record what became of it on the run itself."""
         command = [*(sandboxed or []), *run.command]
         started = time.monotonic()
         try:
@@ -267,6 +272,7 @@ class VerificationRunner:
 
 
 def _elapsed_ms(started: float) -> int:
+    """Milliseconds since ``started``, on the same monotonic clock the timeout uses."""
     return int((time.monotonic() - started) * 1000)
 
 

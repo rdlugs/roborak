@@ -362,6 +362,7 @@ def _verification_section(report: VerificationReport | None, *, form: Form) -> s
 
 
 def _verification_rows(report: VerificationReport) -> str:
+    """One row per command: what ran, how it was selected, how it ended, and how long it took."""
     rows = ["| Check | Scope | Result | Time |", "| --- | --- | --- | --- |"]
     for run in report.runs:
         exit_code = "" if run.exit_code is None else f" <sub>exit {run.exit_code}</sub>"
@@ -393,6 +394,7 @@ def _verification_output(run: VerificationRun) -> str:
 
 
 def _fence_for(body: str) -> str:
+    """A fence longer than the longest backtick run in ``body``, so it cannot close early."""
     longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
     return "`" * max(3, longest + 1)
 
@@ -681,6 +683,7 @@ def _global_agent_prompt(grouped: dict[Bucket, list[Finding]], *, collapsible: b
 
 
 def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
+    """The run's own provenance -- source, issue, revisions -- folded away beneath it."""
     blocks: list[str] = []
     changeset = result.changeset
 

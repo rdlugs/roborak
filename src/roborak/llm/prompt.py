@@ -139,6 +139,7 @@ def build_review_prompt(
     contract_contexts: list[ContractContext] | None = None,
     collect_reconciliation_evidence: bool = False,
 ) -> RenderedPrompt:
+    """The system and user halves of one review pass, with every untrusted field already escaped."""
     impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
     system = _system(
         "review_system.jinja2",
@@ -252,6 +253,7 @@ def _review_user(
     verification: VerificationReport | None = None,
     contract_contexts: list[ContractContext] | None = None,
 ) -> str:
+    """The user half: the change and its context, escaped before it reaches the template."""
     return _env.get_template("review_user.jinja2").render(
         title=_escape_untrusted(changeset.title),
         description=_escape_untrusted(changeset.description),
