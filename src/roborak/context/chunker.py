@@ -315,7 +315,7 @@ def _relationship_groups(
 
     stems = {path: PurePosixPath(path).stem.removeprefix("test_") for path in by_path}
     for target, text in texts.items():
-        imported = {part.replace(":", ".").split(".")[-1] for part in _imports(text)}
+        imported = {_import_stem(part) for part in _imports(text)}
         for source, stem in stems.items():
             if source == target or not stem:
                 continue
@@ -372,6 +372,19 @@ def _mentions(text: str, term: str) -> bool:
 
 def _imports(text: str) -> set[str]:
     return {part for match in _IMPORT.finditer(text) for part in match.groups() if part}
+
+
+def _import_stem(spec: str) -> str:
+    """Reduce an import specifier to the file stem it names.
+
+    A relative specifier is a path, not a dotted module, so `./api` and `../api.js`
+    have to reduce to the same stem as a changed `api.py` -- splitting on dots alone
+    leaves `/api` and `js`, which match nothing.
+    """
+    normalized = spec.replace("\\", "/")
+    if "/" in normalized:
+        return PurePosixPath(normalized).stem
+    return normalized.replace(":", ".").rsplit(".", 1)[-1]
 
 
 def contract_contexts(

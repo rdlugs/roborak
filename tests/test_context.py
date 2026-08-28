@@ -290,6 +290,19 @@ def test_related_test_follows_its_implementation_when_the_pair_fits():
     assert [file.path for file in plan.chunks[0].files] == [implementation.path, test.path]
 
 
+def test_relative_import_groups_a_consumer_with_the_module_it_imports():
+    """A relative specifier names a path, not a dotted module."""
+    module = make_text_file("web/api.js", "export function load() {\n  return 1;\n}", "javascript")
+    consumer = make_text_file(
+        "ui/panel.js", "import { load } from '../web/api';\nload();", "javascript"
+    )
+    budget = count(render(module)) + count(render(consumer)) + 5
+    plan = plan_chunks(ChangeSet(files=[consumer, module]), budget, count, render)
+    assert [file.path for file in plan.chunks[0].files] == [module.path, consumer.path]
+    roles = {file.path: file.role for file in plan.review.files}
+    assert roles[consumer.path] is ReviewRole.CONSUMER
+
+
 def test_semantic_order_is_deterministic_for_reversed_input():
     files = [
         make_text_file("docs/generated.md", "Generated reference", "markdown"),
@@ -593,6 +606,38 @@ def test_verbose_evidence_is_trimmed_to_fit_the_reconciliation_budget(tmp_path):
 
     assert result.status is ReviewStatus.COMPLETE
     assert 0 < Flooding.reconciliation_tokens <= budget
+
+
+def test_reconciliation_fits_the_budget_when_contracts_alone_overflow_it(tmp_path):
+    """Evidence is not the only thing that can push the reducer over its budget, and
+    an over-budget reducer call turns a complete review into a PARTIAL one."""
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.context.chunker import ContractContext
+    from roborak.core.config import Config
+    from tests.test_pipeline import StubLLM
+
+    budget = 1000
+    llm = StubLLM(reply="", context_budget=budget)
+    contracts = [
+        ContractContext(
+            path=f"services/subsystem_{index}/public_interface.py",
+            name=f"handler_{index}",
+            kind="function",
+            line=index + 1,
+            summary=f"def handler_{index}(payload: Payload) -> Response",
+        )
+        for index in range(MAX_CONTRACT_CONTEXTS)
+    ]
+    files = [f"services/subsystem_{index}/public_interface.py" for index in range(200)]
+
+    prompt = Reviewer(config=Config(), repo=tmp_path, llm=llm)._reconciliation_prompt(
+        requirement_evidence=[],
+        compatibility_evidence=[],
+        contracts=contracts,
+        files=files,
+    )
+
+    assert llm.count_tokens(f"{prompt.system}\n{prompt.user}") <= budget
 
 
 def test_carried_contracts_do_not_compress_a_file_the_plan_promised_to_review(tmp_path):

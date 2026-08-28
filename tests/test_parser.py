@@ -347,6 +347,23 @@ compatibility_evidence:
     ]
 
 
+def test_a_long_contract_path_survives_intact():
+    """The reducer matches an entry to its contract by path, so a truncated path
+    would silently name no contract at all."""
+    path = "/".join(f"package_{index}" for index in range(40)) + "/api.py"
+    assert len(path) > 300
+    text = f"""
+findings: []
+compatibility_evidence:
+  - contract: load
+    contract_file: {path}
+    file: worker.py
+    status: incompatible
+    evidence: The worker passes no limit.
+"""
+    assert parse_compatibility_evidence(text)[0]["contract_file"] == path
+
+
 def test_same_named_contracts_stay_distinct_by_contract_file():
     text = """
 findings: []

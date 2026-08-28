@@ -101,8 +101,18 @@ MAX_EVIDENCE_CHARS = 300
 note. Every pass contributes, so an unbounded field is an unbounded prompt."""
 
 
+MAX_PATH_CHARS = 1024
+"""How long an evidence path may be. A path is an identity the reducer matches an
+entry back to its contract by, so it has to survive whole -- but the reply is still
+untrusted, so it stays bounded."""
+
+
 def _evidence_field(value: Any) -> str:
     return _as_str(value)[:MAX_EVIDENCE_CHARS]
+
+
+def _evidence_path(value: Any) -> str:
+    return _as_str(value)[:MAX_PATH_CHARS]
 
 
 def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
@@ -121,7 +131,7 @@ def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
             evidence.append(
                 {
                     "requirement": requirement,
-                    "file": _evidence_field(entry.get("file")),
+                    "file": _evidence_path(entry.get("file")),
                     "evidence": explanation,
                 }
             )
@@ -148,8 +158,8 @@ def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:
                     "contract": contract,
                     # A contract name is unique only within its file, and the reducer
                     # matches evidence back to the catalog entry it came from.
-                    "contract_file": _evidence_field(entry.get("contract_file")),
-                    "file": _evidence_field(entry.get("file")),
+                    "contract_file": _evidence_path(entry.get("contract_file")),
+                    "file": _evidence_path(entry.get("file")),
                     "status": _evidence_field(entry.get("status")) or "unknown",
                     "evidence": explanation,
                 }

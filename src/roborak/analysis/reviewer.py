@@ -393,7 +393,8 @@ class Reviewer:
         accumulate more than the reducer can read -- and the reducer has no chunked
         fallback: one over-budget call turns a complete review into a PARTIAL one.
         Evidence is dropped from the longer list first, so both kinds survive as far
-        as the budget allows.
+        as the budget allows; a change whose contracts and paths alone overflow the
+        budget sheds those too, because an over-budget prompt reconciles nothing.
         """
         assert self.llm is not None
         requirements = requirement_evidence[:MAX_RECONCILIATION_EVIDENCE]
@@ -401,6 +402,8 @@ class Reviewer:
         dropped = (len(requirement_evidence) - len(requirements)) + (
             len(compatibility_evidence) - len(compatibility)
         )
+        dropped_contracts = 0
+        dropped_files = 0
         while True:
             prompt = build_reconciliation_prompt(
                 issue=(
@@ -416,16 +419,35 @@ class Reviewer:
             if self.llm.context_budget < 1000:
                 break
             total = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
-            if total <= self.llm.context_budget or not (requirements or compatibility):
+            if total <= self.llm.context_budget:
                 break
-            if len(compatibility) >= len(requirements):
-                dropped += len(compatibility) - len(compatibility) // 2
-                compatibility = compatibility[: len(compatibility) // 2]
+            if requirements or compatibility:
+                if len(compatibility) >= len(requirements):
+                    dropped += len(compatibility) - len(compatibility) // 2
+                    compatibility = compatibility[: len(compatibility) // 2]
+                else:
+                    dropped += len(requirements) - len(requirements) // 2
+                    requirements = requirements[: len(requirements) // 2]
+            elif contracts:
+                # Contracts arrive in review-priority order, so the ones a mismatch is
+                # most likely to involve are the ones kept.
+                dropped_contracts += len(contracts) - len(contracts) // 2
+                contracts = contracts[: len(contracts) // 2]
+            elif len(files) > 1:
+                dropped_files += len(files) - max(1, len(files) // 2)
+                files = files[: max(1, len(files) // 2)]
             else:
-                dropped += len(requirements) - len(requirements) // 2
-                requirements = requirements[: len(requirements) // 2]
+                # Only the issue body is left, and dropping it would defeat the very
+                # requirement check the reducer was called for.
+                break
         if dropped:
             log.warning("reconciliation dropped %d evidence entries to fit the budget", dropped)
+        if dropped_contracts or dropped_files:
+            log.warning(
+                "reconciliation dropped %d contracts and %d changed paths to fit the budget",
+                dropped_contracts,
+                dropped_files,
+            )
         return prompt
 
     def _review_chunk(
