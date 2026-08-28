@@ -100,6 +100,13 @@ def sandbox_prefix(repo: Path) -> list[str] | None:
         # business reaching the disks, the terminals or anything else in /dev.
         "--dev",
         "/dev",
+        # A PID namespace of its own, so the procfs mounted below lists the
+        # sandboxed process and nothing else. Without it `--proc` still shows
+        # every process on the host -- their command lines, their environments --
+        # to a command we decided we did not trust. It also makes the namespace
+        # the kill boundary: when the runner's timeout kills bwrap, everything the
+        # suite spawned dies with it rather than being orphaned onto the machine.
+        "--unshare-pid",
         "--proc",
         "/proc",
         # Its own session, so it cannot push characters back onto the terminal

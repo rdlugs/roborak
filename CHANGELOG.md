@@ -41,14 +41,18 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
-- **The CI sandbox gives commands a private `/dev` and their own session.** Static
-  analysis and verification both run repository-controlled commands, and the
-  bubblewrap prefix they share bind-mounted the host's whole `/dev` and left the
-  sandboxed process in the terminal's session. It now mounts a private device
-  filesystem with the standard nodes and adds `--new-session`, so a command cannot
-  reach the host's devices or push characters back onto the terminal that started
-  the review. Output is captured through pipes, so nothing in either stage wanted a
-  controlling terminal to begin with.
+- **The CI sandbox isolates commands from the host's devices, processes and
+  terminal.** Static analysis and verification both run repository-controlled
+  commands, and the bubblewrap prefix they share bind-mounted the host's whole
+  `/dev`, mounted a `/proc` that still listed every process on the machine — their
+  command lines and environments included — and left the sandboxed process in the
+  terminal's session. It now mounts a private device filesystem with the standard
+  nodes, adds `--unshare-pid` so that `/proc` shows only the sandbox, and adds
+  `--new-session` so a command cannot push characters back onto the terminal that
+  started the review. The PID namespace is also the kill boundary: a suite that
+  hits the timeout no longer leaves its own spawned children running. Output is
+  captured through pipes, so nothing in either stage wanted a controlling terminal
+  to begin with.
 
 - **AST support is part of a default installation.** `tree-sitter` and
   `tree-sitter-language-pack` were behind an `ast` extra, so `uvx roborak`,
