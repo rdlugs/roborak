@@ -350,8 +350,8 @@ compatibility_evidence:
 def test_a_long_contract_path_survives_intact():
     """The reducer matches an entry to its contract by path, so a truncated path
     would silently name no contract at all."""
-    path = "/".join(f"package_{index}" for index in range(40)) + "/api.py"
-    assert len(path) > 300
+    path = "/".join(f"package_{index}" for index in range(100)) + "/api.py"
+    assert len(path) > 1024
     text = f"""
 findings: []
 compatibility_evidence:

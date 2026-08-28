@@ -158,7 +158,7 @@ def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:
                     "contract": contract,
                     # A contract name is unique only within its file, and the reducer
                     # matches evidence back to the catalog entry it came from.
-                    "contract_file": _evidence_path(entry.get("contract_file")),
+                    "contract_file": _as_str(entry.get("contract_file")),
                     "file": _evidence_path(entry.get("file")),
                     "status": _evidence_field(entry.get("status")) or "unknown",
                     "evidence": explanation,
