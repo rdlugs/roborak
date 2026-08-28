@@ -7,9 +7,23 @@ import textwrap
 import pytest
 
 from roborak.context import ast_context
-from roborak.context.chunker import MAX_CHUNKS, chunk, needs_chunking
+from roborak.context.chunker import (
+    MAX_CHUNKS,
+    MAX_CONTRACT_CONTEXTS,
+    chunk,
+    needs_chunking,
+    plan_chunks,
+)
 from roborak.context.diff import parse_diff
-from roborak.core.models import ChangedFile, ChangeSet, Hunk
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    Consumer,
+    Hunk,
+    ImpactMap,
+    ImpactNode,
+    ReviewRole,
+)
 
 PYTHON_SRC = textwrap.dedent(
     """\
@@ -133,6 +147,26 @@ def make_file(path: str, lines: int, language: str = "python") -> ChangedFile:
     return ChangedFile(path=path, language=language, hunks=[hunk])
 
 
+def make_text_file(path: str, text: str, language: str = "python") -> ChangedFile:
+    lines = text.splitlines()
+    body = "\n".join(f"+{line}" for line in lines)
+    hunk = Hunk(
+        old_start=1,
+        old_lines=0,
+        new_start=1,
+        new_lines=len(lines),
+        content=body,
+        added_lines=set(range(1, len(lines) + 1)),
+    )
+    return ChangedFile(
+        path=path,
+        language=language,
+        hunks=[hunk],
+        new_content=text,
+        change_type="added",
+    )
+
+
 def render(file: ChangedFile) -> str:
     return "\n".join(h.content for h in file.hunks)
 
@@ -204,6 +238,119 @@ def test_files_are_grouped_by_directory():
     chunks = chunk(ChangeSet(files=files), count(render(files[0])) * 2, count, render)
     first = [f.path for f in chunks[0].files]
     assert first == ["app/auth/a.py", "app/auth/b.py"], "related files belong together"
+
+
+def test_contracts_and_late_migrations_are_planned_before_leaf_code():
+    files = [
+        make_text_file("aaa/leaf.py", "def helper():\n    return 1"),
+        make_text_file(
+            "zzz/migrations/004_add_owner.sql", "ALTER TABLE jobs ADD owner TEXT", "sql"
+        ),
+        make_text_file("public/api.py", "def create_job(owner):\n    return owner"),
+    ]
+    plan = plan_chunks(ChangeSet(files=files), 25, count, render)
+    assert [file.path for file in plan.review.files] == [
+        "public/api.py",
+        "zzz/migrations/004_add_owner.sql",
+        "aaa/leaf.py",
+    ]
+    assert [file.role for file in plan.review.files] == [
+        ReviewRole.CONTRACT,
+        ReviewRole.SCHEMA_CONFIG,
+        ReviewRole.IMPLEMENTATION,
+    ]
+
+
+def test_contract_and_changed_consumer_are_co_located_across_directories():
+    contract = make_text_file("api/types.py", "class Job:\n    owner: str")
+    consumer = make_text_file("workers/runner.py", "from api.types import Job\njob = Job()")
+    impact = ImpactMap(
+        nodes=[
+            ImpactNode(
+                name="Job",
+                file=contract.path,
+                consumers=[Consumer(path="unchanged.py", line=1)],
+            )
+        ]
+    )
+    budget = count(render(contract)) + count(render(consumer)) + 5
+    plan = plan_chunks(ChangeSet(files=[consumer, contract]), budget, count, render, impact=impact)
+    assert [file.path for file in plan.chunks[0].files] == [contract.path, consumer.path]
+    assert plan.review.files[1].role is ReviewRole.CONSUMER
+    assert [(item.path, item.name) for item in plan.contracts] == [(contract.path, "Job")]
+
+
+def test_related_test_follows_its_implementation_when_the_pair_fits():
+    implementation = make_text_file("src/service.py", "def charge():\n    return True")
+    test = make_text_file(
+        "tests/test_service.py", "from src.service import charge\nassert charge()"
+    )
+    budget = count(render(implementation)) + count(render(test)) + 5
+    plan = plan_chunks(ChangeSet(files=[test, implementation]), budget, count, render)
+    assert [file.path for file in plan.chunks[0].files] == [implementation.path, test.path]
+
+
+@pytest.mark.parametrize(
+    ("module_path", "specifier"),
+    [("web/api.js", "../web/api"), ("web/api.client.js", "../web/api.client")],
+)
+def test_relative_import_groups_a_consumer_with_the_module_it_imports(module_path, specifier):
+    """A relative specifier names a path, not a dotted module."""
+    module = make_text_file(module_path, "export function load() {\n  return 1;\n}", "javascript")
+    consumer = make_text_file(
+        "ui/panel.js", f"import {{ load }} from '{specifier}';\nload();", "javascript"
+    )
+    budget = count(render(module)) + count(render(consumer)) + 5
+    plan = plan_chunks(ChangeSet(files=[consumer, module]), budget, count, render)
+    assert [file.path for file in plan.chunks[0].files] == [module.path, consumer.path]
+    roles = {file.path: file.role for file in plan.review.files}
+    assert roles[consumer.path] is ReviewRole.CONSUMER
+
+
+def test_semantic_order_is_deterministic_for_reversed_input():
+    files = [
+        make_text_file("docs/generated.md", "Generated reference", "markdown"),
+        make_text_file("src/worker.py", "def run():\n    pass"),
+        make_text_file("config/app.yaml", "timeout: 5", "yaml"),
+    ]
+    forward = plan_chunks(ChangeSet(files=files), 20, count, render)
+    reverse = plan_chunks(ChangeSet(files=list(reversed(files))), 20, count, render)
+    assert [file.path for file in forward.review.files] == [
+        file.path for file in reverse.review.files
+    ]
+
+
+def test_low_signal_files_are_omitted_before_boundaries_at_the_pass_cap():
+    files = [make_text_file("public/api.py", "def public_call():\n    return 1")]
+    files.extend(make_file(f"generated/f{i:02d}.md", 100, "markdown") for i in range(20))
+    plan = plan_chunks(ChangeSet(files=files), 25, count, render)
+    assert len(plan.chunks) == MAX_CHUNKS
+    assert plan.review.files[0].path == "public/api.py"
+    assert plan.review.files[0].reviewed
+    assert plan.review.omitted_roles[ReviewRole.LOW_SIGNAL] > 0
+
+
+def test_uncertain_classification_falls_back_to_implementation():
+    plan = plan_chunks(
+        ChangeSet(
+            files=[make_text_file("odd/place/widget.zzz", "something unfamiliar", "klingon")]
+        ),
+        100,
+        count,
+        render,
+    )
+    assert plan.review.files[0].role is ReviewRole.IMPLEMENTATION
+
+
+def test_contract_metadata_is_bounded_and_not_added_as_primary_diff():
+    files = [
+        make_text_file(f"public/api{i}.py", f"def call_{i}():\n    return {i}")
+        for i in range(MAX_CONTRACT_CONTEXTS + 5)
+    ]
+    plan = plan_chunks(ChangeSet(files=files), 30, count, render)
+    assert len(plan.contracts) == MAX_CONTRACT_CONTEXTS
+    primary = [file.path for piece in plan.chunks for file in piece.files]
+    assert set(primary).issubset({file.path for file in files})
 
 
 def test_a_single_oversized_file_is_split_into_reviewable_windows():
@@ -295,6 +442,88 @@ def test_failed_chunk_marks_the_review_partial_without_losing_other_passes(tmp_p
     assert any(item.reason.value == "chunk_failed" for item in result.coverage)
 
 
+def test_failed_contract_is_not_carried_into_later_passes(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMError, LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    changeset = ChangeSet(files=[contract, *(make_file(f"pkg{i}/f.py", 30) for i in range(5))])
+    later_prompts: list[str] = []
+
+    class FailingContract(StubLLM):
+        calls = 0
+
+        def complete(self, system, user):
+            FailingContract.calls += 1
+            if FailingContract.calls == 1:
+                raise LLMError("contract pass failed")
+            later_prompts.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=FailingContract(reply="", context_budget=140)
+    ).review(changeset)
+
+    assert result.review_plan is not None
+    planned = next(file for file in result.review_plan.files if file.path == contract.path)
+    assert not planned.reviewed
+    assert planned.chunk is None
+    assert later_prompts
+    section = "## Contracts established in earlier review passes"
+    assert all(
+        section not in prompt
+        or contract.path not in prompt.split(section, 1)[1].split("## Diff to review", 1)[0]
+        for prompt in later_prompts
+    )
+
+
+def test_context_omitted_contract_is_not_carried_into_later_passes(tmp_path, monkeypatch):
+    from roborak.analysis import reviewer as reviewer_module
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    changeset = ChangeSet(files=[contract, *(make_file(f"pkg{i}/f.py", 100) for i in range(5))])
+    prompts: list[str] = []
+
+    class Recording(StubLLM):
+        def complete(self, system, user):
+            prompts.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    reviewer = Reviewer(
+        config=Config(), repo=tmp_path, llm=Recording(reply="", context_budget=1000)
+    )
+    monkeypatch.setattr(reviewer, "_diff_budget", lambda *_args, **_kwargs: 1000)
+
+    def omit_contract(prompt_changeset, *_args, **_kwargs):
+        if any(file.path == contract.path for file in prompt_changeset.files):
+            prompt_changeset.files = [
+                file for file in prompt_changeset.files if file.path != contract.path
+            ]
+            prompt_changeset.omitted_files.append(contract.path)
+        return prompt_changeset
+
+    monkeypatch.setattr(reviewer_module, "compress", omit_contract)
+    result = reviewer.review(changeset)
+
+    assert result.review_plan is not None
+    planned = next(file for file in result.review_plan.files if file.path == contract.path)
+    assert not planned.reviewed
+    assert planned.chunk is None
+    assert len(prompts) > 1
+    section = "## Contracts established in earlier review passes"
+    assert all(
+        section not in prompt
+        or contract.path not in prompt.split(section, 1)[1].split("## Diff to review", 1)[0]
+        for prompt in prompts
+    )
+
+
 def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
     from roborak.analysis.reviewer import Reviewer
     from roborak.core.config import Config
@@ -307,7 +536,7 @@ def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
 
     class EvidenceLLM(StubLLM):
         def complete(self, system, user):
-            if "checking whether a complete code change" in system:
+            if "reconcile evidence collected" in system:
                 return LLMResponse(
                     text=(
                         "findings:\n"
@@ -338,4 +567,290 @@ def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
         issue=issue,
     ).review(changeset)
     assert [finding.kind for finding in result.findings] == [Kind.REQUIREMENT_GAP]
-    assert result.usage[-1].purpose == "requirements"
+    assert result.usage[-1].purpose == "reconciliation"
+
+
+def test_global_reconciliation_can_report_a_cross_chunk_contract_mismatch(tmp_path, monkeypatch):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.context import impact as impact_module
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    consumer = make_text_file("zzz/client.py", "from public.api import load\nload()")
+    mapped = ImpactMap(
+        nodes=[
+            ImpactNode(
+                name="load",
+                file=contract.path,
+                consumers=[Consumer(path="old_client.py", line=1)],
+            )
+        ]
+    )
+    monkeypatch.setattr(impact_module, "analyse", lambda *args: mapped)
+
+    class Reconciling(StubLLM):
+        reducer_prompt = ""
+
+        def complete(self, system, user):
+            if "reconcile evidence collected" in system:
+                Reconciling.reducer_prompt = user
+                return LLMResponse(
+                    text=(
+                        "findings:\n"
+                        "  - file: public/api.py\n"
+                        "    start_line: 1\n"
+                        "    severity: major\n"
+                        "    category: bug\n"
+                        "    body: The required argument breaks zzz/client.py.\n"
+                        "    evidence: contract\n"
+                        "    evidence_note: The caller still invokes load with no argument.\n"
+                        "    evidence_files: [zzz/client.py]\n"
+                    ),
+                    model="stub",
+                )
+            path = "public/api.py" if "public/api.py" in user else "zzz/client.py"
+            return LLMResponse(
+                text=(
+                    "findings: []\n"
+                    "compatibility_evidence:\n"
+                    "  - contract: load\n"
+                    "    contract_file: public/api.py\n"
+                    f"    file: {path}\n"
+                    "    status: incompatible\n"
+                    "    evidence: The caller supplies no limit.\n"
+                ),
+                model="stub",
+            )
+
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=Reconciling(reply="", context_budget=12)
+    ).review(ChangeSet(files=[consumer, contract]))
+    assert [finding.file for finding in result.findings] == ["public/api.py"]
+    assert result.usage[-1].purpose == "reconciliation"
+    # The reducer resolves evidence against the contract catalogue by path, so the
+    # path each pass named has to survive into its prompt.
+    assert "contract_file: public/api.py" in Reconciling.reducer_prompt
+
+
+def test_failed_reconciliation_marks_an_otherwise_complete_review_partial(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import Issue, ReviewStatus
+    from roborak.llm.client import LLMError, LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    class FailingReducer(StubLLM):
+        def complete(self, system, user):
+            if "reconcile evidence collected" in system:
+                raise LLMError("reducer unavailable")
+            return LLMResponse(text="findings: []", model="stub")
+
+    result = Reviewer(
+        config=Config(),
+        repo=tmp_path,
+        llm=FailingReducer(reply="", context_budget=140),
+        issue=Issue(provider="github", host="github.com", project="a/b", number=1),
+    ).review(ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(4)]))
+
+    assert result.status is ReviewStatus.PARTIAL
+    assert result.errors == ["reconciliation failed: reducer unavailable"]
+
+
+def test_verbose_evidence_is_trimmed_to_fit_the_reconciliation_budget(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import Issue, ReviewStatus
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    budget = 4000
+    flood = "findings: []\nrequirement_evidence:\n" + "".join(
+        f"  - requirement: Requirement {index}\n"
+        f"    file: pkg0/f.py\n"
+        f"    evidence: {'verbose ' * 40}\n"
+        for index in range(30)
+    )
+
+    class Flooding(StubLLM):
+        reconciliation_tokens = 0
+
+        def complete(self, system, user):
+            if "reconcile evidence collected" in system:
+                Flooding.reconciliation_tokens = self.count_tokens(f"{system}\n{user}")
+                return LLMResponse(text="findings: []", model="stub")
+            return LLMResponse(text=flood, model="stub")
+
+    issue = Issue(provider="github", host="github.com", project="a/b", number=1, body="Timeout")
+    result = Reviewer(
+        config=Config(),
+        repo=tmp_path,
+        llm=Flooding(reply="", context_budget=budget),
+        issue=issue,
+    ).review(ChangeSet(files=[make_file(f"pkg{i}/f.py", 60) for i in range(6)]))
+
+    assert result.status is ReviewStatus.COMPLETE
+    assert 0 < Flooding.reconciliation_tokens <= budget
+
+
+def test_reconciliation_fits_the_budget_when_contracts_alone_overflow_it(tmp_path):
+    """Evidence is not the only thing that can push the reducer over its budget, and
+    an over-budget reducer call turns a complete review into a PARTIAL one."""
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.context.chunker import ContractContext
+    from roborak.core.config import Config
+    from tests.test_pipeline import StubLLM
+
+    budget = 1000
+    llm = StubLLM(reply="", context_budget=budget)
+    contracts = [
+        ContractContext(
+            path=f"services/subsystem_{index}/public_interface.py",
+            name=f"handler_{index}",
+            kind="function",
+            line=index + 1,
+            summary=f"def handler_{index}(payload: Payload) -> Response",
+        )
+        for index in range(MAX_CONTRACT_CONTEXTS)
+    ]
+    files = [f"services/subsystem_{index}/public_interface.py" for index in range(200)]
+
+    prompt = Reviewer(config=Config(), repo=tmp_path, llm=llm)._reconciliation_prompt(
+        requirement_evidence=[],
+        compatibility_evidence=[],
+        contracts=contracts,
+        files=files,
+    )
+
+    assert llm.count_tokens(f"{prompt.system}\n{prompt.user}") <= budget
+
+
+def test_carried_contracts_do_not_compress_a_file_the_plan_promised_to_review(tmp_path):
+    """The plan has to leave room for the contracts later passes are handed.
+
+    They are not rendered when the budget is measured, so a plan that ignores them
+    fills every pass to the brim and the carried section pushes it back over --
+    compressing away files the plan had just promised to review.
+    """
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import ReviewStatus
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    budget = 7500
+    contracts = [
+        make_text_file(
+            f"public/api{index}.py",
+            "\n".join(
+                f"def load_{i}(limit: int, retries: int, timeout: float) -> int:\n"
+                "    return limit + retries"
+                for i in range(20)
+            ),
+        )
+        for index in range(12)
+    ]
+    changeset = ChangeSet(files=[*contracts, *(make_file(f"pkg{i}/f.py", 8) for i in range(90))])
+
+    sizes: list[int] = []
+
+    class Recording(StubLLM):
+        def complete(self, system, user):
+            sizes.append(self.count_tokens(f"{system}\n{user}"))
+            return LLMResponse(text="findings: []", model="stub")
+
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=Recording(reply="", context_budget=budget)
+    ).review(changeset)
+
+    assert max(sizes) <= budget
+    assert result.status is ReviewStatus.COMPLETE
+    assert [error for error in result.errors if "context budget omitted" in error] == []
+    assert result.review_plan is not None
+    assert all(planned.reviewed for planned in result.review_plan.files)
+
+
+def test_a_single_pass_budget_reserves_nothing_for_contracts_it_will_never_carry(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from tests.test_pipeline import StubLLM
+
+    reviewer = Reviewer(config=Config(), repo=tmp_path, llm=StubLLM(reply="", context_budget=40000))
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    changeset = ChangeSet(files=[contract, make_file("pkg/f.py", 20)])
+
+    whole = reviewer._diff_budget(changeset)
+    chunked = reviewer._diff_budget(changeset, carries_contracts=True)
+    assert chunked < whole
+
+    without_contracts = ChangeSet(files=[make_file("pkg/f.py", 20)])
+    assert reviewer._diff_budget(
+        without_contracts, carries_contracts=True
+    ) == reviewer._diff_budget(without_contracts)
+
+
+def _split_changeset() -> ChangeSet:
+    """A contract big enough to be fragmented across a chunk boundary."""
+    contract = make_text_file(
+        "public/api.py",
+        "\n".join(
+            f"def load_{i}(limit: int, retries: int, timeout: float) -> int:\n"
+            "    return limit + retries"
+            for i in range(60)
+        ),
+    )
+    return ChangeSet(files=[contract, *(make_file(f"pkg{i}/f.py", 10) for i in range(6))])
+
+
+def test_the_plan_reports_the_first_pass_that_reviewed_a_split_file():
+    from roborak.context.chunker import plan_chunks
+
+    changeset = _split_changeset()
+    from roborak.analysis.reviewer import render_for_prompt
+
+    plan = plan_chunks(changeset, 900, lambda text: len(text) // 4, render_for_prompt)
+
+    spans = [
+        index
+        for index, piece in enumerate(plan.chunks, start=1)
+        if "public/api.py" in {file.path for file in piece.files}
+    ]
+    assert len(spans) > 1, "the contract should be split across passes for this to mean anything"
+    planned = next(file for file in plan.review.files if file.path == "public/api.py")
+    assert planned.chunk == spans[0]
+
+
+def test_a_contract_is_not_carried_into_a_pass_still_reviewing_it(tmp_path):
+    """Carrying is keyed on the first pass, so the guard against self-carry matters.
+
+    A split file stays primary diff in the pass holding its later fragments. Handed
+    its own summary there, under an instruction not to report on an earlier pass's
+    file, the model would be told to stay off the very lines it is reviewing.
+    """
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    section = "## Contracts established in earlier review passes"
+    both: list[int] = []
+
+    class Recording(StubLLM):
+        def complete(self, system, user):
+            if "reconcile evidence collected" in system:
+                return LLMResponse(text="findings: []", model="stub")
+            diff = user.split("## Diff to review")[-1]
+            carried = (
+                section in user
+                and "public/api.py" in user.split(section)[1].split("## Diff to review")[0]
+            )
+            both.append(carried and "public/api.py" in diff)
+            return LLMResponse(text="findings: []", model="stub")
+
+    Reviewer(config=Config(), repo=tmp_path, llm=Recording(reply="", context_budget=5000)).review(
+        _split_changeset()
+    )
+
+    assert len(both) > 1, "the contract should span several passes for this to mean anything"
+    assert not any(both)

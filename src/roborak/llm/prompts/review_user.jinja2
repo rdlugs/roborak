@@ -76,6 +76,25 @@ anything.
 {% endfor %}
 {% endfor %}
 {% endif %}
+{% if contract_contexts %}
+## Contracts established in earlier review passes
+
+These are bounded metadata, not diff content. Use them only to judge whether the
+files in this pass remain compatible. The files they came from were reviewed in an
+earlier pass and are not under review here: do not report a finding on one. Report
+findings only on the files shown in the diff below; when one of them is incompatible
+with a contract, anchor the finding to the line in this pass and return the
+compatibility evidence for the global reconciliation step.
+{% for contract in contract_contexts %}
+- `{{ contract.name }}` — {{ contract.kind }} in `{{ contract.path }}`:{{ contract.line }}
+{% if contract.summary %}
+  changed declaration/context:
+```
+{{ contract.summary }}
+```
+{% endif %}
+{% endfor %}
+{% endif %}
 
 ## Diff to review
 

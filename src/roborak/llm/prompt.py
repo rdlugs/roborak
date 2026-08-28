@@ -10,6 +10,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from roborak.context.ast_context import symbol_context
+from roborak.context.chunker import ContractContext
 from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
 from roborak.context.impact import for_prompt
@@ -130,7 +131,8 @@ def build_review_prompt(
     repo_context: str = "",
     issue: Issue | None = None,
     impact: ImpactMap | None = None,
-    collect_requirement_evidence: bool = False,
+    contract_contexts: list[ContractContext] | None = None,
+    collect_reconciliation_evidence: bool = False,
 ) -> RenderedPrompt:
     impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
     system = _system(
@@ -143,18 +145,25 @@ def build_review_prompt(
         impact=bool(impact_nodes),
         check_requirements=issue is not None
         and config.review.check_requirements
-        and not collect_requirement_evidence,
+        and not collect_reconciliation_evidence,
     )
-    if collect_requirement_evidence:
+    if collect_reconciliation_evidence:
         system += """
 
-# Requirement evidence for chunked review
+# Reconciliation evidence for chunked review
 
-This is one part of a larger change. Do not report requirement gaps. Alongside
-`findings`, return `requirement_evidence`, a list of concrete ways this part of
-the diff implements or contradicts an issue requirement. Each item has
-`requirement`, `file`, and `evidence`. An empty list is valid. Never infer that a
-requirement is missing merely because this part does not contain it.
+This is one part of a larger change. Do not report requirement gaps or a mismatch
+that depends on diff content outside this pass. Alongside `findings`, return:
+
+- `compatibility_evidence`: concrete uses of a carried contract with `contract`,
+  `contract_file` (the path the contract is listed under above -- two contracts can
+  share a name, so the reducer resolves them by path), `file` (where this pass uses
+  it), `status` (`compatible`, `incompatible`, or `unknown`), and `evidence`.
+- `requirement_evidence`: when issue context is present, concrete ways this part
+  implements or contradicts a requirement, with `requirement`, `file`, and
+  `evidence`.
+
+Either list may be empty. Never infer absence from one partial chunk.
 """
     user = _review_user(
         changeset,
@@ -164,29 +173,49 @@ requirement is missing merely because this part does not contain it.
         repo_context=repo_context,
         issue=issue,
         impact_nodes=impact_nodes,
+        contract_contexts=contract_contexts,
     )
     return RenderedPrompt(system=system, user=user)
 
 
-def build_requirement_reducer_prompt(
-    issue: Issue, evidence: list[dict[str, str]], files: list[str]
+def build_reconciliation_prompt(
+    *,
+    issue: Issue | None,
+    requirement_evidence: list[dict[str, str]],
+    compatibility_evidence: list[dict[str, str]],
+    contracts: list[ContractContext],
+    files: list[str],
 ) -> RenderedPrompt:
-    system = f"""You are checking whether a complete code change satisfies its issue.
-You receive evidence collected from every review chunk. Report a requirement_gap
-only when the issue clearly requires something and the complete evidence set shows
-it is absent or contradicted. No evidence across the complete set can establish a
-gap for an explicit requirement, but use no finding when the requirement or its
-scope is uncertain. Use only the supplied file paths, line 1, and YAML in the ordinary
-roborak findings schema. Every finding must have kind requirement_gap.
+    system = f"""You reconcile evidence collected from every chunk of one code change.
+Report an ordinary potential_issue only for a concrete incompatibility between a
+changed contract and its implementation, consumer, migration, configuration, or
+test. If issue context is supplied, report a requirement_gap only when an explicit
+requirement is absent or contradicted across the complete evidence set. Silence and
+unknown evidence are not proof of a defect. Use only supplied changed file paths and
+YAML in the ordinary roborak findings schema. Anchor a mismatch to the changed
+contract line responsible; requirement gaps may use line 1. Resolve a compatibility
+entry against the contract whose `file` matches its `contract_file` and whose `name`
+matches its `contract`: one name can belong to several contracts, and an entry
+carrying no `contract_file` names no particular one.
 
 {UNTRUSTED_DATA_RULE}
 """
     safe_issue = _safe_issue(issue)
-    assert safe_issue is not None
     payload = {
-        "issue": safe_issue.model_dump(),
+        "issue": safe_issue.model_dump() if safe_issue is not None else None,
         "changed_files": [_escape_untrusted(path) for path in files],
-        "requirement_evidence": evidence,
+        "contracts": [
+            {
+                "file": _escape_untrusted(contract.path),
+                "name": _escape_untrusted(contract.name),
+                "kind": contract.kind,
+                "line": contract.line,
+                "summary": _escape_untrusted(contract.summary),
+            }
+            for contract in contracts
+        ],
+        "compatibility_evidence": compatibility_evidence,
+        "requirement_evidence": requirement_evidence,
     }
     return RenderedPrompt(system=system, user=yaml.safe_dump(payload, sort_keys=False))
 
@@ -214,6 +243,7 @@ def _review_user(
     repo_context: str = "",
     issue: Issue | None = None,
     impact_nodes: list[dict[str, Any]] | None = None,
+    contract_contexts: list[ContractContext] | None = None,
 ) -> str:
     return _env.get_template("review_user.jinja2").render(
         title=_escape_untrusted(changeset.title),
@@ -239,6 +269,16 @@ def _review_user(
         ],
         language_notes=_escape_untrusted(_language_notes(changeset, config)),
         impact_nodes=_safe_impact(impact_nodes or []),
+        contract_contexts=[
+            {
+                "path": _escape_untrusted(contract.path),
+                "name": _escape_untrusted(contract.name),
+                "kind": _escape_untrusted(contract.kind),
+                "line": contract.line,
+                "summary": _escape_untrusted(contract.summary),
+            }
+            for contract in (contract_contexts or [])
+        ],
         files=_file_dicts(changeset),
         omitted_files=changeset.omitted_files,
     )

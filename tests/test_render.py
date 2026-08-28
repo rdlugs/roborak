@@ -25,7 +25,10 @@ from roborak.core.models import (
     Issue,
     LLMCallUsage,
     ReviewComment,
+    ReviewPlan,
+    ReviewPlanFile,
     ReviewResult,
+    ReviewRole,
     Walkthrough,
 )
 from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
@@ -128,6 +131,32 @@ def test_json_keeps_model_usage_metadata():
     assert payload["models_used"] == ["test/model"]
     assert payload["tokens_used"] == 15
     assert payload["usage"][0]["total_tokens"] == 15
+
+
+def test_json_coverage_explains_semantic_order_and_omitted_roles():
+    result = make_result()
+    result.review_plan = ReviewPlan(
+        chunks=2,
+        files=[
+            ReviewPlanFile(path="app/auth.py", role=ReviewRole.CONTRACT, order=1, chunk=1),
+            ReviewPlanFile(
+                path="generated/big.ts",
+                role=ReviewRole.LOW_SIGNAL,
+                order=2,
+                reviewed=False,
+            ),
+        ],
+    )
+    payload = json.loads(json_out.render(result))
+    assert payload["schema_version"] == 3
+    assert payload["coverage"]["file_plan"][0] == {
+        "path": "app/auth.py",
+        "role": "contract",
+        "order": 1,
+        "chunk": 1,
+        "reviewed": True,
+    }
+    assert payload["coverage"]["omitted_roles"] == {"low_signal": 1}
 
 
 def test_json_findings_carry_provenance():
@@ -473,6 +502,26 @@ def render_terminal(result: ReviewResult, width: int = 100) -> str:
     console = Console(record=True, width=width)
     terminal.render(result, console, Path("/nonexistent"))
     return console.export_text()
+
+
+def test_human_outputs_explain_semantic_review_coverage():
+    result = make_result()
+    result.review_plan = ReviewPlan(
+        chunks=2,
+        files=[
+            ReviewPlanFile(path="app/auth.py", role=ReviewRole.CONTRACT, order=1, chunk=1),
+            ReviewPlanFile(
+                path="generated/big.ts",
+                role=ReviewRole.LOW_SIGNAL,
+                order=2,
+                reviewed=False,
+            ),
+        ],
+    )
+    document = markdown.render(result, full=True)
+    assert "Semantic review plan (2 pass(es))" in document
+    assert "Omitted roles: low_signal (1)" in document
+    assert "semantic review order: 2 pass(es)" in render_terminal(result).lower()
 
 
 def test_terminal_header_says_what_was_reviewed():

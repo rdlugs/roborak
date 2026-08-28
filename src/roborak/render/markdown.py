@@ -624,6 +624,27 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             )
         )
 
+    if result.review_plan is not None:
+        by_chunk: dict[int, list[str]] = {}
+        for file in result.review_plan.files:
+            if file.chunk is not None:
+                by_chunk.setdefault(file.chunk, []).append(f"`{file.path}` ({file.role.value})")
+        listed = "\n".join(
+            f"* Pass {chunk}: " + ", ".join(paths) for chunk, paths in sorted(by_chunk.items())
+        )
+        if omitted := result.review_plan.omitted_roles:
+            listed += "\n* Omitted roles: " + ", ".join(
+                f"{role.value} ({count})" for role, count in omitted.items()
+            )
+        blocks.append(
+            _details(
+                f"🧭 Semantic review plan ({result.review_plan.chunks} pass(es))",
+                listed,
+                level=3,
+                collapsible=collapsible,
+            )
+        )
+
     if result.coverage:
         listed = "\n".join(
             f"* `{item.path}` — {item.reason.value.replace('_', ' ')}"
@@ -762,6 +783,13 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
 
     if result.errors:
         lines.append("**Errors:**\n" + "\n".join(f"* {error}" for error in result.errors))
+
+    if result.review_plan is not None:
+        roles = ", ".join(
+            f"{role.value} {count}" for role, count in result.review_plan.omitted_roles.items()
+        )
+        suffix = f" · omitted by role: {roles}" if roles else ""
+        lines.append(f"_Semantic review order: {result.review_plan.chunks} pass(es){suffix}_")
 
     if hid_sections:
         lines.append("_`--full` adds the agent prompts and the review info._")

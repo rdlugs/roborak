@@ -181,10 +181,17 @@ export default function HowItWorks() {
 
       <H2>Large diffs are reviewed in several passes</H2>
       <P>
-        Not truncated. The chunker splits by directory so related files stay together, each pass
-        inherits the parent&apos;s metadata, and one failed pass never discards the others.
-        Compression which <em>does</em> drop things is the last resort, and always reports what
-        it skipped.
+        Not truncated. The planner assigns each file a deterministic semantic role and puts public
+        contracts, schemas, migrations, configuration and deployment boundaries before leaf
+        implementation. Direct consumers and user-authored tests stay with the boundary they
+        exercise when they fit; generated files and low-signal documentation go last.
+      </P>
+      <P>
+        Later passes receive a bounded description of earlier contract changes rather than a copy
+        of their diffs. A final reconciliation pass checks those contracts across chunks, while the
+        review coverage reports the exact order and which roles the eight-pass ceiling omitted. One
+        failed pass never discards the others, and compression which <em>does</em> drop things is the
+        last resort and always reports what it skipped.
       </P>
 
       <H2>Issue context</H2>

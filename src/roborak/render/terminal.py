@@ -339,4 +339,12 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
             f"{', '.join(result.skipped_files[:5])}"
             f"{' …' if len(result.skipped_files) > 5 else ''}[/]"
         )
+    if result.review_plan is not None:
+        omitted = ", ".join(
+            f"{role.value} {count}" for role, count in result.review_plan.omitted_roles.items()
+        )
+        suffix = f" · omitted by role: {omitted}" if omitted else ""
+        console.print(
+            f"[dim]semantic review order: {result.review_plan.chunks} pass(es){suffix}[/]"
+        )
     console.print("[dim]🤖 reviewed by roborak[/]")

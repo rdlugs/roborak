@@ -14,6 +14,7 @@ from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
     MAX_EVIDENCE_FILES,
     ParseError,
+    parse_compatibility_evidence,
     parse_findings,
     parse_requirement_evidence,
     parse_walkthrough,
@@ -323,6 +324,73 @@ requirement_evidence:
     assert parse_requirement_evidence("findings: []\nrequirement_evidence: nope") == []
 
 
+def test_compatibility_evidence_is_optional_and_tolerates_bad_entries():
+    text = """
+findings: []
+compatibility_evidence:
+  - contract: create_job
+    contract_file: jobs/api.py
+    file: worker.py
+    status: incompatible
+    evidence: The worker still calls the removed argument.
+  - nonsense
+  - contract: no-explanation
+"""
+    assert parse_compatibility_evidence(text) == [
+        {
+            "contract": "create_job",
+            "contract_file": "jobs/api.py",
+            "file": "worker.py",
+            "status": "incompatible",
+            "evidence": "The worker still calls the removed argument.",
+        }
+    ]
+
+
+def test_a_long_contract_path_survives_intact():
+    """The reducer matches an entry to its contract by path, so a truncated path
+    would silently name no contract at all."""
+    path = "/".join(f"package_{index}" for index in range(100)) + "/api.py"
+    assert len(path) > 1024
+    text = f"""
+findings: []
+compatibility_evidence:
+  - contract: load
+    contract_file: {path}
+    file: worker.py
+    status: incompatible
+    evidence: The worker passes no limit.
+"""
+    assert parse_compatibility_evidence(text)[0]["contract_file"] == path
+
+
+def test_same_named_contracts_stay_distinct_by_contract_file():
+    text = """
+findings: []
+compatibility_evidence:
+  - contract: load
+    contract_file: public/api.py
+    file: worker.py
+    status: incompatible
+    evidence: The worker passes no limit.
+  - contract: load
+    contract_file: internal/cache.py
+    file: worker.py
+    status: compatible
+    evidence: The cache call still matches.
+  - contract: load
+    file: worker.py
+    status: unknown
+    evidence: A pass that named no path.
+"""
+    evidence = parse_compatibility_evidence(text)
+    assert [(item["contract"], item["contract_file"]) for item in evidence] == [
+        ("load", "public/api.py"),
+        ("load", "internal/cache.py"),
+        ("load", ""),
+    ]
+
+
 def _one(**fields: object):
     """Parse a single finding, with the boilerplate fields filled in."""
     entry = {
@@ -404,3 +472,27 @@ def test_a_model_cannot_award_itself_the_static_tool_label():
     )
     assert finding.evidence is Evidence.UNVERIFIED
     assert finding.evidence_note == "ruff would flag this."
+
+
+def test_evidence_entries_and_fields_are_bounded():
+    from roborak.llm.parser import MAX_EVIDENCE_CHARS, MAX_EVIDENCE_ENTRIES
+
+    entries = "".join(
+        f"  - requirement: Requirement {index}\n    file: api.py\n    evidence: {'long ' * 200}\n"
+        for index in range(MAX_EVIDENCE_ENTRIES + 5)
+    )
+    evidence = parse_requirement_evidence(f"findings: []\nrequirement_evidence:\n{entries}")
+    assert len(evidence) == MAX_EVIDENCE_ENTRIES
+    assert all(len(item["evidence"]) <= MAX_EVIDENCE_CHARS for item in evidence)
+
+    entries = "".join(
+        f"  - contract: load\n"
+        f"    file: worker.py\n"
+        f"    status: {'unknown ' * 100}\n"
+        f"    evidence: {'long ' * 200}\n"
+        for _ in range(MAX_EVIDENCE_ENTRIES + 5)
+    )
+    evidence = parse_compatibility_evidence(f"findings: []\ncompatibility_evidence:\n{entries}")
+    assert len(evidence) == MAX_EVIDENCE_ENTRIES
+    assert all(len(item["evidence"]) <= MAX_EVIDENCE_CHARS for item in evidence)
+    assert all(len(item["status"]) <= MAX_EVIDENCE_CHARS for item in evidence)

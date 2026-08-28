@@ -364,11 +364,16 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
   finding, every badge, every body and every fix is in both forms, which is what
   `tests/test_render.py` asserts. `--panels` is the older view, one finding to a
   bordered panel.
-- **Large diffs are reviewed in several passes**, not truncated. The chunker
-  splits by directory so related files stay together, each pass inherits the
-  parent's metadata, and one failed pass never discards the others. Compression —
-  which *does* drop things — is the last resort, and always reports what it
-  skipped.
+- **Large diffs are reviewed contract-first in several passes**, not truncated.
+  Deterministic roles put public contracts, schemas, migrations, configuration
+  and deployment boundaries ahead of leaf implementation when the eight-pass cap
+  cannot cover everything. Direct consumers and user-authored tests stay with the
+  boundary they exercise when they fit; generated files and low-signal prose go
+  last. Later passes receive bounded contract metadata rather than duplicate
+  diffs, and one final reconciliation pass checks compatibility across chunks.
+  JSON and human-readable coverage show the semantic order and the roles omitted.
+  One failed pass never discards the others, and compression always reports what
+  it skipped.
 - **Issue context** turns "is this code good?" into "does this code do what was
   asked?". `--issue 42` fetches the issue's title, body, labels and discussion and
   puts them in the prompt, and — when no other target was named — reviews the merge
