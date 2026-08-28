@@ -290,11 +290,15 @@ def test_related_test_follows_its_implementation_when_the_pair_fits():
     assert [file.path for file in plan.chunks[0].files] == [implementation.path, test.path]
 
 
-def test_relative_import_groups_a_consumer_with_the_module_it_imports():
+@pytest.mark.parametrize(
+    ("module_path", "specifier"),
+    [("web/api.js", "../web/api"), ("web/api.client.js", "../web/api.client")],
+)
+def test_relative_import_groups_a_consumer_with_the_module_it_imports(module_path, specifier):
     """A relative specifier names a path, not a dotted module."""
-    module = make_text_file("web/api.js", "export function load() {\n  return 1;\n}", "javascript")
+    module = make_text_file(module_path, "export function load() {\n  return 1;\n}", "javascript")
     consumer = make_text_file(
-        "ui/panel.js", "import { load } from '../web/api';\nload();", "javascript"
+        "ui/panel.js", f"import {{ load }} from '{specifier}';\nload();", "javascript"
     )
     budget = count(render(module)) + count(render(consumer)) + 5
     plan = plan_chunks(ChangeSet(files=[consumer, module]), budget, count, render)
@@ -436,6 +440,88 @@ def test_failed_chunk_marks_the_review_partial_without_losing_other_passes(tmp_p
     assert result.status is ReviewStatus.PARTIAL
     assert any("one pass failed" in error for error in result.errors)
     assert any(item.reason.value == "chunk_failed" for item in result.coverage)
+
+
+def test_failed_contract_is_not_carried_into_later_passes(tmp_path):
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMError, LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    changeset = ChangeSet(files=[contract, *(make_file(f"pkg{i}/f.py", 30) for i in range(5))])
+    later_prompts: list[str] = []
+
+    class FailingContract(StubLLM):
+        calls = 0
+
+        def complete(self, system, user):
+            FailingContract.calls += 1
+            if FailingContract.calls == 1:
+                raise LLMError("contract pass failed")
+            later_prompts.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    result = Reviewer(
+        config=Config(), repo=tmp_path, llm=FailingContract(reply="", context_budget=140)
+    ).review(changeset)
+
+    assert result.review_plan is not None
+    planned = next(file for file in result.review_plan.files if file.path == contract.path)
+    assert not planned.reviewed
+    assert planned.chunk is None
+    assert later_prompts
+    section = "## Contracts established in earlier review passes"
+    assert all(
+        section not in prompt
+        or contract.path not in prompt.split(section, 1)[1].split("## Diff to review", 1)[0]
+        for prompt in later_prompts
+    )
+
+
+def test_context_omitted_contract_is_not_carried_into_later_passes(tmp_path, monkeypatch):
+    from roborak.analysis import reviewer as reviewer_module
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
+    changeset = ChangeSet(files=[contract, *(make_file(f"pkg{i}/f.py", 100) for i in range(5))])
+    prompts: list[str] = []
+
+    class Recording(StubLLM):
+        def complete(self, system, user):
+            prompts.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    reviewer = Reviewer(
+        config=Config(), repo=tmp_path, llm=Recording(reply="", context_budget=1000)
+    )
+    monkeypatch.setattr(reviewer, "_diff_budget", lambda *_args, **_kwargs: 1000)
+
+    def omit_contract(prompt_changeset, *_args, **_kwargs):
+        if any(file.path == contract.path for file in prompt_changeset.files):
+            prompt_changeset.files = [
+                file for file in prompt_changeset.files if file.path != contract.path
+            ]
+            prompt_changeset.omitted_files.append(contract.path)
+        return prompt_changeset
+
+    monkeypatch.setattr(reviewer_module, "compress", omit_contract)
+    result = reviewer.review(changeset)
+
+    assert result.review_plan is not None
+    planned = next(file for file in result.review_plan.files if file.path == contract.path)
+    assert not planned.reviewed
+    assert planned.chunk is None
+    assert len(prompts) > 1
+    section = "## Contracts established in earlier review passes"
+    assert all(
+        section not in prompt
+        or contract.path not in prompt.split(section, 1)[1].split("## Diff to review", 1)[0]
+        for prompt in prompts
+    )
 
 
 def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):

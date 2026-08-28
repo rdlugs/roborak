@@ -309,23 +309,24 @@ class Reviewer:
         requirement_evidence: list[dict[str, str]] = []
         compatibility_evidence: list[dict[str, str]] = []
         successful_passes = 0
-        chunk_by_path = {file.path: file.chunk for file in plan.review.files}
-        reviewed_paths = {file.path for file in plan.review.files if file.reviewed}
-        reviewed_contracts = [
-            contract for contract in plan.contracts if contract.path in reviewed_paths
-        ]
+        planned_by_path = {file.path: file for file in plan.review.files}
+
+        def eligible_contracts() -> list[ContractContext]:
+            reviewed_paths = {file.path for file in plan.review.files if file.reviewed}
+            return [contract for contract in plan.contracts if contract.path in reviewed_paths]
+
         for index, piece in enumerate(chunks, start=1):
             changeset.omitted_files.extend(piece.omitted_files)
             under_review = {file.path for file in piece.files}
             carried_contracts = [
                 contract
-                for contract in reviewed_contracts
+                for contract in eligible_contracts()
                 # A split file is still primary diff in the pass holding its later
                 # fragments. Carrying it there would hand the model a summary of the
                 # very lines it is reviewing, under an instruction not to report on
                 # them -- so it is carried only once the file is behind us.
                 if contract.path not in under_review
-                and (source_chunk := chunk_by_path.get(contract.path)) is not None
+                and (source_chunk := planned_by_path[contract.path].chunk) is not None
                 and source_chunk < index
             ]
             try:
@@ -346,6 +347,10 @@ class Reviewer:
                 result.errors.append(f"review pass {index} of {len(chunks)} failed: {exc}")
                 for file in piece.files:
                     result.add_omission(file.path, OmissionReason.CHUNK_FAILED, str(exc))
+                    planned = planned_by_path.get(file.path)
+                    if planned is not None:
+                        planned.reviewed = False
+                        planned.chunk = None
         for path in changeset.omitted_files:
             result.add_omission(path, OmissionReason.CONTEXT_LIMIT)
             message = f"context pass limit omitted {path}"
@@ -353,6 +358,7 @@ class Reviewer:
                 result.errors.append(message)
         if successful_passes == 0 and result.errors:
             result.status = ReviewStatus.FAILED
+        reviewed_contracts = eligible_contracts()
         should_reconcile = bool(reviewed_contracts) or (
             self.issue is not None and self.config.review.check_requirements
         )

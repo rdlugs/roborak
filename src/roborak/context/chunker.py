@@ -315,7 +315,12 @@ def _relationship_groups(
 
     stems = {path: PurePosixPath(path).stem.removeprefix("test_") for path in by_path}
     for target, text in texts.items():
-        imported = {_import_stem(part) for part in _imports(text)}
+        imported = {
+            candidate
+            for part in _imports(text)
+            for basename in (_import_stem(part),)
+            for candidate in (basename, PurePosixPath(basename).stem)
+        }
         for source, stem in stems.items():
             if source == target or not stem:
                 continue
@@ -375,15 +380,15 @@ def _imports(text: str) -> set[str]:
 
 
 def _import_stem(spec: str) -> str:
-    """Reduce an import specifier to the file stem it names.
+    """Reduce an import specifier to the basename it names.
 
     A relative specifier is a path, not a dotted module, so `./api` and `../api.js`
-    have to reduce to the same stem as a changed `api.py` -- splitting on dots alone
-    leaves `/api` and `js`, which match nothing.
+    have to preserve their path basename before the caller strips a suffix. Keeping
+    both forms lets `../api.client` match `api.client.js` without losing `api.js`.
     """
     normalized = spec.replace("\\", "/")
     if "/" in normalized:
-        return PurePosixPath(normalized).stem
+        return PurePosixPath(normalized).name
     return normalized.replace(":", ".").rsplit(".", 1)[-1]
 
 
