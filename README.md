@@ -99,6 +99,7 @@ uv run roborak review --committed --base main
 uv run roborak review --include-untracked
 uv run roborak review --no-llm              # static analysis only; no API key needed
 uv run roborak review --no-static           # model only, skip the linters
+uv run roborak review --no-verify           # don't run the project's own test commands
 uv run roborak review --no-walkthrough      # skip the overview; one model call, not two
 uv run roborak review --full                # add the agent prompts and the review info
 uv run roborak review --panels              # one finding to a panel, not the report
@@ -273,7 +274,7 @@ rather than failing with "could not tell which forge".
 One directional pipeline; each stage only knows the stage before it.
 
 ```
-Source → ChangeSet → Compressor → Static pass → LLM → Validator → Renderer
+Source → ChangeSet → Compressor → Static pass → Verification → LLM → Validator → Renderer
 ```
 
 - **`ChangeSet`** is the universal IR. Local git, GitLab, GitHub and raw paths all
@@ -286,6 +287,13 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 - **The validator** drops findings that do not point at a changed line, snapping
   near misses onto the nearest one, then filters by confidence and severity and
   collapses duplicates. Most of roborak's usefulness is in what it refuses to say.
+- **The verification pass** runs the project's own tests, proportionally: the
+  narrowest configured command that covers the changed files, escalating to the
+  broad check only when the change crosses a shared boundary. It is off until a
+  project configures a command, its commands are read from the base revision so a
+  change cannot define what verifies it, and every result — passed, failed, timed
+  out, could not run, not executed — is recorded on the review rather than left
+  for the reader to run themselves.
 - **The static pass** runs whichever of ruff, mypy, semgrep, eslint and phpstan
   the repo actually has, using *the project's own config* — the rules a team
   already agreed to. Findings on lines the change did not touch are dropped, so a
@@ -431,6 +439,23 @@ static:
   execution: auto     # local direct; CI sandboxed, or skipped if unavailable
   tools: null          # null = autodetect what is on PATH
 
+verification:
+  enabled: true        # no command configured = nothing runs, and no claim is made
+  execution: auto      # local direct; CI sandboxed, or skipped if unavailable
+  commands:            # the narrowest match wins; argv arrays, never shell strings
+    - paths: ["src/roborak/context/**"]
+      command: ["uv", "run", "pytest", "tests/test_context.py"]
+    - paths: ["src/roborak/core/**"]
+      command: ["uv", "run", "pytest", "tests/test_pipeline.py", "tests/test_render.py"]
+  broaden_paths:       # a change touching one of these runs `fallback` instead
+    - "src/roborak/core/models.py"
+    - "pyproject.toml"
+  fallback: ["uv", "run", "pytest"]
+  timeout_seconds: 300
+  max_commands: 4      # ceiling on how many commands one review runs
+  max_output_lines: 40 # per command; a citation, not a build log
+  feed_to_llm: true
+
 impact:
   enabled: true           # trace changed symbols out to their consumers
   max_nodes: 12           # boundaries traced per review
@@ -478,6 +503,42 @@ roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
 When a base revision is available, conventions are read from that revision so a
 change cannot rewrite the instructions used to review itself.
 
+### Verification
+
+Roborak can run the project's own tests as part of a review, so a finding about
+changed behaviour has an execution record behind it instead of an invitation to go
+and check. Selection is proportional: the commands whose `paths` match the changed
+files, deduplicated, capped by `max_commands`. A change touching a `broaden_paths`
+entry — a shared contract, a schema, the build configuration — runs `fallback`
+*instead of* the targeted set, since a full suite already contains every subset of
+itself. A change matching nothing falls back to the broad check, and with no
+`fallback` configured it is simply not verified, which the report says in words.
+
+Results reach every surface. The report carries a Verification section — including
+when nothing ran, because a section that appeared only on green would teach readers
+that its absence means the tests passed. `--json` carries `summary.verified` and a
+per-command record, and the model is handed failures as evidence with the output
+framed as data rather than instructions.
+
+> [!IMPORTANT]
+> Verification runs argv the repository authored, so the commands are read from the
+> **base revision** — never from the working tree. Reviewing a branch someone else
+> wrote must not run what that branch says to run.
+
+The practical consequence: a change that *adds* a verification command is not
+verified by it until it lands. `--config <path>` is the deliberate override, since
+choosing that path is itself the trust decision, and your own user config and
+`ROBORAK_*` environment are always yours. Beyond that, verification obeys the same
+execution model as static analysis below: direct locally, sandboxed in CI, skipped
+in CI when Bubblewrap is unavailable, and `--trust-verify` (or
+`verification.execution: trusted`) as the explicit opt-in. Nothing is installed and
+nothing is fetched — the suite runs against the checkout as it stands, in a
+credential-scrubbed environment. Inside the CI sandbox the repository is read-only,
+so a suite that must write is reported as *could not run* rather than as a failure.
+
+A failed suite does not move the pre-merge verdict or the exit code: that verdict
+counts findings. It does print beside it, so "pass" is never read as covering both.
+
 ### Static-analysis trust
 
 > [!IMPORTANT]
@@ -490,8 +551,9 @@ untrusted code directly. `--trust-static` (or `static.execution: trusted`) is th
 explicit override for a checkout you control. Every static subprocess receives a
 credential-scrubbed environment in all modes.
 
-CI also ignores `.roborak.yaml` from the working tree, since it could redirect an
-API key or opt into trusted execution. Put CI settings in environment variables,
+CI also ignores `.roborak.yaml` from the working tree entirely, since it could
+redirect an API key or opt into trusted execution. (The `verification` section is
+read from the base revision in every environment, not just CI.) Put CI settings in environment variables,
 the user config, or pass a trusted base-controlled file with `--config`.
 
 ## Design notes

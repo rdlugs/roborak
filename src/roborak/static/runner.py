@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
-import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from roborak.core.config import StaticConfig, StaticExecution
 from roborak.core.models import ChangedFile, ChangeSet, Finding
+from roborak.sandbox import in_ci, safe_environment, sandbox_prefix
 from roborak.static.adapters.base import Adapter
 from roborak.static.adapters.eslint import EslintAdapter
 from roborak.static.adapters.mypy import MypyAdapter
@@ -50,7 +48,7 @@ class StaticRunner:
             return []
 
         sandboxed = self._sandboxed_command()
-        if self.config.execution is StaticExecution.AUTO and _in_ci() and sandboxed is None:
+        if self.config.execution is StaticExecution.AUTO and in_ci() and sandboxed is None:
             log.warning(
                 "static analysis skipped: CI checkout is untrusted and bubblewrap is unavailable; "
                 "use --trust-static only when the checkout and tool configuration are trusted"
@@ -98,7 +96,7 @@ class StaticRunner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                env=_safe_environment("/tmp" if sandboxed else None),
+                env=safe_environment("/tmp" if sandboxed else None),
                 timeout=self.config.timeout_seconds,
                 check=False,
             )
@@ -122,51 +120,9 @@ class StaticRunner:
 
     def _sandboxed_command(self) -> list[str] | None:
         """Prefix for a read-only, networkless CI execution, when required."""
-        if self.config.execution is not StaticExecution.AUTO or not _in_ci():
+        if self.config.execution is not StaticExecution.AUTO or not in_ci():
             return None
-        bwrap = shutil.which("bwrap")
-        if bwrap is None:
-            return None
-        repo_parents = [
-            item
-            for parent in reversed(self.repo.resolve().parents)
-            if parent != Path("/")
-            for item in ("--dir", str(parent))
-        ]
-        return [
-            bwrap,
-            "--die-with-parent",
-            "--unshare-net",
-            "--ro-bind",
-            "/usr",
-            "/usr",
-            "--ro-bind-try",
-            "/bin",
-            "/bin",
-            "--ro-bind-try",
-            "/lib",
-            "/lib",
-            "--ro-bind-try",
-            "/lib64",
-            "/lib64",
-            "--ro-bind",
-            "/etc",
-            "/etc",
-            *repo_parents,
-            "--ro-bind",
-            str(self.repo),
-            str(self.repo),
-            "--tmpfs",
-            "/tmp",
-            "--dev-bind",
-            "/dev",
-            "/dev",
-            "--proc",
-            "/proc",
-            "--chdir",
-            str(self.repo),
-            "--",
-        ]
+        return sandbox_prefix(self.repo)
 
     def _relativise(self, finding: Finding) -> Finding:
         """Tools report absolute paths; the rest of roborak speaks repo-relative."""
@@ -192,40 +148,3 @@ class StaticRunner:
             if any(line in added for line in range(finding.start_line, finding.end_line + 1)):
                 kept.append(finding)
         return kept
-
-
-_SAFE_ENV = {
-    "PATH",
-    "PATHEXT",
-    "SystemRoot",
-    "LANG",
-    "LANGUAGE",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TERM",
-    "VIRTUAL_ENV",
-}
-
-
-def _safe_environment(tmpdir: str | None = None) -> dict[str, str]:
-    """Static tools get runtime plumbing, never the caller's credentials.
-
-    ``tmpdir`` is the scratch directory the tool is pointed at. It defaults to the
-    platform's own -- Windows has no ``/tmp`` -- but the sandbox passes ``/tmp``
-    explicitly, because that is what ``--tmpfs /tmp`` puts inside it.
-    """
-    scratch = tmpdir or tempfile.gettempdir()
-    env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV}
-    env.update(
-        {
-            "HOME": scratch,
-            "TMPDIR": scratch,
-            "XDG_CACHE_HOME": str(Path(scratch) / "roborak-static-cache"),
-        }
-    )
-    return env
-
-
-def _in_ci() -> bool:
-    value = os.getenv("CI", "").strip().lower()
-    return value not in {"", "0", "false", "no"}

@@ -483,6 +483,112 @@ class ImpactMap(BaseModel):
         }
 
 
+class VerificationStatus(StrEnum):
+    """How one verification command ended.
+
+    ``failed`` and ``errored`` are deliberately different answers. A non-zero exit
+    from a suite that ran is a statement about the change; a missing executable or
+    a sandbox that would not let the suite write its cache is a statement about
+    this machine, and reporting the second as the first would blame an author for
+    a broken runner.
+    """
+
+    PASSED = "passed"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    ERRORED = "errored"
+    SKIPPED = "skipped"
+
+
+class VerificationScope(StrEnum):
+    """How much of the suite a command covers."""
+
+    TARGETED = "targeted"
+    """Selected because it matches the files this change touched."""
+
+    BROAD = "broad"
+    """The wide check, run when the change crosses a shared boundary or when no
+    targeted command matched it."""
+
+
+class VerificationRun(BaseModel):
+    """One command that was chosen, and what happened when it ran."""
+
+    name: str
+    command: list[str] = Field(default_factory=list)
+    """The argv actually selected, before any sandbox prefix. Recorded so a reader
+    can run the same check by hand, which is the whole point of citing one."""
+
+    status: VerificationStatus = VerificationStatus.SKIPPED
+    exit_code: int | None = None
+    duration_ms: int = 0
+    scope: VerificationScope = VerificationScope.TARGETED
+    output: str = ""
+    """The tail of the command's combined output, bounded by configuration."""
+
+    truncated: bool = False
+    note: str = ""
+    """Why a run was skipped or errored, in words a reader can act on."""
+
+    @property
+    def executed(self) -> bool:
+        return self.status is not VerificationStatus.SKIPPED
+
+    @property
+    def display_command(self) -> str:
+        return " ".join(self.command)
+
+
+class VerificationReport(BaseModel):
+    """What the verification stage selected, ran, and found.
+
+    Present on a ``ReviewResult`` whenever the stage was asked to do something --
+    including when it decided it must not run. A report that says ``skipped`` is
+    the load-bearing case: a reader who cannot tell a suite that passed from one
+    that was never started will read every clean review as a verified one.
+    """
+
+    runs: list[VerificationRun] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    """Every bound that bit and every reason a command did not run."""
+
+    source: str = ""
+    """Where the commands came from, e.g. ``base revision a1b2c3d``. Verification
+    executes repository-authored argv, so the provenance travels with the result."""
+
+    @property
+    def executed(self) -> bool:
+        return any(run.executed for run in self.runs)
+
+    @property
+    def status(self) -> VerificationStatus:
+        """The worst thing that happened, which is what a verdict reads.
+
+        Ordered by how much it should worry a reader rather than alphabetically:
+        a failure outranks a timeout outranks a broken runner outranks a skip, and
+        ``passed`` is only reachable when something actually ran and nothing else
+        did anything worse.
+        """
+        for status in (
+            VerificationStatus.FAILED,
+            VerificationStatus.TIMED_OUT,
+            VerificationStatus.ERRORED,
+        ):
+            if any(run.status is status for run in self.runs):
+                return status
+        if self.executed:
+            return VerificationStatus.PASSED
+        return VerificationStatus.SKIPPED
+
+    @property
+    def failing(self) -> list[VerificationRun]:
+        return [
+            run
+            for run in self.runs
+            if run.status in {VerificationStatus.FAILED, VerificationStatus.TIMED_OUT}
+        ]
+
+
 class ReviewResult(BaseModel):
     """Everything a review produced, ready for any renderer or publisher."""
 
@@ -504,6 +610,15 @@ class ReviewResult(BaseModel):
 
     review_plan: ReviewPlan | None = None
     """Semantic order and pass assignment, present when the diff was chunked."""
+
+    verification: VerificationReport | None = None
+    """What the project's own tests said about this change.
+
+    ``None`` means the stage never ran -- nothing was configured, or it was
+    switched off -- which is a different statement from a report whose status is
+    ``skipped``. One says nobody asked for verification; the other says it was
+    asked for and refused, and a reader deciding how much a clean review is worth
+    has to be able to tell them apart."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE

@@ -53,6 +53,7 @@ export default function Quickstart() {
         code={[
           "roborak review --no-llm              # static analysis only; no API key needed",
           "roborak review --no-static           # model only, skip the linters",
+          "roborak review --no-verify           # don't run the project's own test commands",
           "roborak review --no-walkthrough      # skip the overview; one model call, not two",
         ].join("\n")}
       />

@@ -20,7 +20,14 @@ from rich.table import Table
 from rich.text import Text
 
 from roborak.core.buckets import BUCKET_TITLE, Bucket, group
-from roborak.core.models import Finding, ImpactMap, ImpactStatus, ReviewResult
+from roborak.core.models import (
+    Finding,
+    ImpactMap,
+    ImpactStatus,
+    ReviewResult,
+    VerificationReport,
+    VerificationStatus,
+)
 from roborak.core.severity import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
@@ -53,6 +60,7 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
     if changeset is None or not changeset.is_empty:
         _render_header(result, console)
 
+    _render_verification(result.verification, console)
     _render_impact(result.impact, console)
 
     if not result.findings:
@@ -96,6 +104,42 @@ def _render_impact(impact: ImpactMap | None, console: Console) -> None:
     else:
         console.print(f"[{style}]blast radius: {label}[/]", highlight=False)
     for note in impact.notes:
+        console.print(f"  [dim]{note}[/]", highlight=False)
+
+
+_VERIFICATION_STYLE: dict[VerificationStatus, str] = {
+    VerificationStatus.PASSED: "green",
+    VerificationStatus.FAILED: "red",
+    VerificationStatus.TIMED_OUT: "yellow",
+    VerificationStatus.ERRORED: "yellow",
+    VerificationStatus.SKIPPED: "dim",
+}
+
+
+def _render_verification(report: VerificationReport | None, console: Console) -> None:
+    """Whether the project's own checks ran, in the one line the panel view has.
+
+    Printed on a clean run as well, and for the same reason the blast radius is:
+    "no findings" and "no findings, and the tests were never started" are two
+    different reviews, and only one of them is worth trusting.
+    """
+    if report is None:
+        return
+    label = report.status.value.replace("_", " ")
+    console.print()
+    console.print(
+        f"[{_VERIFICATION_STYLE[report.status]}]verification: {label}[/]"
+        + (f" [dim]— {len(report.runs)} check(s)[/]" if report.runs else ""),
+        highlight=False,
+    )
+    for run in report.runs:
+        if run.status is not VerificationStatus.PASSED:
+            console.print(
+                f"  [dim]{run.display_command} — {run.status.value.replace('_', ' ')}"
+                f"{f': {run.note}' if run.note else ''}[/]",
+                highlight=False,
+            )
+    for note in report.notes:
         console.print(f"  [dim]{note}[/]", highlight=False)
 
 

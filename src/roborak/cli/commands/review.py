@@ -16,7 +16,14 @@ from roborak.cli import shared
 from roborak.cli.shared import fail
 from roborak.cli.shared import is_interactive as _is_interactive
 from roborak.core.buckets import Bucket, group
-from roborak.core.models import Finding, ReviewResult, ReviewStatus, Walkthrough
+from roborak.core.config import Execution, VerificationConfig, load_verification
+from roborak.core.models import (
+    Finding,
+    ReviewResult,
+    ReviewStatus,
+    VerificationReport,
+    Walkthrough,
+)
 from roborak.core.severity import Severity
 from roborak.publish.base import PublishReport, RemoteState, SummaryRef, remote_state
 from roborak.publish.github import GitHubPublisher
@@ -26,6 +33,7 @@ from roborak.sources.base import SourceError
 from roborak.sources.forge import Target
 from roborak.state.store import StateStore, review_key
 from roborak.static.runner import StaticRunner
+from roborak.verify.runner import VerificationRunner
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +113,17 @@ def review(
     ] = False,
     no_static: Annotated[
         bool, typer.Option("--no-static", help="Skip static analysis; model only.")
+    ] = False,
+    no_verify: Annotated[
+        bool,
+        typer.Option("--no-verify", help="Skip the configured test-verification commands."),
+    ] = False,
+    trust_verify: Annotated[
+        bool,
+        typer.Option(
+            "--trust-verify",
+            help="Allow repository-provided test commands to execute directly in CI.",
+        ),
     ] = False,
     no_impact: Annotated[
         bool,
@@ -196,9 +215,7 @@ def review(
     if no_impact:
         config.impact.enabled = False
     if trust_static:
-        from roborak.core.config import StaticExecution
-
-        config.static.execution = StaticExecution.TRUSTED
+        config.static.execution = Execution.TRUSTED
     if no_walkthrough:
         config.output.walkthrough = False
     if no_post:
@@ -221,11 +238,20 @@ def review(
             "skipping static analysis: %s changes are not checked out", session.changeset.origin
         )
 
+    verification = _verify(
+        console,
+        session,
+        config_path=config_path,
+        trusted=trust_verify,
+        disabled=no_verify,
+    )
+
     reviewer = Reviewer(
         config=config,
         repo=session.repo,
         llm=session.llm,
         static_findings=static_findings,
+        verification=verification,
         issue=session.issue,
     )
 
@@ -301,6 +327,49 @@ def review(
         )
 
     shared.finish(result, fail_on)
+
+
+def _verify(
+    console: Console,
+    session: shared.Session,
+    *,
+    config_path: Path | None,
+    trusted: bool,
+    disabled: bool,
+) -> VerificationReport | None:
+    """Run the project's own checks, from configuration the change did not write.
+
+    This section is resolved separately from every other one, against the base
+    revision -- see ``core.config.load_verification`` for why. The resolved
+    section then *replaces* the layered one on ``session.config``, so that
+    everything downstream, ``feed_to_llm`` included, reads the trusted values and
+    the working tree's copy influences nothing at all. Only two switches here are
+    a person's: ``--no-verify`` and ``--trust-verify``.
+    """
+    if disabled:
+        return None
+
+    changeset = session.changeset
+    try:
+        verification, source, notes = load_verification(
+            session.repo,
+            ref=changeset.base_sha or changeset.base_ref or "HEAD",
+            explicit_path=config_path,
+        )
+    except (FileNotFoundError, ValidationError, ValueError) as exc:
+        log.warning("could not resolve verification commands: %s", exc)
+        session.config.verification = VerificationConfig(enabled=False)
+        return None
+
+    if trusted:
+        verification.execution = Execution.TRUSTED
+    session.config.verification = verification
+    if not verification.enabled:
+        return None
+
+    runner = VerificationRunner(repo=session.repo, config=verification, source=source, notes=notes)
+    with console.status("[dim]verifying with the project's own checks…[/]", spinner="dots"):
+        return runner.run(changeset)
 
 
 def _seen_fingerprints(repo: Path, target: Target, *, repost: bool) -> frozenset[str]:

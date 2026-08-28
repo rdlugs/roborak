@@ -111,6 +111,7 @@ def test_json_is_valid_and_sorted_by_severity():
         "total": 2,
         "by_severity": {"critical": 1, "minor": 1},
         "has_blocking": True,
+        "verified": False,
     }
     assert [f["severity"] for f in payload["findings"]] == ["critical", "minor"]
     assert payload["model"] == "test/model"

@@ -33,6 +33,7 @@ from roborak.core.models import (
     OmissionReason,
     ReviewResult,
     ReviewStatus,
+    VerificationReport,
     Walkthrough,
 )
 from roborak.core.severity import Kind
@@ -80,6 +81,10 @@ class Reviewer:
     """The directory strategy exists only for quality comparisons in ``evals``."""
 
     static_findings: list[Finding] = field(default_factory=list)
+    verification: VerificationReport | None = None
+    """What the project's own checks said, when the CLI ran them. ``None`` means
+    the stage never ran, which is not the same as a report saying it was skipped."""
+
     issue: Issue | None = None
     """What the change is supposed to achieve, when ``--issue`` supplied one."""
 
@@ -118,6 +123,7 @@ class Reviewer:
         if not self._prepare(changeset, result):
             return result
 
+        result.verification = self.verification
         result.impact = self._impact = self._blast_radius(changeset)
 
         findings = list(self.static_findings)
@@ -475,6 +481,7 @@ class Reviewer:
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
             impact=self._impact,
+            verification=self._verification_for_prompt(),
             contract_contexts=contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
@@ -513,6 +520,7 @@ class Reviewer:
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
             impact=self._impact,
+            verification=self._verification_for_prompt(),
             contract_contexts=contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
@@ -580,6 +588,7 @@ class Reviewer:
             self.config,
             repo_context=self._repo_context(empty),
             issue=self.issue,
+            verification=self._verification_for_prompt(),
             contract_contexts=(
                 contract_contexts(changeset.files, self._impact) if carries_contracts else None
             ),
@@ -591,6 +600,12 @@ class Reviewer:
         # stops a large map from squeezing a changed file out of its own review.
         reserved = self.config.impact.token_budget if self._impact is not None else 0
         return max(1, self.llm.context_budget - overhead - reserved - 200)
+
+    def _verification_for_prompt(self) -> VerificationReport | None:
+        """The execution record, when the project wants the model to see it."""
+        if not self.config.verification.feed_to_llm:
+            return None
+        return self.verification
 
     def _static_for_prompt(self, changeset: ChangeSet) -> list[Finding]:
         """Only the static findings for files in this pass, so chunks stay focused."""

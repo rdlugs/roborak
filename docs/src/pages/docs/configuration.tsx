@@ -158,6 +158,58 @@ export default function Configuration() {
         &quot;run it&quot;.
       </P>
 
+      <H3>verification</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "verification:",
+          "  enabled: true          # no command configured = nothing runs, and no claim is made",
+          "  execution: auto        # auto | trusted | off, as for static",
+          "  commands:              # argv arrays, never shell strings",
+          '    - paths: ["src/roborak/context/**"]',
+          '      command: ["uv", "run", "pytest", "tests/test_context.py"]',
+          '    - paths: ["src/roborak/core/**"]',
+          '      command: ["uv", "run", "pytest", "tests/test_pipeline.py"]',
+          "  broaden_paths:         # a change touching one of these runs fallback instead",
+          '    - "src/roborak/core/models.py"',
+          '    - "pyproject.toml"',
+          '  fallback: ["uv", "run", "pytest"]',
+          "  timeout_seconds: 300",
+          "  max_commands: 4        # ceiling on how many commands one review runs",
+          "  max_output_lines: 40   # per command; a citation, not a build log",
+          "  feed_to_llm: true",
+        ].join("\n")}
+      />
+      <P>
+        Verification runs the project&apos;s own tests so a review about changed behaviour has an
+        execution record behind it. Selection is proportional: the commands whose{" "}
+        <Code>paths</Code> match the changed files, deduplicated and capped. A change touching a{" "}
+        <Code>broaden_paths</Code> entry — a shared contract, a schema, the build configuration —
+        runs <Code>fallback</Code> <em>instead of</em> the targeted set, because a full suite
+        already contains every subset of itself. A change matching nothing falls back to the broad
+        check, and with no <Code>fallback</Code> configured it is simply not verified, which the
+        report says in words rather than by omission.
+      </P>
+      <Callout kind="note" title="Commands come from the base revision">
+        <P>
+          Verification runs argv the repository authored, so the section is read from the revision
+          being merged into and never from the working tree: reviewing a branch somebody else wrote
+          must not run what that branch says to run. The consequence is worth knowing — a change
+          that <em>adds</em> a verification command is not verified by it until it lands.{" "}
+          <Code>--config</Code> is the deliberate override, and your own user config and{" "}
+          <Code>ROBORAK_*</Code> environment are always yours.
+        </P>
+      </Callout>
+      <P>
+        Otherwise verification obeys the same execution model as{" "}
+        <A href="/docs/static-analysis">static analysis</A>: direct locally, sandboxed in CI,
+        skipped in CI when Bubblewrap is unavailable, and <Code>--trust-verify</Code> as the
+        explicit opt-in. Nothing is installed and nothing is fetched, forge diffs that are not
+        checked out are never verified, and every command gets a credential-scrubbed environment.
+        A failed suite prints beside the pre-merge verdict without moving it: that verdict counts
+        findings.
+      </P>
+
       <H3>impact</H3>
       <CodeBlock
         label=".roborak.yaml"
