@@ -3,8 +3,9 @@
 Static analysis can say a line looks wrong. It cannot say whether the behaviour
 the change describes actually happens, and a review that flags missing coverage
 while never running the suite leaves the reader to go and find out themselves.
-This stage closes that gap with execution evidence: the narrowest configured
-command that covers the changed files, run once, recorded with its exit status.
+This stage closes that gap with execution evidence: the narrowest matching set of
+configured commands that covers the changed files, each run once, recorded with
+its exit status.
 
 Design rules, in the order they bind:
 
@@ -42,6 +43,14 @@ from roborak.core.models import (
 from roborak.sandbox import in_ci, safe_environment, sandbox_prefix
 
 log = logging.getLogger(__name__)
+
+MAX_OUTPUT_CHARS = 8000
+"""Hard ceiling on the output kept per command, on top of ``max_output_lines``.
+
+A line limit bounds a chatty runner; it does not bound a single line. One failing
+assertion that prints a megabyte-long repr is still one line, and it would travel
+whole into the prompt and the published comment. Counted in characters because
+that is the dimension the line limit does not cover."""
 
 CHECKED_OUT_ORIGINS = {"local", "paths"}
 """Origins whose files are on disk. A forge diff is a patch we fetched, not a
@@ -237,17 +246,24 @@ class VerificationRunner:
     def _record_output(self, run: VerificationRun, stdout: str, stderr: str) -> None:
         """Keep the tail, which is where a test runner puts its verdict.
 
-        Bounded because this is a citation on a review, not a build log, and the
-        head of a failing suite is a progress bar. The subprocess was handed a
-        credential-scrubbed environment, so what lands here has no token in it to
-        begin with -- see ``sandbox.safe_environment``.
+        Bounded twice, because a line count is not a size: ``max_output_lines``
+        bounds a runner that says too much, and ``MAX_OUTPUT_CHARS`` bounds the
+        one line that says too much at once. Both keep the tail -- this is a
+        citation on a review, not a build log, and the head of a failing suite is
+        a progress bar. The subprocess was handed a credential-scrubbed
+        environment, so what lands here has no token in it to begin with -- see
+        ``sandbox.safe_environment``.
         """
         combined = "\n".join(part.strip() for part in (stdout, stderr) if part.strip())
         lines = combined.splitlines()
         if len(lines) > self.config.max_output_lines:
             run.truncated = True
             lines = lines[-self.config.max_output_lines :]
-        run.output = "\n".join(lines)
+        output = "\n".join(lines)
+        if len(output) > MAX_OUTPUT_CHARS:
+            run.truncated = True
+            output = output[-MAX_OUTPUT_CHARS:]
+        run.output = output
 
 
 def _elapsed_ms(started: float) -> int:
@@ -266,16 +282,22 @@ def _decode(stream: str | bytes | None) -> str:
 def for_prompt(report: VerificationReport | None) -> dict[str, Any] | None:
     """The report as evidence for the model, or ``None`` when there is none.
 
+    ``None`` means the stage was never configured, and nothing else does: a report
+    with no runs still says that verification was asked for and that nothing
+    matched, which is a different fact and one the model should not have to infer
+    from silence. Its notes carry the reason, so they travel with it.
+
     Deliberately asymmetric. A failing command is the whole point of the stage and
     travels with its output; a passing one is worth a line, because "it passed" is
     the entire content of a green run and pasting the summary of a thousand tests
     would crowd out the diff it is meant to be evidence about.
     """
-    if report is None or not report.runs:
+    if report is None:
         return None
     return {
         "status": report.status.value,
         "executed": report.executed,
+        "notes": list(report.notes),
         "runs": [
             {
                 "name": run.name,

@@ -95,11 +95,17 @@ def sandbox_prefix(repo: Path) -> list[str] | None:
         str(repo),
         "--tmpfs",
         "/tmp",
-        "--dev-bind",
-        "/dev",
+        # A private device filesystem rather than the host's: the command needs
+        # the standard nodes -- null, zero, urandom, a pts pair, shm -- and has no
+        # business reaching the disks, the terminals or anything else in /dev.
+        "--dev",
         "/dev",
         "--proc",
         "/proc",
+        # Its own session, so it cannot push characters back onto the terminal
+        # that started the review with TIOCSTI. Output is captured through pipes,
+        # so nothing here wanted a controlling terminal anyway.
+        "--new-session",
         "--chdir",
         str(repo),
         "--",

@@ -862,6 +862,11 @@ def _verification_verdict_note(report: VerificationReport | None) -> str:
         return "**Verification failed.** This verdict counts findings, not test results."
     if report.status is VerificationStatus.TIMED_OUT:
         return "**Verification timed out.** This verdict counts findings, not test results."
+    if report.status is VerificationStatus.ERRORED:
+        return (
+            "**Verification could not complete.** The selected checks never ran, so nothing "
+            "here was checked by execution."
+        )
     if report.status is VerificationStatus.PASSED:
         return ""
     return "_Verification did not run, so nothing here was checked by execution._"

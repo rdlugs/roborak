@@ -288,12 +288,13 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   near misses onto the nearest one, then filters by confidence and severity and
   collapses duplicates. Most of roborak's usefulness is in what it refuses to say.
 - **The verification pass** runs the project's own tests, proportionally: the
-  narrowest configured command that covers the changed files, escalating to the
-  broad check only when the change crosses a shared boundary. It is off until a
-  project configures a command, its commands are read from the base revision so a
-  change cannot define what verifies it, and every result — passed, failed, timed
-  out, could not run, not executed — is recorded on the review rather than left
-  for the reader to run themselves.
+  narrowest matching command set that covers the changed files — every configured
+  command whose globs match, deduplicated by argv and capped by `max_commands` —
+  escalating to the broad check only when the change crosses a shared boundary. It
+  is off until a project configures a command, its commands are read from the base
+  revision so a change cannot define what verifies it, and every result — passed,
+  failed, timed out, could not run, not executed — is recorded on the review rather
+  than left for the reader to run themselves.
 - **The static pass** runs whichever of ruff, mypy, semgrep, eslint and phpstan
   the repo actually has, using *the project's own config* — the rules a team
   already agreed to. Findings on lines the change did not touch are dropped, so a
@@ -442,7 +443,7 @@ static:
 verification:
   enabled: true        # no command configured = nothing runs, and no claim is made
   execution: auto      # local direct; CI sandboxed, or skipped if unavailable
-  commands:            # the narrowest match wins; argv arrays, never shell strings
+  commands:            # the narrowest matching set runs; argv arrays, never shell strings
     - paths: ["src/roborak/context/**"]
       command: ["uv", "run", "pytest", "tests/test_context.py"]
     - paths: ["src/roborak/core/**"]

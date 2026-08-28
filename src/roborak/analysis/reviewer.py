@@ -118,12 +118,15 @@ class Reviewer:
             changeset=changeset,
             model=self.config.model if self.llm else None,
             issue=self.issue,
+            # Set here rather than after `_prepare`: the stage already ran, and a
+            # change whose files all filtered out still has an execution record
+            # that a dropped report would silently turn into "never configured".
+            verification=self.verification,
         )
 
         if not self._prepare(changeset, result):
             return result
 
-        result.verification = self.verification
         result.impact = self._impact = self._blast_radius(changeset)
 
         findings = list(self.static_findings)

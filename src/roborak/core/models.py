@@ -532,7 +532,14 @@ class VerificationRun(BaseModel):
 
     @property
     def executed(self) -> bool:
-        return self.status is not VerificationStatus.SKIPPED
+        """Whether this command actually ran.
+
+        ``errored`` is not execution: it is how a command that could not be
+        started -- a missing runner, a sandbox that refused -- is recorded, and
+        counting it would let a review that ran nothing report an execution
+        record behind it.
+        """
+        return self.status not in {VerificationStatus.SKIPPED, VerificationStatus.ERRORED}
 
     @property
     def display_command(self) -> str:

@@ -41,6 +41,15 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- **The CI sandbox gives commands a private `/dev` and their own session.** Static
+  analysis and verification both run repository-controlled commands, and the
+  bubblewrap prefix they share bind-mounted the host's whole `/dev` and left the
+  sandboxed process in the terminal's session. It now mounts a private device
+  filesystem with the standard nodes and adds `--new-session`, so a command cannot
+  reach the host's devices or push characters back onto the terminal that started
+  the review. Output is captured through pipes, so nothing in either stage wanted a
+  controlling terminal to begin with.
+
 - **AST support is part of a default installation.** `tree-sitter` and
   `tree-sitter-language-pack` were behind an `ast` extra, so `uvx roborak`,
   `pip install roborak` and `uv tool install roborak` all ran without a parser

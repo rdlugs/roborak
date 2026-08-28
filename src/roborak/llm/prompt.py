@@ -356,6 +356,7 @@ def _safe_verification(report: VerificationReport | None) -> dict[str, Any] | No
     return {
         "status": _escape_untrusted(payload["status"]),
         "executed": payload["executed"],
+        "notes": [_escape_untrusted(note) for note in payload["notes"]],
         "runs": [
             {
                 key: _escape_untrusted(run[key])

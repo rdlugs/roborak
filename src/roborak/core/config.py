@@ -25,6 +25,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from roborak.core.severity import Category, Severity
+from roborak.sandbox import in_ci
 
 log = logging.getLogger(__name__)
 
@@ -333,7 +334,7 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
         if not explicit_path.is_file():
             raise FileNotFoundError(f"Config file not found: {explicit_path}")
         layers.append(_read_yaml(explicit_path))
-    elif not _in_ci():
+    elif not in_ci():
         for name in PROJECT_CONFIG_NAMES:
             candidate = repo / name
             if candidate.is_file():
@@ -557,11 +558,6 @@ def _env_layer() -> dict[str, Any]:
     if (impact_off := os.getenv("ROBORAK_NO_IMPACT")) and impact_off not in {"0", "false", ""}:
         layer.setdefault("impact", {})["enabled"] = False
     return layer
-
-
-def _in_ci() -> bool:
-    value = os.getenv("CI", "").strip().lower()
-    return value not in {"", "0", "false", "no"}
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

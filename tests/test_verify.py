@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from roborak.analysis.reviewer import Reviewer
 from roborak.core.config import (
+    Config,
     Execution,
     VerificationCommand,
     VerificationConfig,
@@ -29,8 +31,14 @@ from roborak.core.models import (
     VerificationStatus,
 )
 from roborak.core.severity import Severity
+from roborak.llm.prompt import build_review_prompt
 from roborak.render import json_out, markdown, terminal
-from roborak.verify.runner import VerificationRunner, for_prompt, select
+from roborak.verify.runner import (
+    MAX_OUTPUT_CHARS,
+    VerificationRunner,
+    for_prompt,
+    select,
+)
 
 PYTHON = sys.executable
 
@@ -465,3 +473,71 @@ def test_the_footer_states_verification_even_in_the_terminal_form():
         form=markdown.Form.TERMINAL,
     )
     assert "_verification: skipped · 1 check(s)_" in document
+
+
+def test_a_run_that_never_started_is_not_an_execution_record():
+    """`errored` is a statement about the machine, and nothing ran because of it."""
+    report = report_with(VerificationStatus.ERRORED, exit_code=None, note="no such binary")
+    assert not report.runs[0].executed
+    assert not report.executed
+    assert report.status is VerificationStatus.ERRORED
+    assert json_out.to_dict(ReviewResult(verification=report))["summary"]["verified"] is False
+
+
+def test_the_verdict_says_verification_could_not_complete():
+    result = ReviewResult(verification=report_with(VerificationStatus.ERRORED, exit_code=None))
+    result.block_on = Severity.CRITICAL
+    assert "**Verification could not complete.**" in markdown.render(result)
+
+
+def test_a_report_with_no_runs_still_reaches_the_prompt():
+    """ "Nothing matched" and "never configured" are different facts, and only one is None."""
+    assert for_prompt(None) is None
+
+    empty = VerificationReport(
+        notes=["No configured verification command matches the files this change touches."],
+        source="base revision abc123",
+    )
+    payload = for_prompt(empty)
+    assert payload is not None
+    assert payload["status"] == "skipped"
+    assert payload["executed"] is False
+    assert payload["runs"] == []
+    assert "No configured verification command matches" in payload["notes"][0]
+
+
+def test_one_enormous_line_is_bounded_too(tmp_path: Path):
+    """A line limit bounds a chatty runner; it does not bound a single line."""
+    cfg = config(commands=[], fallback=script("print('x' * 200_000)"))
+    report = runner(tmp_path, cfg).run(changeset("src/x.py"))
+    assert report is not None
+    run = report.runs[0]
+    assert run.truncated
+    assert len(run.output) == MAX_OUTPUT_CHARS
+
+
+def test_the_prompt_does_not_claim_a_run_that_did_not_happen():
+    """The section header alone would read as "the tests ran" whatever it then says."""
+    skipped = build_review_prompt(
+        changeset("src/x.py"),
+        Config(),
+        verification=report_with(VerificationStatus.SKIPPED, note="not checked out"),
+    ).user
+    assert "were **not run** against this change" in skipped
+    assert "own checks were run against this change" not in skipped
+
+    executed = build_review_prompt(
+        changeset("src/x.py"), Config(), verification=report_with(VerificationStatus.FAILED)
+    ).user
+    assert "own checks were run against this change" in executed
+    assert "**not run**" not in executed
+
+
+def test_a_review_that_filtered_every_file_keeps_its_verification_record():
+    """The stage already ran; dropping its report would read as never configured."""
+    report = report_with(VerificationStatus.FAILED)
+    result = Reviewer(
+        config=Config(), repo=Path("/nonexistent"), llm=None, verification=report
+    ).review(changeset("node_modules/vendor.js"))
+    assert result.changeset is not None and result.changeset.is_empty
+    assert result.verification is report
