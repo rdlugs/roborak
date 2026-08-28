@@ -156,7 +156,9 @@ This is one part of a larger change. Do not report requirement gaps or a mismatc
 that depends on diff content outside this pass. Alongside `findings`, return:
 
 - `compatibility_evidence`: concrete uses of a carried contract with `contract`,
-  `file`, `status` (`compatible`, `incompatible`, or `unknown`), and `evidence`.
+  `contract_file` (the path the contract is listed under above -- two contracts can
+  share a name, so the reducer resolves them by path), `file` (where this pass uses
+  it), `status` (`compatible`, `incompatible`, or `unknown`), and `evidence`.
 - `requirement_evidence`: when issue context is present, concrete ways this part
   implements or contradicts a requirement, with `requirement`, `file`, and
   `evidence`.
@@ -191,7 +193,10 @@ test. If issue context is supplied, report a requirement_gap only when an explic
 requirement is absent or contradicted across the complete evidence set. Silence and
 unknown evidence are not proof of a defect. Use only supplied changed file paths and
 YAML in the ordinary roborak findings schema. Anchor a mismatch to the changed
-contract line responsible; requirement gaps may use line 1.
+contract line responsible; requirement gaps may use line 1. Resolve a compatibility
+entry against the contract whose `file` matches its `contract_file` and whose `name`
+matches its `contract`: one name can belong to several contracts, and an entry
+carrying no `contract_file` names no particular one.
 
 {UNTRUSTED_DATA_RULE}
 """

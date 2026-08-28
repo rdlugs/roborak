@@ -187,12 +187,14 @@ def plan_chunks(
         _sub_changeset(changeset, files, omitted if i == 0 else [])
         for i, files in enumerate(chunks)
     ]
-    first_chunk = {
-        file.path: index
-        for index, files in enumerate(chunks, start=1)
-        for file in files
-        if file.path not in omitted
-    }
+    # An oversized file is split into fragments that can straddle a boundary, so a
+    # path may appear in several chunks. The pass that reviewed it *first* is the
+    # one to report, and the only one later passes may treat as established.
+    first_chunk: dict[str, int] = {}
+    for index, files in enumerate(chunks, start=1):
+        for file in files:
+            if file.path not in omitted:
+                first_chunk.setdefault(file.path, index)
     review = ReviewPlan(
         chunks=len(chunks),
         files=[
@@ -370,6 +372,17 @@ def _mentions(text: str, term: str) -> bool:
 
 def _imports(text: str) -> set[str]:
     return {part for match in _IMPORT.finditer(text) for part in match.groups() if part}
+
+
+def contract_contexts(
+    files: list[ChangedFile], impact: ImpactMap | None = None
+) -> list[ContractContext]:
+    """The contracts a chunked review carries from one pass into the next.
+
+    Public because the reviewer has to price them into its budget *before* it asks
+    for a plan, and the plan is otherwise the only place they exist.
+    """
+    return _contract_contexts(files, _classify(files, impact), impact)
 
 
 def _contract_contexts(

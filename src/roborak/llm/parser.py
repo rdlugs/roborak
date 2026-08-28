@@ -90,6 +90,21 @@ def parse_findings(text: str, *, valid_files: set[str] | None = None) -> list[Fi
     return findings
 
 
+MAX_EVIDENCE_ENTRIES = 20
+"""How many evidence entries one pass may contribute to reconciliation. Evidence is
+a pointer to somewhere the reducer should look, not the reasoning itself; a pass
+that offers more than this is listing its diff rather than the handful of places
+that cross a chunk boundary."""
+
+MAX_EVIDENCE_CHARS = 300
+"""How long one evidence field may be, matching the cap on a finding's evidence
+note. Every pass contributes, so an unbounded field is an unbounded prompt."""
+
+
+def _evidence_field(value: Any) -> str:
+    return _as_str(value)[:MAX_EVIDENCE_CHARS]
+
+
 def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
     """Read optional map-stage evidence from a chunked review response."""
     data = load_yaml_mapping(text)
@@ -100,16 +115,18 @@ def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
     for entry in raw:
         if not isinstance(entry, dict):
             continue
-        requirement = _as_str(entry.get("requirement"))
-        explanation = _as_str(entry.get("evidence"))
+        requirement = _evidence_field(entry.get("requirement"))
+        explanation = _evidence_field(entry.get("evidence"))
         if requirement and explanation:
             evidence.append(
                 {
                     "requirement": requirement,
-                    "file": _as_str(entry.get("file")),
+                    "file": _evidence_field(entry.get("file")),
                     "evidence": explanation,
                 }
             )
+        if len(evidence) == MAX_EVIDENCE_ENTRIES:
+            break
     return evidence
 
 
@@ -123,17 +140,22 @@ def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:
     for entry in raw:
         if not isinstance(entry, dict):
             continue
-        contract = _as_str(entry.get("contract"))
-        explanation = _as_str(entry.get("evidence"))
+        contract = _evidence_field(entry.get("contract"))
+        explanation = _evidence_field(entry.get("evidence"))
         if contract and explanation:
             evidence.append(
                 {
                     "contract": contract,
-                    "file": _as_str(entry.get("file")),
-                    "status": _as_str(entry.get("status")) or "unknown",
+                    # A contract name is unique only within its file, and the reducer
+                    # matches evidence back to the catalog entry it came from.
+                    "contract_file": _evidence_field(entry.get("contract_file")),
+                    "file": _evidence_field(entry.get("file")),
+                    "status": _evidence_field(entry.get("status")) or "unknown",
                     "evidence": explanation,
                 }
             )
+        if len(evidence) == MAX_EVIDENCE_ENTRIES:
+            break
     return evidence
 
 

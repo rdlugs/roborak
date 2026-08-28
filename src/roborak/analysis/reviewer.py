@@ -16,6 +16,7 @@ from roborak.context import impact
 from roborak.context.chunker import (
     ChunkStrategy,
     ContractContext,
+    contract_contexts,
     needs_chunking,
     plan_chunks,
 )
@@ -44,6 +45,7 @@ from roborak.llm.parser import (
     parse_walkthrough,
 )
 from roborak.llm.prompt import (
+    RenderedPrompt,
     build_ask_prompt,
     build_describe_prompt,
     build_improve_prompt,
@@ -55,6 +57,11 @@ from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
 
 log = logging.getLogger(__name__)
+
+MAX_RECONCILIATION_EVIDENCE = 60
+"""How many entries of each evidence kind reach the reducer. Evidence repeats across
+passes long before it runs out; past this point the extra entries crowd the prompt
+rather than adding a place to look."""
 
 
 def render_for_prompt(file: ChangedFile) -> str:
@@ -288,7 +295,7 @@ class Reviewer:
 
         plan = plan_chunks(
             changeset,
-            budget,
+            self._diff_budget(changeset, carries_contracts=True),
             self.llm.count_tokens,
             render_for_prompt,
             impact=self._impact,
@@ -309,10 +316,16 @@ class Reviewer:
         ]
         for index, piece in enumerate(chunks, start=1):
             changeset.omitted_files.extend(piece.omitted_files)
+            under_review = {file.path for file in piece.files}
             carried_contracts = [
                 contract
                 for contract in reviewed_contracts
-                if (source_chunk := chunk_by_path.get(contract.path)) is not None
+                # A split file is still primary diff in the pass holding its later
+                # fragments. Carrying it there would hand the model a summary of the
+                # very lines it is reviewing, under an instruction not to report on
+                # them -- so it is carried only once the file is behind us.
+                if contract.path not in under_review
+                and (source_chunk := chunk_by_path.get(contract.path)) is not None
                 and source_chunk < index
             ]
             try:
@@ -345,12 +358,7 @@ class Reviewer:
         )
         if should_reconcile and result.status is ReviewStatus.COMPLETE:
             try:
-                prompt = build_reconciliation_prompt(
-                    issue=(
-                        self.issue
-                        if self.issue is not None and self.config.review.check_requirements
-                        else None
-                    ),
+                prompt = self._reconciliation_prompt(
                     requirement_evidence=requirement_evidence,
                     compatibility_evidence=compatibility_evidence,
                     contracts=reviewed_contracts,
@@ -370,6 +378,55 @@ class Reviewer:
                 result.status = ReviewStatus.PARTIAL
                 result.errors.append(f"reconciliation failed: {exc}")
         return findings
+
+    def _reconciliation_prompt(
+        self,
+        *,
+        requirement_evidence: list[dict[str, str]],
+        compatibility_evidence: list[dict[str, str]],
+        contracts: list[ContractContext],
+        files: list[str],
+    ) -> RenderedPrompt:
+        """Fit the reducer's own prompt inside the budget before it is sent.
+
+        Every pass contributes evidence, so a change reviewed in many passes can
+        accumulate more than the reducer can read -- and the reducer has no chunked
+        fallback: one over-budget call turns a complete review into a PARTIAL one.
+        Evidence is dropped from the longer list first, so both kinds survive as far
+        as the budget allows.
+        """
+        assert self.llm is not None
+        requirements = requirement_evidence[:MAX_RECONCILIATION_EVIDENCE]
+        compatibility = compatibility_evidence[:MAX_RECONCILIATION_EVIDENCE]
+        dropped = (len(requirement_evidence) - len(requirements)) + (
+            len(compatibility_evidence) - len(compatibility)
+        )
+        while True:
+            prompt = build_reconciliation_prompt(
+                issue=(
+                    self.issue
+                    if self.issue is not None and self.config.review.check_requirements
+                    else None
+                ),
+                requirement_evidence=requirements,
+                compatibility_evidence=compatibility,
+                contracts=contracts,
+                files=files,
+            )
+            if self.llm.context_budget < 1000:
+                break
+            total = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
+            if total <= self.llm.context_budget or not (requirements or compatibility):
+                break
+            if len(compatibility) >= len(requirements):
+                dropped += len(compatibility) - len(compatibility) // 2
+                compatibility = compatibility[: len(compatibility) // 2]
+            else:
+                dropped += len(requirements) - len(requirements) // 2
+                requirements = requirements[: len(requirements) // 2]
+        if dropped:
+            log.warning("reconciliation dropped %d evidence entries to fit the budget", dropped)
+        return prompt
 
     def _review_chunk(
         self,
@@ -475,8 +532,17 @@ class Reviewer:
             self._contexts[reference] = load_repo_context(self.repo, reference or None)
         return self._contexts[reference]
 
-    def _diff_budget(self, changeset: ChangeSet) -> int:
-        """Reserve exact prompt scaffolding before grouping files into calls."""
+    def _diff_budget(self, changeset: ChangeSet, *, carries_contracts: bool = False) -> int:
+        """Reserve exact prompt scaffolding before grouping files into calls.
+
+        ``carries_contracts`` is for the chunked path, where every pass after the
+        first is handed the contracts earlier passes established. That section is
+        absent from the prompt measured here, so without reserving it the planner
+        fills a chunk to the brim and the carried contracts push the pass over the
+        limit -- compressing away a file the plan had promised to review. A single
+        pass carries no contracts and reserves nothing, so a change that fits whole
+        is still reviewed whole.
+        """
         assert self.llm is not None
         if self.llm.context_budget < 1000:
             return self.llm.context_budget
@@ -486,6 +552,9 @@ class Reviewer:
             self.config,
             repo_context=self._repo_context(empty),
             issue=self.issue,
+            contract_contexts=(
+                contract_contexts(changeset.files, self._impact) if carries_contracts else None
+            ),
             collect_reconciliation_evidence=True,
         )
         overhead = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
