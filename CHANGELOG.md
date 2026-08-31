@@ -12,6 +12,14 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **Agent instructions checked into the repository.** `CLAUDE.md` records what
+  roborak is, the commands CI actually runs, the pipeline's stage boundaries, the
+  invariants a plausible-looking change quietly breaks, the config precedence
+  chain and the house conventions; `AGENTS.md` points every other coding agent at
+  it rather than duplicating it. Contributor-facing only — no CLI flag, config key,
+  output field or exit code changes. `CONTRIBUTING.md` stays the human-facing
+  companion and now says which of the four context files roborak actually reads.
+
 - **Supply-chain and infrastructure review.** `ignore_paths` excludes every
   lockfile from a review, which is right — a lockfile is generated data, and
   sending one to a model spends thousands of tokens asking it to do a diff badly —
