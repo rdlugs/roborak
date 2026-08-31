@@ -106,7 +106,7 @@ export default function Configuration() {
         label=".roborak.yaml"
         code={[
           "review:",
-          "  categories: [security, bug, performance, logic]",
+          "  categories: [security, bug, performance, logic, reliability]",
           "  severity_floor: minor         # findings below this are not reported",
           "  max_findings: 25",
           "  committable_suggestions: true # emit replacement code you can commit as-is",
@@ -134,10 +134,22 @@ export default function Configuration() {
         </P>
       </Callout>
       <P>
-        The categories are the eight roborak knows: <Code>security</Code>, <Code>bug</Code>,{" "}
-        <Code>performance</Code>, <Code>logic</Code>, <Code>maintainability</Code>,{" "}
-        <Code>testing</Code>, <Code>style</Code>, <Code>docs</Code>. Severities run{" "}
-        <Code>critical</Code>, <Code>major</Code>, <Code>minor</Code>, <Code>info</Code>.
+        The categories are the nine roborak knows: <Code>security</Code>, <Code>bug</Code>,{" "}
+        <Code>performance</Code>, <Code>logic</Code>, <Code>reliability</Code>,{" "}
+        <Code>maintainability</Code>, <Code>testing</Code>, <Code>style</Code>, <Code>docs</Code>.
+        Severities run <Code>critical</Code>, <Code>major</Code>, <Code>minor</Code>,{" "}
+        <Code>info</Code>.
+      </P>
+      <P>
+        <Code>reliability</Code> is for code that is locally correct and still fails on rollout: a
+        field required before the version that writes it ships, a migration that locks a hot table
+        or cannot be rolled back, a retry around a call that is not idempotent, a feature flag
+        defaulting on where it is unset, a connection pool raised past what the database serves, a
+        cache key that stops separating one tenant from the next. Its checklist is gated on what the
+        change touches &mdash; migrations, deploy configuration, public contracts, jobs and queues,
+        retries and timeouts, flags, caches, limits, and logging or metrics a change removes &mdash;
+        so a diff crossing none of those surfaces is never asked about rollout, and &ldquo;add
+        monitoring&rdquo; is not a finding.
       </P>
 
       <H3>static</H3>

@@ -10,6 +10,28 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Added
+
+- **Deployment and runtime risk is reviewed explicitly, under a new `reliability`
+  category.** Some defects are locally correct code that only fails on rollout or
+  under production load: a field required before the version that writes it ships, a
+  migration that locks a hot table or cannot be rolled back, a retry wrapped around a
+  call that is not idempotent, a feature flag defaulting on where it is unset, a
+  connection pool raised past what the database serves. The prompt never asked about
+  any of it, and the findings had nowhere to land. There is now a
+  deployment-and-runtime checklist covering mixed-version compatibility, expand and
+  contract migration sequencing, retry amplification and idempotency, flag lifecycle,
+  cache staleness and key separation, and limits, pools and lost signal — gated the
+  way the supply-chain one is, so only the sub-checklists a change actually crosses
+  reach the model and a diff touching none of those surfaces pays nothing and is never
+  asked about rollout. Detection reads paths and changed lines only, so a keyword
+  sitting in untouched context is not evidence, and logging counts as a signal when a
+  change *removes* it rather than adds it: an added log line should not pull in a
+  section whose only possible finding is "add monitoring". `reliability` is enabled by
+  default and configurable in `review.categories` like any other category. Evidence
+  semantics are unchanged — an unproven `critical` reliability finding is demoted
+  exactly like any other.
+
 ### Changed
 
 - **The walkthrough table and the pre-merge check fold away in a published

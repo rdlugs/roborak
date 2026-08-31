@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from roborak.core.config import Config, load_config
+from roborak.core.config import Config, ReviewConfig, load_config
 from roborak.core.severity import Category, Severity
 
 
@@ -46,6 +46,21 @@ def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
     assert config.review.severity_floor is Severity.MAJOR
     assert config.review.categories == [Category.SECURITY]
     assert config.ignore_paths == ["**/*.generated.ts"]
+
+
+def test_reliability_is_a_configurable_category(tmp_path: Path, monkeypatch):
+    """A project that does not want rollout review can turn the category off."""
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    project = tmp_path / ".roborak.yaml"
+    project.write_text("review:\n  categories: [bug, reliability]\n")
+    # Explicit, so the assertion holds whether or not the suite runs in CI.
+    config = load_config(tmp_path, project)
+    assert config.review.categories == [Category.BUG, Category.RELIABILITY]
+
+
+def test_reliability_is_reviewed_by_default():
+    """Off by default would make the whole checklist dead code for most users."""
+    assert Category.RELIABILITY in ReviewConfig().categories
 
 
 def test_ci_ignores_working_tree_config_but_accepts_explicit_config(tmp_path: Path, monkeypatch):

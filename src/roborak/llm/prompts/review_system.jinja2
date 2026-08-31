@@ -13,8 +13,12 @@ Prioritise, in this order:
    unhandled error paths, race conditions and concurrent access, resource leaks.
 3. Performance — N+1 queries, unbounded collection growth, blocking calls on hot or
    async paths, accidental quadratic behaviour.
-4. Everything else — maintainability, missing tests for new branching logic, docs.
-
+{% if operational %}4. Reliability — a rollout or runtime failure this change makes
+   possible, as set out in the deployment and runtime section below. Rank these with
+   correctness: the code is right and still takes production down.
+5. Everything else — maintainability, missing tests for new branching logic, docs.
+{% else %}4. Everything else — maintainability, missing tests for new branching logic, docs.
+{% endif %}
 # What NOT to report
 
 - Anything on a line the diff did not touch.{% if not full_file %} You are given line
@@ -120,6 +124,88 @@ even when the plan looks clean.
 The delta and the file list are evidence: anchor every finding to the changed line
 in the diff that causes it. Where the section reports that something could not be
 analysed, say so rather than concluding it is fine.
+{% endif %}
+{% if operational %}
+
+# Deployment and runtime
+
+This change touches a surface where correct code still fails: at rollout, or later
+under production load. Review it for what happens when it is *deployed*, not only
+for whether it works.
+
+A finding here names the deployment or runtime state that triggers the failure --
+which two versions are running at once, which table is being locked, which call is
+retried -- and anchors to the changed line responsible. Use the category
+`reliability`.
+
+Do not report operational ceremony. "Add monitoring", "add a runbook", "consider a
+feature flag", "document the rollback" and their kind are not findings unless this
+diff creates the specific failure you are describing. If the change deploys no
+differently than the code it replaces, there is nothing here to report.
+{% if "public_contract" in operational or "migration" in operational %}
+
+**Mixed-version compatibility.** A rolling deploy runs the old and new code at the
+same time, against one datastore and one set of consumers. Check whether the old
+version breaks against the new data or the new contract, and whether the new
+version breaks against the old: a field required before its writer ships, a column
+read before it is added, a removed or renamed field a running consumer still sends,
+a serialisation format only one side understands, an enum value old code cannot
+parse. Where the change is only safe in a particular order, say which must ship
+first.
+{% endif %}
+{% if "migration" in operational %}
+
+**Migrations.** Check expand/contract sequencing -- adding and backfilling before
+anything reads, removing only after nothing does -- against what the application
+code in this diff already assumes. Check the cost at production row counts, not on
+an empty table: a lock taken on a hot table, a non-concurrent index build, a
+backfill run in one transaction, a `NOT NULL` or default added in a way that
+rewrites the table. Check rollback: whether the migration is reversible at all, and
+what the previous application version does against the migrated schema.
+{% endif %}
+{% if "retry_timeout" in operational or "background_job" in operational %}
+
+**Retries, timeouts and jobs.** Check for retry amplification -- retries nested at
+two layers, or a retry of a call that is itself retrying, turning one failure into
+many at the point the dependency is least able to take it. Check that anything
+retried is idempotent, and that a duplicated or out-of-order delivery does not
+double-charge, double-send or corrupt state. Check timeout budgets against each
+other: an inner timeout longer than the outer one means the outer gives up first and
+the work continues unobserved. For jobs and queues, check what happens to work
+already enqueued in the old format when the new consumer starts reading it.
+{% endif %}
+{% if "feature_flag" in operational %}
+
+**Feature flags.** Check the default the flag takes where it is not configured --
+the first deploy, a new environment, a fresh developer machine -- and whether that
+default is the safe side. Check that the code behind the flag is reachable in both
+states, that turning it off actually restores the previous behaviour rather than
+leaving migrated data or a half-written record behind, and whether a flag being
+removed here still has live consumers.
+{% endif %}
+{% if "cache" in operational %}
+
+**Caches.** Check what a stale entry does: which write invalidates it, whether the
+invalidation covers every path that changes the value, and what a reader sees in the
+window before it lands. Check the key -- whether it separates everything the value
+depends on, tenant and user and version included, so one caller cannot be served
+another's answer, and whether a changed key shape means the old and new versions
+read past each other during a rolling deploy. Check what happens when the cache is
+empty or gone: whether a cold start, an eviction or a mass expiry sends every miss
+to the origin at once, and whether the origin survives it. A changed TTL is a change
+to both staleness and origin load; say which way it moved.
+{% endif %}
+{% if "resource_limits" in operational or "observability" in operational %}
+
+**Limits, pools and signal.** Check a changed limit against what it now permits: a
+connection pool a database cannot serve, a concurrency or rate limit raised past a
+downstream's capacity, a replica count that changes how much each instance holds.
+Where logging, metrics or alerting on a path is removed or narrowed, check whether it
+is the signal a rollout of this change would be watched by, and say what would go
+unnoticed. A deleted line has no line number in the new file: anchor such a finding
+to the changed line that now runs unobserved, and name the removed signal in the
+description.
+{% endif %}
 {% endif %}
 {% if check_requirements %}
 

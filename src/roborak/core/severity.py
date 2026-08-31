@@ -44,6 +44,7 @@ class Category(StrEnum):
     BUG = "bug"
     PERFORMANCE = "performance"
     LOGIC = "logic"
+    RELIABILITY = "reliability"
     MAINTAINABILITY = "maintainability"
     TESTING = "testing"
     STYLE = "style"

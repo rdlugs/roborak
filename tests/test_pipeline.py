@@ -19,6 +19,7 @@ from roborak.core.models import (
     ChangedFile,
     ChangeSet,
     Finding,
+    Hunk,
     ImpactStatus,
     Issue,
     OmissionReason,
@@ -1111,3 +1112,68 @@ def test_feed_to_llm_off_reserves_nothing(tmp_path):
         config=config, repo=tmp_path, llm=StubLLM(reply="findings: []")
     )._diff_budget(changeset)
     assert reviewer._diff_budget(changeset) == baseline
+
+
+def _prompt_for(path: str, body: str, config: Config | None = None) -> str:
+    """The system half of a review prompt for one file, for checklist gating."""
+    from roborak.llm.prompt import build_review_prompt
+
+    changeset = ChangeSet(
+        files=[
+            ChangedFile(
+                path=path,
+                hunks=[Hunk(old_start=1, old_lines=1, new_start=1, new_lines=1, content=body)],
+            )
+        ]
+    )
+    return build_review_prompt(changeset, config or Config()).system
+
+
+def test_an_ordinary_change_pays_nothing_for_the_deployment_section():
+    """The whole section is absent, not merely empty; it costs no tokens."""
+    system = _prompt_for("app/util.py", "@@\n-total = a + b\n+total = a - b\n")
+    assert "# Deployment and runtime" not in system
+    assert "4. Everything else" in system
+
+
+def test_a_migration_gets_only_the_checklists_it_crosses():
+    """Gating is per surface, not all-or-nothing once the section is on."""
+    system = _prompt_for("migrations/003_add_email.sql", "@@\n+ALTER TABLE users ADD email TEXT;\n")
+    assert "# Deployment and runtime" in system
+    assert "**Migrations.**" in system
+    assert "**Mixed-version compatibility.**" in system
+    # A schema change never asks about the surfaces it does not touch.
+    assert "**Feature flags.**" not in system
+    assert "**Retries, timeouts and jobs.**" not in system
+
+
+def test_a_retry_change_gets_the_retry_checklist_and_not_the_migration_one():
+    """The other direction, so neither surface is quietly implying the other."""
+    system = _prompt_for("app/client.py", "@@\n+    return get(url, timeout=5, retries=3)\n")
+    assert "**Retries, timeouts and jobs.**" in system
+    assert "**Migrations.**" not in system
+
+
+def test_the_deployment_section_refuses_operational_ceremony():
+    """ "Add monitoring" on an ordinary diff is the failure mode of this section."""
+    system = _prompt_for("k8s/web.yaml", "@@\n+  replicas: 12\n")
+    assert "Do not report operational ceremony" in system
+    assert "reliability" in system
+
+
+def test_the_deployment_section_is_absent_when_reliability_is_not_reviewed():
+    """The section only ever asks for `reliability`, so a disabled category silences it."""
+    config = Config()
+    config.review.categories = [
+        c for c in config.review.categories if c is not Category.RELIABILITY
+    ]
+    system = _prompt_for("k8s/web.yaml", "@@\n+  replicas: 12\n", config)
+    assert "# Deployment and runtime" not in system
+    assert "4. Everything else" in system
+
+
+def test_a_cache_change_gets_the_cache_checklist():
+    """Staleness, key separation and a cold origin are asked only of a cache change."""
+    system = _prompt_for("app/cache/orders.py", "@@\n+    cache.set(key, order, ttl=60)\n")
+    assert "**Caches.**" in system
+    assert "**Limits, pools and signal.**" not in system
