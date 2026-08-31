@@ -466,6 +466,27 @@ def test_the_severity_table_stops_naming_files_and_counts_the_rest():
     assert "and 2 more" in row
 
 
+def test_the_severity_table_keeps_a_path_inside_its_cell():
+    """A pipe in a path is a column break to a markdown table; escaped, the path
+    stays one cell instead of splitting the row."""
+    result = make_result()
+    result.findings = [
+        Finding(
+            file="app/we|rd.py",
+            start_line=1,
+            end_line=1,
+            severity=Severity.MINOR,
+            category=Category.STYLE,
+            title="Nit",
+            body="Small.",
+        )
+    ]
+    row = next(
+        line for line in markdown.render(result).splitlines() if line.startswith("| 🟡 Minor |")
+    )
+    assert row == "| 🟡 Minor | 1 | `app/we\\|rd.py` |"
+
+
 def test_the_terminal_keeps_a_rule_between_findings_in_one_file():
     """It cannot fold a section and has no quote bar worth the indent, so the
     boundary the published form gets from a blockquote is a rule here."""

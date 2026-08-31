@@ -543,7 +543,7 @@ def _severity_table(result: ReviewResult) -> str:
     ]
     rows += [
         f"| {SEVERITY_LABEL[severity]} | {counts[severity]} "
-        f"| {_listed(f'`{path}`' for path in where[severity])} |"
+        f"| {_listed(f'`{_escape_cell(path)}`' for path in where[severity])} |"
         for severity in Severity
         if counts[severity]
     ]
