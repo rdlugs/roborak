@@ -202,7 +202,9 @@ connection pool a database cannot serve, a concurrency or rate limit raised past
 downstream's capacity, a replica count that changes how much each instance holds.
 Where logging, metrics or alerting on a path is removed or narrowed, check whether it
 is the signal a rollout of this change would be watched by, and say what would go
-unnoticed.
+unnoticed. A deleted line has no line number in the new file: anchor such a finding
+to the changed line that now runs unobserved, and name the removed signal in the
+description.
 {% endif %}
 {% endif %}
 {% if check_requirements %}

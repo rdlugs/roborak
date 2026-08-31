@@ -928,8 +928,16 @@ def test_an_added_log_line_alone_is_not_an_observability_signal():
 
 def test_removed_logging_is_an_observability_signal():
     """The rollout of this change would have been watched by the line it deletes."""
-    changeset = _op_changeset(("src/app/util.py", "@@\n-    logger.warning('retrying')\n"))
+    changeset = _op_changeset(
+        ("src/app/util.py", "@@\n-    logger.warning('retrying')\n+    send()\n")
+    )
     assert "observability" in operational_signals(changeset)
+
+
+def test_a_file_that_only_deletes_raises_no_observability_signal():
+    """A finding needs a new-file line; a pure deletion leaves none to anchor to."""
+    changeset = _op_changeset(("src/app/util.py", "@@\n-    logger.info('order placed')\n"))
+    assert operational_signals(changeset) == []
 
 
 def test_a_plain_sql_file_is_not_a_migration():
@@ -940,12 +948,16 @@ def test_a_plain_sql_file_is_not_a_migration():
 
 def test_removed_markup_is_not_an_observability_signal():
     """`span` is a tag far more often than a trace."""
-    changeset = _op_changeset(("web/templates/card.html", "@@\n-  <span>{{ name }}</span>\n"))
+    changeset = _op_changeset(
+        ("web/templates/card.html", "@@\n-  <span>{{ name }}</span>\n+  <b>{{ name }}</b>\n")
+    )
     assert operational_signals(changeset) == []
 
 
 def test_removed_tracing_is_an_observability_signal():
-    changeset = _op_changeset(("src/app/api.py", "@@\n-    with tracer.start_span('fetch'):\n"))
+    changeset = _op_changeset(
+        ("src/app/api.py", "@@\n-    with tracer.start_span('fetch'):\n+    fetch()\n")
+    )
     assert "observability" in operational_signals(changeset)
 
 

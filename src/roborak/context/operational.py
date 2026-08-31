@@ -109,6 +109,12 @@ _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
 # Losing a signal is the failure mode worth a checklist; adding one is not. An
 # added log line on an otherwise ordinary change must not drag in a section
 # whose only possible finding would be operational ceremony.
+#
+# These fire on the removed body, which has no new-file line of its own: a
+# finding about a deleted log can only be anchored to a line that survives the
+# change. So they are gated on the file having an added line at all -- a file
+# that only deletes can carry no finding past ``anchor_to_changed_lines``, and
+# asking for one would buy tokens for output that is discarded.
 _REMOVED_ONLY_PATTERNS: dict[str, re.Pattern[str]] = {
     OBSERVABILITY: re.compile(
         r"\b(logger|logging|log_|metrics?|prometheus|statsd|datadog|opentelemetry|otel|"
@@ -132,17 +138,19 @@ def operational_signals(changeset: ChangeSet) -> list[str]:
                 found.add(kind)
 
         added, removed = _changed_lines(file)
+        added_body, removed_body = "\n".join(added), "\n".join(removed)
         for kind, pattern in _CONTENT_PATTERNS.items():
-            if pattern.search(added) or pattern.search(removed):
+            if pattern.search(added_body) or pattern.search(removed_body):
                 found.add(kind)
-        for kind, pattern in _REMOVED_ONLY_PATTERNS.items():
-            if pattern.search(removed):
-                found.add(kind)
+        if added:
+            for kind, pattern in _REMOVED_ONLY_PATTERNS.items():
+                if pattern.search(removed_body):
+                    found.add(kind)
     return sorted(found)
 
 
-def _changed_lines(file: ChangedFile) -> tuple[str, str]:
-    """The added and removed bodies of every hunk, without their diff markers."""
+def _changed_lines(file: ChangedFile) -> tuple[list[str], list[str]]:
+    """The added and removed lines of every hunk, without their diff markers."""
     added: list[str] = []
     removed: list[str] = []
     for hunk in file.hunks:
@@ -151,4 +159,4 @@ def _changed_lines(file: ChangedFile) -> tuple[str, str]:
                 added.append(line[1:])
             elif line.startswith("-") and not line.startswith("---"):
                 removed.append(line[1:])
-    return "\n".join(added), "\n".join(removed)
+    return added, removed
