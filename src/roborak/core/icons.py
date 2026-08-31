@@ -39,14 +39,16 @@ SEVERITY_GLYPH = "●"
 elsewhere: ``rich`` styles it from ``SEVERITY_STYLE``, and a panel border wants
 something narrower than an emoji."""
 
+SEVERITY_WORD: dict[Severity, str] = {
+    Severity.CRITICAL: "Critical",
+    Severity.MAJOR: "Major",
+    Severity.MINOR: "Minor",
+    Severity.INFO: "Trivial",
+}
+"""The word on its own, for places that already carry the circle themselves."""
+
 SEVERITY_LABEL: dict[Severity, str] = {
-    severity: f"{SEVERITY_ICON[severity]} {word}"
-    for severity, word in (
-        (Severity.CRITICAL, "Critical"),
-        (Severity.MAJOR, "Major"),
-        (Severity.MINOR, "Minor"),
-        (Severity.INFO, "Trivial"),
-    )
+    severity: f"{SEVERITY_ICON[severity]} {word}" for severity, word in SEVERITY_WORD.items()
 }
 
 CATEGORY_LABEL: dict[Category, str] = {

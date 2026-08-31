@@ -25,7 +25,7 @@ from roborak.core.icons import (
     CATEGORY_LABEL,
     EFFORT_LABEL,
     SEVERITY_GLYPH,
-    SEVERITY_LABEL,
+    SEVERITY_WORD,
 )
 from roborak.core.models import (
     Finding,
@@ -327,7 +327,7 @@ def _finding_panel(finding: Finding, repo: Path) -> Panel:
     heading.append(f"{SEVERITY_GLYPH} ", style=style)
     heading.append(CATEGORY_LABEL[finding.category])
     heading.append(" │ ", style="dim")
-    heading.append(SEVERITY_LABEL[finding.severity], style=style)
+    heading.append(SEVERITY_WORD[finding.severity], style=style)
     heading.append(" │ ", style="dim")
     heading.append(EFFORT_LABEL[finding.effort])
 

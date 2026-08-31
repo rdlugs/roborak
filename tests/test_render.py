@@ -696,7 +696,7 @@ def test_terminal_stays_quiet_when_there_is_nothing_to_review():
 
 def test_terminal_findings_carry_the_same_badges_as_the_report():
     text = render_terminal(make_result(), width=120)
-    assert "🔒 Security │ 🔴 Critical │ ⚡ Quick win" in text
+    assert "● 🔒 Security │ Critical │ ⚡ Quick win" in text
     assert "confidence 95%" in text
 
 
