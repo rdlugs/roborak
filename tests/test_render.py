@@ -376,10 +376,12 @@ def test_markdown_review_info():
 
 
 def test_markdown_reports_skipped_files():
+    """What the budget dropped is still named, so a reader knows it went unreviewed."""
     assert "generated/big.ts" in markdown.render(make_result())
 
 
 def test_markdown_walkthrough_and_diagram() -> None:
+    """The overview block carries all of it: table, diagram, effort and labels."""
     text = markdown.render(make_result(walkthrough=True))
     assert markdown.WALKTHROUGH_SUMMARY in text
     assert "| File | Change |" in text
@@ -1161,6 +1163,7 @@ def test_an_incomplete_review_is_inconclusive_rather_than_blocked():
 
 
 def test_the_published_check_is_a_callout_the_forge_renders():
+    """The forge colours the bar from the alert type, so the verdict lands before the text."""
     blocked = make_result()
     blocked.block_on = Severity.CRITICAL
     assert "> [!CAUTION]" in markdown.render(blocked)
