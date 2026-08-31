@@ -18,13 +18,14 @@ from roborak.core.models import (
     ChangedAsset,
     ChangeSet,
     DependencyChange,
+    Finding,
     SupplyChainReport,
     SupplyChainStatus,
 )
 from roborak.supply.classify import classify
-from roborak.supply.delta import compare, drift
+from roborak.supply.delta import compare, drift, sort_changes
 from roborak.supply.ecosystems import ECOSYSTEMS, ecosystem_for
-from roborak.supply.ecosystems.base import Package
+from roborak.supply.ecosystems.base import Ecosystem, Package
 from roborak.supply.revision import base_revision, read_at, read_working_tree
 
 log = logging.getLogger(__name__)
@@ -159,6 +160,7 @@ def _analyse_dependencies(
 
     changes: list[DependencyChange] = []
     ecosystems: list[str] = []
+    ecosystem_defs: dict[str, Ecosystem] = {}
     # Per-ecosystem head-side parses, so drift can compare a manifest against the
     # lockfile that is supposed to satisfy it even though they are separate files.
     manifests: dict[str, dict[str, Package]] = {}
@@ -170,7 +172,9 @@ def _analyse_dependencies(
             continue
         old_text = read_at(repo, base, asset.path, timeout=config.timeout_seconds)
         new_text = read_working_tree(repo, asset.path)
-        if new_text is None and head:
+        changed_file = changeset.file_by_path(asset.path)
+        deleted = changed_file is not None and changed_file.change_type == "deleted"
+        if new_text is None and head and not deleted:
             new_text = read_at(repo, head, asset.path, timeout=config.timeout_seconds)
 
         if old_text is None and new_text is None:
@@ -189,15 +193,17 @@ def _analyse_dependencies(
 
         if eco.name not in ecosystems:
             ecosystems.append(eco.name)
+        ecosystem_defs[eco.name] = eco
         changes.extend(compare(eco.name, old, new))
         target = manifests if asset.kind is AssetKind.DEPENDENCY_MANIFEST else locks
         target.setdefault(eco.name, {}).update(new)
 
     _fill_counterparts(assets, repo, manifests, locks, report)
     for name in sorted(set(manifests) & set(locks)):
-        changes.extend(drift(name, manifests[name], locks[name]))
+        changes.extend(drift(ecosystem_defs[name], manifests[name], locks[name]))
 
     report.ecosystems = ecosystems
+    changes = sort_changes(changes)
     if len(changes) > config.max_changes:
         report.truncated = True
         report.notes.append(
@@ -271,6 +277,30 @@ def note_skipped_scanners(report: SupplyChainReport | None, skipped: list[tuple[
     for name, reason in skipped:
         if name in SCANNERS:
             report.notes.append(f"Scanner `{name}` did not run: {reason}")
+
+
+def attach_scanner_findings(
+    report: SupplyChainReport | None, findings: list[Finding], *, max_findings: int
+) -> None:
+    """Attach whole-asset scanner facts without sending them through line validation."""
+    if report is None or not findings:
+        return
+    ordered = sorted(
+        findings,
+        key=lambda finding: (
+            -finding.severity.rank,
+            -finding.confidence,
+            finding.file,
+            finding.rule_id or "",
+        ),
+    )
+    if len(ordered) > max_findings:
+        report.truncated = True
+        report.notes.append(
+            f"{len(ordered)} scanner findings were found; the first {max_findings} are listed "
+            "(`review.max_findings`)."
+        )
+    report.scanner_findings.extend(ordered[:max_findings])
 
 
 def supported_ecosystems() -> list[str]:

@@ -48,6 +48,17 @@ def for_prompt(report: SupplyChainReport | None) -> dict[str, Any] | None:
             }
             for change in report.changes
         ],
+        "scanner_findings": [
+            {
+                "file": finding.file,
+                "severity": finding.severity.value,
+                "title": finding.title,
+                "body": finding.body,
+                "rule_id": finding.rule_id or "",
+                "tool": finding.tool or "",
+            }
+            for finding in report.scanner_findings
+        ],
     }
 
 

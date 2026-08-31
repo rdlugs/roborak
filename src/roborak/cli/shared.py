@@ -191,7 +191,6 @@ def start(
             uncommitted=uncommitted,
             include_untracked=include_untracked,
             include_discussions=config.review.include_discussions and not no_discussions,
-            ignore_paths=config.ignore_paths,
             quiet=quiet_status,
         )
     except SourceError as exc:
@@ -320,7 +319,6 @@ def _load_changeset(
     uncommitted: bool,
     include_untracked: bool,
     include_discussions: bool,
-    ignore_paths: list[str],
     quiet: bool,
 ) -> ChangeSet:
     if provider is not None:
@@ -339,7 +337,6 @@ def _load_changeset(
         return _load_paths(
             console,
             repo,
-            ignore_paths=ignore_paths,
             base=base,
             committed=committed,
             uncommitted=uncommitted,
@@ -360,7 +357,6 @@ def _load_paths(
     console: Console,
     repo: Path,
     *,
-    ignore_paths: list[str],
     base: str | None,
     committed: bool,
     uncommitted: bool,
@@ -389,7 +385,9 @@ def _load_paths(
             "Drop it to review every file in the directory instead."
         )
 
-    source = PathsSource(root=repo, ignore_paths=ignore_paths)
+    # Preserve dependency assets for supply-chain analysis. Reviewer applies
+    # ignore_paths later, before any ordinary file reaches the model prompt.
+    source = PathsSource(root=repo)
     if quiet:
         return source.load()
     console.print(f"[dim]no git repository; reviewing every file under {repo}[/]")

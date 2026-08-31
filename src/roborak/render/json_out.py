@@ -42,7 +42,7 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
             ],
         },
         "summary": {
-            "total": len(result.findings),
+            "total": len(result.all_findings()),
             "by_severity": {s.value: n for s, n in result.counts_by_severity.items() if n},
             "has_blocking": result.has_blocking,
         },
@@ -156,6 +156,18 @@ def _supply_chain_dict(report: SupplyChainReport) -> dict[str, Any]:
         "notes": list(report.notes),
         "assets": [asset.model_dump(mode="json") for asset in report.assets],
         "changes": [change.model_dump(mode="json") for change in report.changes],
+        "scanner_findings": [
+            {
+                "file": finding.file,
+                "severity": finding.severity.value,
+                "title": finding.title,
+                "body": finding.body,
+                "rule_id": finding.rule_id,
+                "confidence": finding.confidence,
+                "tool": finding.tool,
+            }
+            for finding in report.scanner_findings
+        ],
     }
 
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 
-from roborak.supply.ecosystems.base import Ecosystem, Package
+from roborak.supply.ecosystems.base import Ecosystem, Package, semver_satisfies
 
 _SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 
@@ -64,10 +65,19 @@ def parse_lock(text: str) -> dict[str, Package]:
     return packages
 
 
+def _version_satisfies(constraint: str, version: str) -> bool | None:
+    """Cargo treats a bare version as a caret range, unlike npm's wildcard form."""
+    stripped = constraint.strip()
+    if re.fullmatch(r"v?\d+(?:\.\d+){0,2}", stripped):
+        stripped = f"^{stripped}"
+    return semver_satisfies(stripped, version)
+
+
 CARGO = Ecosystem(
     name="cargo",
     manifests=("Cargo.toml",),
     locks=("Cargo.lock",),
     parse_manifest=parse_manifest,
     parse_lock=parse_lock,
+    version_satisfies=_version_satisfies,
 )

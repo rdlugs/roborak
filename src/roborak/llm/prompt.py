@@ -409,6 +409,13 @@ def _safe_supply_chain(payload: dict[str, Any] | None) -> dict[str, Any] | None:
             | {"direct": change["direct"]}
             for change in payload["changes"]
         ],
+        "scanner_findings": [
+            {
+                key: _escape_untrusted(finding[key])
+                for key in ("file", "severity", "title", "body", "rule_id", "tool")
+            }
+            for finding in payload["scanner_findings"]
+        ],
     }
 
 

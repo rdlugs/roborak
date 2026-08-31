@@ -9,7 +9,7 @@ ways at once the report names the one a reviewer would want to see first.
 from __future__ import annotations
 
 from roborak.core.models import DependencyChange, DependencyChangeKind
-from roborak.supply.ecosystems.base import Package, classify_version_move
+from roborak.supply.ecosystems.base import Ecosystem, Package, classify_version_move
 
 
 def compare(
@@ -49,7 +49,7 @@ def compare(
         if (change := _compare_one(ecosystem, name, old[name], new[name])) is not None:
             changes.append(change)
 
-    return sorted(changes, key=_rank)
+    return sort_changes(changes)
 
 
 def _compare_one(ecosystem: str, name: str, old: Package, new: Package) -> DependencyChange | None:
@@ -92,21 +92,21 @@ def _compare_one(ecosystem: str, name: str, old: Package, new: Package) -> Depen
 
 
 def drift(
-    ecosystem: str, manifest: dict[str, Package], lock: dict[str, Package]
+    ecosystem: Ecosystem, manifest: dict[str, Package], lock: dict[str, Package]
 ) -> list[DependencyChange]:
     """Where the manifest and the lockfile disagree about the same change.
 
     Only the two directions that mean the resolved tree is not the declared one:
     a package the manifest asks for that the lock has never heard of, and one the
-    lock still pins that the manifest no longer wants. Version-range mismatches
-    are not drift -- a range is supposed to be wider than the pin that satisfies
-    it -- so they are deliberately not reported here.
+    lock still pins that the manifest no longer wants, or a pin outside the
+    manifest's declared range. Unknown constraint syntax stays quiet rather than
+    becoming a guessed finding.
     """
     changes: list[DependencyChange] = []
     for name in sorted(set(manifest) - set(lock)):
         changes.append(
             DependencyChange(
-                ecosystem=ecosystem,
+                ecosystem=ecosystem.name,
                 name=name,
                 kind=DependencyChangeKind.MANIFEST_LOCK_DRIFT,
                 new_version=manifest[name].version,
@@ -124,7 +124,7 @@ def drift(
             continue
         changes.append(
             DependencyChange(
-                ecosystem=ecosystem,
+                ecosystem=ecosystem.name,
                 name=name,
                 kind=DependencyChangeKind.MANIFEST_LOCK_DRIFT,
                 old_version=package.version,
@@ -132,7 +132,26 @@ def drift(
                 note="The lockfile still pins this and the manifest no longer declares it.",
             )
         )
-    return changes
+    for name in sorted(set(manifest) & set(lock)):
+        declared = manifest[name]
+        resolved = lock[name]
+        if ecosystem.lock_satisfies(declared.version, resolved.version) is not False:
+            continue
+        changes.append(
+            DependencyChange(
+                ecosystem=ecosystem.name,
+                name=name,
+                kind=DependencyChangeKind.MANIFEST_LOCK_DRIFT,
+                old_version=resolved.version,
+                new_version=declared.version,
+                direct=True,
+                note=(
+                    f"The lockfile pins {resolved.version}, which does not satisfy the manifest "
+                    f"constraint {declared.version}."
+                ),
+            )
+        )
+    return sort_changes(changes)
 
 
 def _note_for_new(package: Package) -> str:
@@ -174,11 +193,21 @@ _RANK: dict[DependencyChangeKind, int] = {
 }
 
 
-def _rank(change: DependencyChange) -> tuple[int, int, str]:
+def sort_changes(changes: list[DependencyChange]) -> list[DependencyChange]:
+    """One global order for per-file deltas, drift, and final truncation."""
+    return sorted(changes, key=_rank)
+
+
+def _rank(change: DependencyChange) -> tuple[int, int, str, str]:
     """Sort key: kind first, then direct dependencies, then name for determinism.
 
     This ordering is load-bearing rather than cosmetic. ``max_changes`` truncates
     the tail, so whatever sorts last is what a large lockfile regeneration drops --
     and the right thing to drop is the nine hundredth routine version bump.
     """
-    return (_RANK.get(change.kind, 9), 0 if change.direct else 1, change.name)
+    return (
+        _RANK.get(change.kind, 9),
+        0 if change.direct else 1,
+        change.ecosystem,
+        change.name,
+    )

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from roborak.supply.ecosystems.base import Ecosystem, Package
+from roborak.supply.ecosystems.base import Ecosystem, Package, semver_satisfies
 
 _SECTIONS = ("require", "require-dev")
 
@@ -87,10 +88,24 @@ def _ref_of(entry: dict[str, Any]) -> str:
     return ""
 
 
+def _version_satisfies(constraint: str, version: str) -> bool | None:
+    """Composer bare full versions are exact; ambiguous partials stay unknown."""
+    stripped = constraint.strip()
+    if re.fullmatch(r"~v?\d+\.\d+", stripped):
+        # Composer advances the major here, unlike npm/Cargo's shared tilde rule.
+        return None
+    if re.fullmatch(r"v?\d+\.\d+\.\d+", stripped):
+        return semver_satisfies(f"={stripped}", version)
+    if re.fullmatch(r"v?\d+(?:\.\d+)?", stripped):
+        return None
+    return semver_satisfies(stripped, version)
+
+
 COMPOSER = Ecosystem(
     name="composer",
     manifests=("composer.json",),
     locks=("composer.lock",),
     parse_manifest=parse_manifest,
     parse_lock=parse_lock,
+    version_satisfies=_version_satisfies,
 )

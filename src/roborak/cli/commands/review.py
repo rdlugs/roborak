@@ -34,7 +34,7 @@ from roborak.sources.forge import Target
 from roborak.state.store import StateStore, review_key
 from roborak.static.runner import StaticRunner
 from roborak.supply.analyzer import analyse as analyse_supply_chain
-from roborak.supply.analyzer import note_skipped_scanners
+from roborak.supply.analyzer import attach_scanner_findings, note_skipped_scanners
 from roborak.verify.runner import VerificationRunner
 
 log = logging.getLogger(__name__)
@@ -246,9 +246,18 @@ def review(
     static_findings: list[Finding] = []
     if config.static.enabled and session.changeset.origin in {"local", "paths"}:
         with console.status("[dim]running static analysis…[/]", spinner="dots"):
-            runner = StaticRunner(repo=session.repo, config=config.static)
+            runner = StaticRunner(
+                repo=session.repo,
+                config=config.static,
+                report_findings_enabled=supply_chain is not None,
+            )
             static_findings = runner.run(session.changeset)
         note_skipped_scanners(supply_chain, [(tool.name, tool.reason) for tool in runner.skipped])
+        attach_scanner_findings(
+            supply_chain,
+            runner.report_findings,
+            max_findings=config.review.max_findings,
+        )
     elif config.static.enabled:
         log.debug(
             "skipping static analysis: %s changes are not checked out", session.changeset.origin

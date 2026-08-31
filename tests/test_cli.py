@@ -93,6 +93,30 @@ def test_a_plain_directory_is_reviewed_file_by_file(tmp_path: Path):
     assert json.loads(result.stdout)["changeset"]["origin"] == "paths"
 
 
+def test_plain_directory_supply_analysis_keeps_lockfiles_out_of_review_context(tmp_path: Path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "package.json").write_text('{"name":"app","dependencies":{"lodash":"^4.17.21"}}')
+    (plain / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"name": "app", "dependencies": {"lodash": "^4.17.21"}},
+                    "node_modules/lodash": {"version": "4.17.21"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["review", "--no-llm", "--json", "-C", str(plain)])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)
+    assets = {asset["path"] for asset in payload["supply_chain"]["assets"]}
+    assert "package-lock.json" in assets
+    assert "package-lock.json" not in payload["coverage"]["reviewed_files"]
+
+
 def test_a_missing_directory_is_reported_as_a_source_error(tmp_path: Path):
     missing = tmp_path / "missing"
     result = runner.invoke(app, ["review", "--no-llm", "-C", str(missing)])

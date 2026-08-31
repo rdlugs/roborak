@@ -382,6 +382,8 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
                 for asset in report.assets
             )
         )
+    if report.scanner_findings:
+        parts.append(_supply_scanner_rows(report))
     # Notes carry what was *not* checked -- an unsupported lockfile, a scanner
     # that is not installed, a bound that bit -- which is the half of the report a
     # reader needs in order to know what a clean section is worth.
@@ -406,6 +408,18 @@ def _supply_chain_rows(report: SupplyChainReport) -> str:
             f"| `{_escape_cell(change.name)}` <sub>{change.ecosystem}, {scope}</sub> "
             f"| {_escape_cell(change.display_version) or '—'} "
             f"| {_escape_cell(detail) or '—'} |"
+        )
+    return "\n".join(rows)
+
+
+def _supply_scanner_rows(report: SupplyChainReport) -> str:
+    """Scanner facts have a file but deliberately no invented line anchor."""
+    rows = ["| Vulnerability | Asset | Detail |", "| --- | --- | --- |"]
+    for finding in report.scanner_findings:
+        identifier = f" `{_escape_cell(finding.rule_id)}`" if finding.rule_id else ""
+        rows.append(
+            f"| {SEVERITY_LABEL[finding.severity]} — {_escape_cell(finding.title)}{identifier} "
+            f"| `{_escape_cell(finding.file)}` | {_escape_cell(finding.body)} |"
         )
     return "\n".join(rows)
 
@@ -489,6 +503,8 @@ def _nothing_to_report(result: ReviewResult) -> str:
     "No findings" is a claim about the code; it is the wrong thing to tell someone
     whose working tree simply had nothing in it to look at.
     """
+    if result.supply_chain and result.supply_chain.scanner_findings:
+        return "No additional inline findings; scanner findings are listed above."
     if result.changeset is not None and result.changeset.is_empty:
         return "No changes to review."
     return "No findings. ✅"

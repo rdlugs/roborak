@@ -26,6 +26,7 @@ class OsvScannerAdapter(Adapter):
     name = "osv-scanner"
     binary = "osv-scanner"
     requires_network = True
+    report_only = True
     paths = (
         "**/package-lock.json",
         "**/yarn.lock",

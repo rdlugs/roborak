@@ -61,6 +61,7 @@ class StaticRunner:
     repo: Path
     config: StaticConfig
     adapters: list[Adapter] = field(default_factory=lambda: list(ALL_ADAPTERS))
+    report_findings_enabled: bool = True
 
     skipped: list[SkippedTool] = field(default_factory=list)
     """Applicable tools that were not available, populated by ``run``.
@@ -69,12 +70,16 @@ class StaticRunner:
     caller has to change shape. What reads it is the supply-chain report, where a
     missing container or workflow linter is part of the coverage story."""
 
+    report_findings: list[Finding] = field(default_factory=list)
+    """Whole-asset findings routed to a stage report rather than an inline line."""
+
     def run(self, changeset: ChangeSet) -> list[Finding]:
         """Every applicable adapter over the changed files, narrowed to the changed lines."""
+        self.skipped.clear()
+        self.report_findings.clear()
         if not self.config.enabled or self.config.execution is StaticExecution.OFF:
             return []
 
-        self.skipped.clear()
         sandboxed = self._sandboxed_command()
         if self.config.execution is StaticExecution.AUTO and in_ci() and sandboxed is None:
             log.warning(
@@ -100,7 +105,11 @@ class StaticRunner:
                 self.skipped.append(SkippedTool(name=adapter.name, reason=reason))
                 log.debug("skipping %s: %s", adapter.name, reason)
                 continue
-            findings.extend(self._run_one(adapter, applicable, sandboxed=sandboxed))
+            produced = self._run_one(adapter, applicable, sandboxed=sandboxed)
+            if adapter.report_only:
+                self.report_findings.extend(produced)
+            else:
+                findings.extend(produced)
 
         return self._restrict_to_changed_lines(findings, changeset)
 
@@ -111,10 +120,11 @@ class StaticRunner:
         reaches the network is included only when a project names it, so the
         default pass keeps the guarantee in this module's docstring.
         """
+        eligible = [a for a in self.adapters if self.report_findings_enabled or not a.report_only]
         if self.config.tools is None:
-            return [a for a in self.adapters if not a.requires_network]
+            return [a for a in eligible if not a.requires_network]
         wanted = {name.lower() for name in self.config.tools}
-        return [a for a in self.adapters if a.name in wanted]
+        return [a for a in eligible if a.name in wanted]
 
     def _run_one(
         self, adapter: Adapter, files: list[ChangedFile], *, sandboxed: list[str] | None

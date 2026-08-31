@@ -49,6 +49,9 @@ class Adapter:
     half of that promise however useful it is -- so it runs only when a project
     names it in ``static.tools``, which is a person choosing, not a default."""
 
+    report_only: bool = False
+    """The finding describes a whole asset and has no meaningful line anchor."""
+
     def find_binary(self, repo: Path) -> str | None:
         """Locate the tool, preferring a project-local install over a global one.
 

@@ -607,6 +607,9 @@ class SupplyChainReport(BaseModel):
     status: SupplyChainStatus = SupplyChainStatus.NOTHING_RELEVANT
     assets: list[ChangedAsset] = Field(default_factory=list)
     changes: list[DependencyChange] = Field(default_factory=list)
+    scanner_findings: list[Finding] = Field(default_factory=list)
+    """Scanner-confirmed whole-asset findings with no meaningful inline anchor."""
+
     ecosystems: list[str] = Field(default_factory=list)
     """Ecosystems a parser actually read, for the reader who wants to know which
     half of a polyglot repository this report speaks for."""
@@ -849,13 +852,18 @@ class ReviewResult(BaseModel):
     @property
     def counts_by_severity(self) -> dict[Severity, int]:
         counts = dict.fromkeys(Severity, 0)
-        for finding in self.findings:
+        for finding in self.all_findings():
             counts[finding.severity] += 1
         return counts
 
     @property
     def has_blocking(self) -> bool:
-        return any(f.severity is Severity.CRITICAL for f in self.findings)
+        return any(f.severity is Severity.CRITICAL for f in self.all_findings())
+
+    def all_findings(self) -> list[Finding]:
+        """Inline findings plus scanner facts carried by the supply-chain report."""
+        report_findings = self.supply_chain.scanner_findings if self.supply_chain else []
+        return [*self.findings, *report_findings]
 
     def sorted_findings(self) -> list[Finding]:
         return sorted(

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from roborak.context.compressor import filter_files
-from roborak.core.config import Config, SupplyChainConfig
+from roborak.core.config import Config, StaticConfig, SupplyChainConfig
 from roborak.core.models import (
     AssetKind,
     ChangedFile,
@@ -37,6 +37,7 @@ from roborak.static.adapters.hadolint import HadolintAdapter
 from roborak.static.adapters.osv_scanner import OsvScannerAdapter
 from roborak.static.runner import ALL_ADAPTERS, StaticRunner
 from roborak.supply import analyse
+from roborak.supply.analyzer import attach_scanner_findings
 from roborak.supply.classify import classify
 from roborak.supply.ecosystems.base import Package
 from roborak.supply.ecosystems.cargo import CARGO
@@ -72,7 +73,12 @@ PACKAGE_LOCK = json.dumps(
         "name": "app",
         "lockfileVersion": 3,
         "packages": {
-            "": {"name": "app", "version": "1.0.0"},
+            "": {
+                "name": "app",
+                "version": "1.0.0",
+                "dependencies": {"lodash": "^4.17.21", "left-pad": "^1.3.0"},
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
             "node_modules/lodash": {
                 "version": "4.17.21",
                 "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
@@ -304,7 +310,36 @@ def test_npm_manifest_and_lock():
     lock = NPM.read("package-lock.json", PACKAGE_LOCK)
     assert lock["lodash"].version == "4.17.21"
     assert lock["lodash"].integrity == LODASH_INTEGRITY
+    assert lock["lodash"].direct is True
     assert lock["left-pad"].source.startswith("https://registry.npmjs.org/")
+
+
+def test_package_lock_v1_marks_only_root_dependencies_direct():
+    lock = NPM.read(
+        "package-lock.json",
+        json.dumps(
+            {
+                "lockfileVersion": 1,
+                "dependencies": {
+                    "direct": {
+                        "version": "1.0.0",
+                        "dependencies": {"transitive": {"version": "2.0.0"}},
+                    }
+                },
+            }
+        ),
+    )
+    assert lock["direct"].direct is True
+    assert lock["transitive"].direct is False
+
+
+def test_constraint_semantics_remain_ecosystem_specific():
+    assert NPM.lock_satisfies("1.2", "1.2.9") is True
+    assert CARGO.lock_satisfies("1.2", "1.9.0") is True
+    assert CARGO.lock_satisfies("1.2", "2.0.0") is False
+    assert COMPOSER.lock_satisfies("1.2.3", "1.2.4") is False
+    assert COMPOSER.lock_satisfies("1.2", "1.2.4") is None
+    assert COMPOSER.lock_satisfies("~1.2", "1.9.0") is None
 
 
 def test_yarn_classic_lockfile():
@@ -331,6 +366,11 @@ def test_python_names_are_normalised():
     comparing them unnormalised would report every such package as added."""
     manifest = PYTHON.read("requirements.txt", "Types_PyYAML==6.0.1\n")
     assert "types-pyyaml" in manifest
+
+
+def test_setup_cfg_is_not_claimed_without_a_parser():
+    assert classify("setup.cfg") is None
+    assert PYTHON.handles("setup.cfg") is False
 
 
 def test_go_manifest_and_lock():
@@ -473,6 +513,26 @@ def test_a_lock_only_change_produces_a_delta(repo: Path):
     assert moved[0].display_version == "4.17.21 → 4.17.22"
 
 
+@pytest.mark.parametrize("filename", ["package.json", "package-lock.json"])
+@pytest.mark.parametrize("staged", [False, True])
+def test_uncommitted_dependency_deletions_report_removed_packages(
+    repo: Path, filename: str, staged: bool
+):
+    (repo / "package.json").write_text(PACKAGE_JSON)
+    (repo / "package-lock.json").write_text(PACKAGE_LOCK)
+    _commit(repo)
+    (repo / filename).unlink()
+    if staged:
+        _git(repo, "add", "-A")
+
+    report = _analyse(repo)
+    assert report is not None
+    removed = {
+        change.name for change in report.changes if change.kind is DependencyChangeKind.REMOVED
+    }
+    assert {"lodash", "left-pad"} <= removed
+
+
 def test_a_registry_change_outranks_a_version_bump(repo: Path):
     (repo / "package-lock.json").write_text(PACKAGE_LOCK)
     _commit(repo)
@@ -562,11 +622,41 @@ def test_a_matching_manifest_and_lock_produce_no_drift(repo: Path):
     (repo / "pyproject.toml").write_text(PYPROJECT)
     (repo / "uv.lock").write_text(UV_LOCK)
     _commit(repo)
-    (repo / "pyproject.toml").write_text(PYPROJECT.replace("typer>=0.15", "typer>=0.16"))
+    (repo / "pyproject.toml").write_text(PYPROJECT.replace("typer>=0.15", "typer>=0.14"))
 
     report = _analyse(repo)
     assert report is not None
     assert not [c for c in report.changes if c.kind is DependencyChangeKind.MANIFEST_LOCK_DRIFT]
+
+
+def test_a_locked_version_outside_the_manifest_range_is_drift(repo: Path):
+    (repo / "package.json").write_text(PACKAGE_JSON)
+    (repo / "package-lock.json").write_text(PACKAGE_LOCK)
+    _commit(repo)
+    (repo / "package.json").write_text(PACKAGE_JSON.replace("^4.17.21", "^5.0.0"))
+
+    report = _analyse(repo)
+    assert report is not None
+    drifted = [c for c in report.changes if c.kind is DependencyChangeKind.MANIFEST_LOCK_DRIFT]
+    lodash = next(change for change in drifted if change.name == "lodash")
+    assert lodash.old_version == "4.17.21"
+    assert lodash.new_version == "^5.0.0"
+    assert "does not satisfy" in lodash.note
+
+
+def test_an_unknown_manifest_constraint_does_not_guess_at_drift(repo: Path):
+    (repo / "package.json").write_text(PACKAGE_JSON)
+    (repo / "package-lock.json").write_text(PACKAGE_LOCK)
+    _commit(repo)
+    (repo / "package.json").write_text(PACKAGE_JSON.replace("^4.17.21", "workspace:*"))
+
+    report = _analyse(repo)
+    assert report is not None
+    assert not [
+        change
+        for change in report.changes
+        if change.kind is DependencyChangeKind.MANIFEST_LOCK_DRIFT and change.name == "lodash"
+    ]
 
 
 def test_infrastructure_only_change_is_analysed_without_a_delta(repo: Path):
@@ -623,6 +713,37 @@ def test_the_change_list_is_bounded_and_says_so(repo: Path):
     assert len(report.changes) == 5
     assert report.truncated is True
     assert any("max_changes" in note for note in report.notes)
+
+
+def test_all_dependency_changes_are_ranked_before_truncation(repo: Path):
+    routine = {"lockfileVersion": 3, "packages": {"": {"name": "routine"}}}
+    for index in range(8):
+        routine["packages"][f"node_modules/p{index}"] = {"version": "1.0.0"}
+    alarming = {
+        "lockfileVersion": 3,
+        "packages": {
+            "": {"name": "alarming"},
+            "node_modules/special": {
+                "version": "1.0.0",
+                "resolved": "https://registry.npmjs.org/special.tgz",
+            },
+        },
+    }
+    (repo / "a").mkdir()
+    (repo / "z").mkdir()
+    (repo / "a" / "package-lock.json").write_text(json.dumps(routine))
+    (repo / "z" / "package-lock.json").write_text(json.dumps(alarming))
+    _commit(repo)
+    for index in range(8):
+        routine["packages"][f"node_modules/p{index}"]["version"] = "1.0.1"
+    alarming["packages"]["node_modules/special"]["resolved"] = "https://evil.example/pkg.tgz"
+    (repo / "a" / "package-lock.json").write_text(json.dumps(routine))
+    (repo / "z" / "package-lock.json").write_text(json.dumps(alarming))
+
+    report = _analyse(repo, SupplyChainConfig(max_changes=2))
+    assert report is not None
+    assert report.changes[0].name == "special"
+    assert report.changes[0].kind is DependencyChangeKind.SOURCE_CHANGED
 
 
 def test_a_base_that_moved_on_is_not_blamed_on_this_change(repo: Path):
@@ -764,6 +885,44 @@ def test_feed_to_llm_off_removes_the_section_but_not_the_report(repo: Path):
     assert "Dependency and infrastructure changes" not in prompt.user
 
 
+def test_scanner_findings_reach_the_supply_prompt_without_a_lockfile_anchor(repo: Path):
+    (repo / "package.json").write_text(PACKAGE_JSON)
+    (repo / "package-lock.json").write_text(PACKAGE_LOCK)
+    _commit(repo)
+    bumped = json.loads(PACKAGE_LOCK)
+    bumped["packages"]["node_modules/lodash"]["version"] = "4.17.22"
+    (repo / "package-lock.json").write_text(json.dumps(bumped))
+
+    changeset = LocalGitSource(repo=repo).load()
+    report = analyse(changeset, repo, SupplyChainConfig())
+    findings = OsvScannerAdapter().parse(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "source": {"path": "package-lock.json"},
+                        "packages": [
+                            {
+                                "package": {"name": "lodash", "version": "4.17.22"},
+                                "vulnerabilities": [{"id": "OSV-1", "summary": "Known issue"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        "",
+        1,
+    )
+    attach_scanner_findings(report, findings, max_findings=10)
+    filter_files(changeset, Config().ignore_paths)
+
+    prompt = build_review_prompt(changeset, Config(), supply_chain=report)
+    assert "Scanner-confirmed vulnerabilities" in prompt.user
+    assert "OSV-1 in lodash" in prompt.user
+    assert "lockfileVersion" not in prompt.user
+
+
 # --------------------------------------------------------------------------- #
 # Scanners
 # --------------------------------------------------------------------------- #
@@ -901,6 +1060,47 @@ def test_osv_scanner_parses_vulnerabilities():
     assert len(findings) == 1
     assert findings[0].rule_id == "osv/GHSA-35jh-r3h4-6jhm"
     assert "lodash" in findings[0].body
+
+
+def test_osv_findings_bypass_changed_line_restriction(monkeypatch, tmp_path: Path):
+    adapter = OsvScannerAdapter()
+    finding = adapter.parse(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "source": {"path": "package-lock.json"},
+                        "packages": [
+                            {
+                                "package": {"name": "lodash", "version": "4.17.20"},
+                                "vulnerabilities": [{"id": "OSV-1", "summary": "Known issue"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        "",
+        1,
+    )[0]
+    runner = StaticRunner(
+        repo=tmp_path,
+        config=StaticConfig(tools=["osv-scanner"]),
+        adapters=[adapter],
+    )
+    monkeypatch.setattr(adapter, "is_available", lambda repo, files: True)
+    monkeypatch.setattr(
+        runner,
+        "_run_one",
+        lambda selected, files, *, sandboxed: [finding],
+    )
+    changeset = ChangeSet(
+        files=[ChangedFile(path="package-lock.json", change_type="modified")],
+        origin="local",
+    )
+
+    assert runner.run(changeset) == []
+    assert runner.report_findings == [finding]
 
 
 def test_every_registered_adapter_is_in_the_junk_matrix():

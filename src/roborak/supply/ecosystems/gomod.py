@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from roborak.supply.ecosystems.base import Ecosystem, Package
+from roborak.supply.ecosystems.base import Ecosystem, Package, exact_version_satisfies
 
 _REQUIRE_LINE = re.compile(r"^\s*(?P<path>[^\s()]+)\s+(?P<version>v\S+)")
 _SINGLE_REQUIRE = re.compile(r"^\s*require\s+(?P<path>\S+)\s+(?P<version>v\S+)")
@@ -81,4 +81,5 @@ GO = Ecosystem(
     locks=("go.sum",),
     parse_manifest=parse_manifest,
     parse_lock=parse_lock,
+    version_satisfies=exact_version_satisfies,
 )

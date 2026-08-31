@@ -118,6 +118,13 @@ Dependency changes{{ " (truncated; the most significant are shown)" if supply_ch
 - [{{ change.kind }}] `{{ change.name }}` ({{ change.ecosystem }}{{ ", direct" if change.direct else ", transitive" }}){% if change.versions %} {{ change.versions }}{% endif %}{% if change.source %} · source: {{ change.source }}{% endif %}{{ " — " ~ change.note if change.note else "" }}
 {% endfor %}
 {% endif %}
+{% if supply_chain.scanner_findings %}
+
+Scanner-confirmed vulnerabilities (report-level; do not restate them as inline findings):
+{% for finding in supply_chain.scanner_findings %}
+- [{{ finding.severity }}] `{{ finding.file }}` · {{ finding.title }}{% if finding.rule_id %} ({{ finding.rule_id }}){% endif %} — {{ finding.body }}
+{% endfor %}
+{% endif %}
 {% if supply_chain.notes %}
 
 

@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from roborak.supply.ecosystems.base import Ecosystem, Package
+from roborak.supply.ecosystems.base import Ecosystem, Package, semver_satisfies
 
 _DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 
@@ -69,6 +69,13 @@ def _parse_package_lock(text: str) -> dict[str, Package]:
 
     entries = data.get("packages")
     if isinstance(entries, dict):
+        root = entries.get("")
+        direct_names: set[str] = set()
+        if isinstance(root, dict):
+            for section in _DEPENDENCY_SECTIONS:
+                block = root.get(section)
+                if isinstance(block, dict):
+                    direct_names.update(str(name) for name in block)
         for key, entry in entries.items():
             if not isinstance(entry, dict) or not key:
                 continue
@@ -79,17 +86,17 @@ def _parse_package_lock(text: str) -> dict[str, Package]:
                 version=str(entry.get("version") or ""),
                 source=str(entry.get("resolved") or ""),
                 integrity=str(entry.get("integrity") or ""),
-                direct=bool(entry.get("dev") is None and "/" not in key.rstrip("/")),
+                direct=name in direct_names,
                 ref=_git_ref(str(entry.get("resolved") or "")),
             )
 
     legacy = data.get("dependencies")
     if isinstance(legacy, dict):
-        _walk_v1(legacy, packages)
+        _walk_v1(legacy, packages, direct=True)
     return packages
 
 
-def _walk_v1(block: dict[str, Any], into: dict[str, Package]) -> None:
+def _walk_v1(block: dict[str, Any], into: dict[str, Package], *, direct: bool) -> None:
     """v1 nests transitive packages inside their parents; flatten by name."""
     for name, entry in block.items():
         if not isinstance(entry, dict):
@@ -101,12 +108,13 @@ def _walk_v1(block: dict[str, Any], into: dict[str, Package]) -> None:
                 version=str(entry.get("version") or ""),
                 source=resolved,
                 integrity=str(entry.get("integrity") or ""),
+                direct=direct,
                 ref=_git_ref(resolved),
             ),
         )
         nested = entry.get("dependencies")
         if isinstance(nested, dict):
-            _walk_v1(nested, into)
+            _walk_v1(nested, into, direct=False)
 
 
 def _parse_pnpm(text: str) -> dict[str, Package]:
@@ -239,4 +247,5 @@ NPM = Ecosystem(
     locks=("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"),
     parse_manifest=parse_manifest,
     parse_lock=parse_lock,
+    version_satisfies=semver_satisfies,
 )

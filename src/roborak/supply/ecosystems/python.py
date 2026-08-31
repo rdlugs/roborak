@@ -10,7 +10,10 @@ from __future__ import annotations
 import re
 import tomllib
 
-from roborak.supply.ecosystems.base import Ecosystem, Package
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
+from roborak.supply.ecosystems.base import Ecosystem, Package, semver_satisfies
 
 _REQUIREMENT = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9._-]+)\s*(?P<spec>[<>=!~]=?[^;#\s]*)?",
@@ -187,13 +190,26 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _version_satisfies(constraint: str, version: str) -> bool | None:
+    """PEP 440 first, with Poetry's common caret/tilde ranges as a safe fallback."""
+    try:
+        return Version(version) in SpecifierSet(constraint)
+    except (InvalidSpecifier, InvalidVersion):
+        if constraint.lstrip().startswith(("^", "~")):
+            return semver_satisfies(constraint, version)
+        if re.fullmatch(r"v?\d+\.\d+\.\d+", constraint.strip()):
+            return semver_satisfies(f"={constraint.strip()}", version)
+        return None
+
+
 PYTHON = Ecosystem(
     name="python",
-    manifests=("pyproject.toml", "setup.cfg"),
+    manifests=("pyproject.toml",),
     # Pipfile.lock is deliberately absent: it is JSON, not TOML, so claiming it
     # would report an ecosystem as analysed while parsing nothing out of it.
     locks=("uv.lock", "poetry.lock", "pdm.lock"),
     parse_manifest=parse_manifest,
     parse_lock=parse_lock,
+    version_satisfies=_version_satisfies,
     manifest_prefixes=("requirements",),
 )

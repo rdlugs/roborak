@@ -73,6 +73,9 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
     _render_supply_chain(result.supply_chain, console)
 
     if not result.findings:
+        if result.supply_chain and result.supply_chain.scanner_findings:
+            console.print("\n[dim]No additional inline findings.[/]\n")
+            return
         _render_clean(result, console)
         return
 
@@ -140,6 +143,8 @@ def _render_supply_chain(report: SupplyChainReport | None, console: Console) -> 
     detail = f"{len(report.assets)} file(s)"
     if report.changes:
         detail += f", {len(report.changes)} dependency change(s)"
+    if report.scanner_findings:
+        detail += f", {len(report.scanner_findings)} scanner finding(s)"
     if report.truncated:
         detail += ", truncated"
     console.print(
@@ -150,6 +155,12 @@ def _render_supply_chain(report: SupplyChainReport | None, console: Console) -> 
         version = f" {change.display_version}" if change.display_version else ""
         console.print(
             f"  [dim]{change.kind.value.replace('_', ' ')}: {change.name}{version}[/]",
+            highlight=False,
+        )
+    for finding in report.scanner_findings[:MAX_SUPPLY_CHAIN_LINES]:
+        console.print(
+            f"  [{SEVERITY_STYLE[finding.severity]}]{SEVERITY_ICON[finding.severity]} "
+            f"{finding.title}[/] [dim]({finding.file})[/]",
             highlight=False,
         )
     if len(report.changes) > MAX_SUPPLY_CHAIN_LINES:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -45,6 +46,7 @@ class Package:
 
 
 Parser = Callable[[str], dict[str, Package]]
+VersionCompatibility = Callable[[str, str], bool | None]
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,14 @@ class Ecosystem:
 
     parse_manifest: Parser
     parse_lock: Parser
+    version_satisfies: VersionCompatibility | None = None
+    """Whether a locked version satisfies a manifest constraint.
+
+    ``None`` means this ecosystem cannot decide. Compatibility checks are
+    deliberately conservative: an unfamiliar constraint must stay quiet rather
+    than turn into a false drift warning.
+    """
+
     manifest_prefixes: tuple[str, ...] = field(default=())
     """Basename prefixes that are also manifests, for the ecosystems that allow a
     family of them (``requirements-dev.txt`` next to ``requirements.txt``)."""
@@ -90,6 +100,148 @@ class Ecosystem:
             return parser(text)
         except Exception:  # noqa: BLE001 - a resolver's format is not our invariant
             return {}
+
+    def lock_satisfies(self, constraint: str, version: str) -> bool | None:
+        """Whether ``version`` is allowed by ``constraint``, when knowable."""
+        if not constraint or not version or self.version_satisfies is None:
+            return None
+        return self.version_satisfies(constraint, version)
+
+
+_SEMVER = re.compile(
+    r"^v?(?P<major>\d+)"
+    r"(?:\.(?P<minor>\d+|[xX*]))?"
+    r"(?:\.(?P<patch>\d+|[xX*]))?"
+    r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?"
+    r"(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+
+def semver_satisfies(constraint: str, version: str) -> bool | None:
+    """Evaluate the common SemVer range syntax shared by npm, Cargo and Composer.
+
+    Exact versions, partial/wildcard versions, comparison sets, caret and tilde
+    ranges, hyphen ranges and ``||`` alternatives are supported. Anything more
+    ecosystem-specific returns ``None`` so drift never guesses.
+    """
+    locked = _semver(version)
+    if locked is None or locked[1] != 3 or locked[2] is not None or locked[3]:
+        return None
+    value = locked[0]
+    alternatives = [part.strip() for part in constraint.strip().split("||")]
+    if not alternatives or any(not part for part in alternatives):
+        return None
+    outcomes = [_semver_group_satisfies(group, value) for group in alternatives]
+    if any(outcome is True for outcome in outcomes):
+        return True
+    return None if any(outcome is None for outcome in outcomes) else False
+
+
+def exact_version_satisfies(constraint: str, version: str) -> bool | None:
+    """Compare ecosystems whose manifests already contain a resolved version."""
+    wanted = constraint.strip()
+    locked = version.strip()
+    if not wanted or not locked:
+        return None
+    return wanted == locked
+
+
+def _semver_group_satisfies(group: str, version: tuple[int, int, int]) -> bool | None:
+    hyphen = re.fullmatch(r"\s*(\S+)\s+-\s+(\S+)\s*", group)
+    if hyphen:
+        lower = _semver(hyphen.group(1))
+        upper = _semver(hyphen.group(2))
+        if (
+            lower is None
+            or upper is None
+            or lower[2] is not None
+            or upper[2] is not None
+            or lower[3]
+            or upper[3]
+        ):
+            return None
+        return lower[0] <= version <= _partial_upper(upper)
+
+    tokens = [token for token in re.split(r"[\s,]+", group.strip()) if token]
+    if not tokens:
+        return None
+    outcomes = [_semver_token_satisfies(token, version) for token in tokens]
+    if any(outcome is False for outcome in outcomes):
+        return False
+    return None if any(outcome is None for outcome in outcomes) else True
+
+
+def _semver_token_satisfies(token: str, version: tuple[int, int, int]) -> bool | None:
+    if token in {"*", "x", "X"}:
+        return True
+    match = re.fullmatch(r"(?P<op>\^|~|>=|<=|>|<|=)?(?P<value>.+)", token)
+    if match is None:
+        return None
+    operator = match.group("op") or ""
+    parsed = _semver(match.group("value"))
+    if parsed is None or parsed[3]:
+        return None
+    lower, parts, wildcard, _prerelease = parsed
+
+    if operator in {">", ">=", "<", "<=", "="}:
+        if wildcard is not None and operator != "=":
+            return None
+        return {
+            ">": version > lower,
+            ">=": version >= lower,
+            "<": version < lower,
+            "<=": version <= lower,
+            "=": lower <= version <= _partial_upper(parsed),
+        }[operator]
+    if operator == "^":
+        if wildcard is not None:
+            return None
+        if lower[0] > 0:
+            upper = (lower[0] + 1, 0, 0)
+        elif lower[1] > 0:
+            upper = (0, lower[1] + 1, 0)
+        else:
+            upper = (0, 0, lower[2] + 1)
+        return lower <= version < upper
+    if operator == "~":
+        if wildcard is not None:
+            return None
+        upper = (lower[0] + 1, 0, 0) if parts == 1 else (lower[0], lower[1] + 1, 0)
+        return lower <= version < upper
+    return lower <= version <= _partial_upper(parsed)
+
+
+def _semver(value: str) -> tuple[tuple[int, int, int], int, int | None, bool] | None:
+    match = _SEMVER.fullmatch(value.strip())
+    if match is None:
+        return None
+    raw = (match.group("major"), match.group("minor"), match.group("patch"))
+    wildcard = next((i for i, part in enumerate(raw) if part in {"x", "X", "*"}), None)
+    if wildcard is not None and any(part not in {None, "x", "X", "*"} for part in raw[wildcard:]):
+        return None
+    parts = next((i for i, part in enumerate(raw) if part is None), 3)
+    if wildcard is not None:
+        parts = wildcard
+    numbers = (
+        int(raw[0]),
+        int(raw[1]) if raw[1] and raw[1].isdigit() else 0,
+        int(raw[2]) if raw[2] and raw[2].isdigit() else 0,
+    )
+    return (numbers, parts, wildcard, match.group("prerelease") is not None)
+
+
+def _partial_upper(
+    parsed: tuple[tuple[int, int, int], int, int | None, bool],
+) -> tuple[int, int, int]:
+    value, parts, wildcard, _prerelease = parsed
+    wildcard = wildcard if wildcard is not None else (parts if parts < 3 else None)
+    if wildcard == 0:
+        return (999_999_999, 999_999_999, 999_999_999)
+    if wildcard == 1:
+        return (value[0], 999_999_999, 999_999_999)
+    if wildcard == 2:
+        return (value[0], value[1], 999_999_999)
+    return value
 
 
 def classify_version_move(old: str, new: str) -> DependencyChangeKind:
