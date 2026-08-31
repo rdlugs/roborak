@@ -153,7 +153,7 @@ def render(
         if walkthrough.overview:
             sections.append(walkthrough.overview.strip())
         if walkthrough.file_summaries:
-            sections.append(_walkthrough_table(result))
+            sections.append(_walkthrough_table(result, form=form))
         if walkthrough.sequence_diagram:
             sections.append(_flow_section(walkthrough.sequence_diagram, form=form))
 
@@ -221,14 +221,29 @@ def _header(result: ReviewResult) -> str:
     return f"{title}\n\n{' · '.join(meta)}" if meta else title
 
 
-def _walkthrough_table(result: ReviewResult) -> str:
+WALKTHROUGH_SUMMARY = f"{icons.WALKTHROUGH} Walkthrough"
+"""Labels the walkthrough section in both forms, folded and open."""
+
+
+def _walkthrough_table(result: ReviewResult, *, form: Form) -> str:
+    """One row per file, folded away where a reader can fold it.
+
+    The table grows with the change rather than with the review, so on a branch
+    touching thirty files it is what pushes the findings off the first screen.
+    The overview above it is left open: it is the description of the change, and
+    a reader who folds everything else still wants that paragraph.
+    """
     assert result.walkthrough is not None
-    rows = ["### Walkthrough", "", "| File | Change |", "| --- | --- |"]
-    rows += [
-        f"| `{summary.path}` | {_escape_cell(summary.summary)} |"
-        for summary in result.walkthrough.file_summaries
-    ]
-    return "\n".join(rows)
+    summaries = result.walkthrough.file_summaries
+    rows = ["| File | Change |", "| --- | --- |"]
+    rows += [f"| `{summary.path}` | {_escape_cell(summary.summary)} |" for summary in summaries]
+    count = len(summaries)
+    return _details(
+        f"{WALKTHROUGH_SUMMARY} ({count} file{'s' if count != 1 else ''})",
+        "\n".join(rows),
+        level=3,
+        collapsible=form is Form.PUBLISHED,
+    )
 
 
 FLOW_SUMMARY = f"{icons.FLOW} Flow"
@@ -1033,8 +1048,6 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     if not verdict_requested(result):
         return ""
     gate = gate_for(result)
-    heading = f"## {_VERDICT_TITLE[gate.verdict]}"
-
     lines = [gate.summary_line()]
     floor_source = "`--fail-on`" if gate.explicit else "`review.block_on`"
     lines.append(f"Judged against **{gate.floor}** and above, from {floor_source}.")
@@ -1045,9 +1058,13 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
         lines.append(f"_Not gated: pass `--fail-on {gate.floor}` for the exit code too._")
     body = "\n\n".join(lines)
 
-    if form is Form.TERMINAL:
-        return f"{heading}\n\n{body}"
-    return f"{heading}\n\n{_callout(_VERDICT_CALLOUT[gate.verdict], body)}"
+    # The summary line is the verdict itself, so folding this section still leaves
+    # a skimming reader the one sentence they have to see. The callout goes in as
+    # the body rather than around the section: ``_details`` will not quote what it
+    # is given, and an alert only keeps its coloured bar as a quote in its own right.
+    if form is Form.PUBLISHED:
+        body = _callout(_VERDICT_CALLOUT[gate.verdict], body)
+    return _details(_VERDICT_TITLE[gate.verdict], body, level=2, collapsible=form is Form.PUBLISHED)
 
 
 def _verification_verdict_note(report: VerificationReport | None) -> str:

@@ -381,11 +381,42 @@ def test_markdown_reports_skipped_files():
 
 def test_markdown_walkthrough_and_diagram():
     text = markdown.render(make_result(walkthrough=True))
-    assert "### Walkthrough" in text
+    assert markdown.WALKTHROUGH_SUMMARY in text
+    assert "| File | Change |" in text
     assert "```mermaid" in text
     assert "sequenceDiagram" in text
     assert "review effort 3/5" in text
     assert "`feature` `security`" in text
+
+
+def test_the_published_walkthrough_table_is_folded_away():
+    """The table grows with the change, so left open it buries the findings."""
+    text = markdown.render(make_result(walkthrough=True))
+
+    opened = text.index(f"<summary>{markdown.WALKTHROUGH_SUMMARY} (1 file)</summary>")
+    section = text[opened : text.index("</details>", opened)]
+
+    assert "| File | Change |" in section
+    assert "| `app/auth.py` |" in section
+    assert "### Walkthrough" not in text, "the heading is the summary line now"
+
+
+def test_the_walkthrough_overview_stays_open_above_the_folded_table():
+    """The overview is the description of the change, not a detail of it."""
+    result = make_result(walkthrough=True)
+    assert result.walkthrough is not None
+    text = markdown.render(result)
+
+    assert result.walkthrough.overview in text
+    assert text.index(result.walkthrough.overview) < text.index("<details>")
+
+
+def test_the_terminal_walkthrough_table_stays_open():
+    """Nothing in a terminal can unfold a section, so nothing there is folded."""
+    text = _terminal(make_result(walkthrough=True))
+
+    assert f"### {markdown.WALKTHROUGH_SUMMARY} (1 file)\n\n| File | Change |" in text
+    assert "<details>" not in text
 
 
 def _with_flow(diagram: str = "flowchart TD\n  Boot --> Routes"):
@@ -1134,6 +1165,22 @@ def test_the_published_check_is_a_callout_the_forge_renders():
     blocked.block_on = Severity.CRITICAL
     assert "> [!CAUTION]" in markdown.render(blocked)
     assert "> [!TIP]" in markdown.render(ReviewResult(block_on=Severity.CRITICAL))
+
+
+def test_the_published_check_folds_with_the_verdict_on_the_summary_line():
+    """Folded, the summary line is all a skimming reader gets -- so it is the verdict."""
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    document = markdown.render(result)
+
+    summary = "<summary>\u26d4 Pre-merge check: blocked</summary>"
+    opened = document.index(summary)
+    section = document[opened : document.index("</details>", opened)]
+
+    assert "> [!CAUTION]" in section
+    assert "> Judged against **critical** and above" in section
+    assert "> Findings:" in section
+    assert "\U0001f534 Critical 1" in section
 
 
 def test_the_terminal_check_carries_no_html_that_rich_would_drop():
