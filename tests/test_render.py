@@ -261,9 +261,9 @@ def test_markdown_structure():
 def test_markdown_buckets_findings_into_collapsible_sections():
     """A review with thirty nitpicks must not bury the two findings that matter."""
     text = markdown.render(make_result())
-    assert "<summary>🛠️ Actionable comments (1)</summary><blockquote>" in text
-    assert "<summary>🧹 Nitpick comments (1)</summary><blockquote>" in text
-    assert "<summary>app/auth.py (1)</summary><blockquote>" in text
+    assert "<summary>🛠️ Actionable comments (1)</summary>\n" in text
+    assert "<summary>🧹 Nitpick comments (1)</summary>\n" in text
+    assert "<summary>app/auth.py (1)</summary>\n" in text
     assert "<summary>🤖 Prompt for AI Agents</summary>\n" in text
 
 
@@ -294,13 +294,17 @@ def test_a_severe_finding_is_marked_out_from_a_trivial_one():
 
 
 def test_every_finding_is_indented_under_its_file():
-    """Scope seen rather than inferred: a finding sits inside a quote, so the
-    file heading it belongs to is visibly above it rather than beside it."""
+    """Scope seen rather than inferred: a finding sits inside a quote of its own,
+    so the file heading it belongs to is visibly above it rather than beside it.
+
+    The quote is the finding's, never the section's -- a section-wide blockquote
+    would take the alert flavour off every severe finding inside it."""
     text = markdown.render(make_result())
     body = text[text.index("<summary>app/util.py (1)</summary>") :]
-    body = body[: body.index("</blockquote></details>")]
+    body = body[: body.index("</details>\n\n</details>")]
     quoted = [line for line in body.splitlines() if line.strip() and "<summary>" not in line]
     assert all(line.startswith(">") for line in quoted)
+    assert "<blockquote>" not in text
 
 
 def test_each_finding_carries_an_agent_prompt_and_a_fingerprint():
@@ -353,7 +357,7 @@ def test_outside_diff_findings_get_a_caution_banner():
     text = markdown.render(result)
     assert "> [!CAUTION]" in text
     assert "can't be posted inline" in text
-    assert "> <summary>⚠️ Outside diff range comments (1)</summary><blockquote>" in text
+    assert "> <summary>⚠️ Outside diff range comments (1)</summary>" in text
 
 
 def test_markdown_review_info():

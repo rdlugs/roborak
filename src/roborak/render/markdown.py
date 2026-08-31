@@ -584,7 +584,6 @@ def _bucket_section(
         _details(
             f"{path} ({len(items)})",
             _findings_block(items, form=form, repo=repo, full=full, alert=alert),
-            nested=True,
             level=3,
             collapsible=form is Form.PUBLISHED,
         )
@@ -593,7 +592,6 @@ def _bucket_section(
     return _details(
         f"{BUCKET_TITLE[bucket]} ({len(findings)})",
         "\n\n".join(blocks),
-        nested=True,
         level=2,
         collapsible=form is Form.PUBLISHED,
     )
@@ -1165,15 +1163,14 @@ def _listed(names: Iterable[str]) -> str:
     return f"{head} and {rest} more" if rest > 0 else head
 
 
-def _details(
-    summary: str, body: str, *, nested: bool = False, level: int = 4, collapsible: bool = True
-) -> str:
+def _details(summary: str, body: str, *, level: int = 4, collapsible: bool = True) -> str:
     """One section, collapsible where the reader can collapse it.
 
-    ``nested=True`` wraps the body in a ``<blockquote>``, which is what lets a
-    ``<details>`` contain another one -- without it GitHub stops rendering the
-    markdown inside. Leaf sections skip it: a quote bar running down the side of
-    a fenced code block is just noise.
+    The body is never wrapped in a ``<blockquote>``, however tempting the indent
+    is: a section can contain a critical or major finding, and a GFM alert only
+    keeps its coloured bar while it is a blockquote in its own right. Quoting the
+    section around it demotes every alert inside to plain text. The blank lines
+    are what let a ``<details>`` hold markdown -- and another ``<details>``.
 
     ``collapsible=False`` is the terminal form: a heading at ``level``, since
     nothing there can fold and the summary line is the only thing telling the
@@ -1181,11 +1178,6 @@ def _details(
     """
     if not collapsible:
         return f"{'#' * level} {summary}\n\n{body}"
-    if nested:
-        return (
-            f"<details>\n<summary>{summary}</summary><blockquote>"
-            f"\n\n{body}\n\n</blockquote></details>"
-        )
     return f"<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
