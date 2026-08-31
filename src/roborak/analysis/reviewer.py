@@ -655,32 +655,45 @@ CONTEXT_FILES = ("AGENTS.md", "CLAUDE.md", ".roborak/context.md", "CONTRIBUTING.
 MAX_CONTEXT_CHARS = 6000
 
 
+def _read_context_file(repo: Path, name: str, base_ref: str | None) -> str:
+    """One context file, from the trusted base revision when we can reach it."""
+    if base_ref:
+        try:
+            shown = subprocess.run(
+                ["git", "show", f"{base_ref}:{name}"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+            if shown.returncode == 0 and (text := shown.stdout.strip()):
+                return text
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    path = repo / name
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
 def load_repo_context(repo: Path, base_ref: str | None = None) -> str:
     """Pick up house style, preferring the trusted base revision when available."""
-    for name in CONTEXT_FILES:
-        if base_ref:
-            try:
-                shown = subprocess.run(
-                    ["git", "show", f"{base_ref}:{name}"],
-                    cwd=repo,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=5,
-                    check=False,
-                )
-                if shown.returncode == 0 and (text := shown.stdout.strip()):
-                    return text[:MAX_CONTEXT_CHARS]
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-        path = repo / name
-        if not path.is_file():
+    for index, name in enumerate(CONTEXT_FILES):
+        text = _read_context_file(repo, name, base_ref)
+        if not text:
             continue
-        try:
-            text = path.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            continue
-        if text:
-            return text[:MAX_CONTEXT_CHARS]
+        # A pointer file (an AGENTS.md that only says "read CLAUDE.md") carries no
+        # conventions of its own, so follow it rather than handing the model the sign.
+        for pointed in CONTEXT_FILES[index + 1 :]:
+            if pointed not in text:
+                continue
+            if pointed_text := _read_context_file(repo, pointed, base_ref):
+                text = f"{text}\n\n{pointed_text}"
+        return text[:MAX_CONTEXT_CHARS]
     return ""

@@ -590,6 +590,15 @@ def test_first_context_file_wins(tmp_path):
     assert "CLAUDE loses." not in llm.user
 
 
+def test_pointer_context_file_pulls_in_what_it_points_at(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("`CLAUDE.md` is canonical. Read it in full.")
+    (tmp_path / "CLAUDE.md").write_text("Line numbers are new-file coordinates.")
+    llm = StubLLM(reply="findings: []")
+    Reviewer(config=Config(), repo=tmp_path, llm=llm).review(make_changeset())
+    assert "`CLAUDE.md` is canonical." in llm.user
+    assert "Line numbers are new-file coordinates." in llm.user
+
+
 def test_repo_context_comes_from_the_base_revision(tmp_path):
     import subprocess
 

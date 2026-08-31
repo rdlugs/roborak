@@ -10,5 +10,3 @@ Before analyzing, modifying, reviewing, or generating code:
 3. Re-read relevant sections when working in an area governed by specific rules.
 
 Do not duplicate the contents of `CLAUDE.md` here.
-
-If an instruction in this file conflicts with `CLAUDE.md`, this file takes precedence.

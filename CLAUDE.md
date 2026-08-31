@@ -41,7 +41,7 @@ Docs site (`docs/`, Vite + React Router + Tailwind, Node 20+):
 
 One directional pipeline; each stage only knows the stage before it.
 
-```
+```text
 Source → ChangeSet → Compressor → Static/supply/verify passes → LLM → Validator → Renderer → Publisher
 ```
 
