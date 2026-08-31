@@ -379,7 +379,7 @@ def test_markdown_reports_skipped_files():
     assert "generated/big.ts" in markdown.render(make_result())
 
 
-def test_markdown_walkthrough_and_diagram():
+def test_markdown_walkthrough_and_diagram() -> None:
     text = markdown.render(make_result(walkthrough=True))
     assert markdown.WALKTHROUGH_SUMMARY in text
     assert "| File | Change |" in text
@@ -389,7 +389,7 @@ def test_markdown_walkthrough_and_diagram():
     assert "`feature` `security`" in text
 
 
-def test_the_published_walkthrough_table_is_folded_away():
+def test_the_published_walkthrough_table_is_folded_away() -> None:
     """The table grows with the change, so left open it buries the findings."""
     text = markdown.render(make_result(walkthrough=True))
 
@@ -401,7 +401,7 @@ def test_the_published_walkthrough_table_is_folded_away():
     assert "### Walkthrough" not in text, "the heading is the summary line now"
 
 
-def test_the_walkthrough_overview_stays_open_above_the_folded_table():
+def test_the_walkthrough_overview_stays_open_above_the_folded_table() -> None:
     """The overview is the description of the change, not a detail of it."""
     result = make_result(walkthrough=True)
     assert result.walkthrough is not None
@@ -411,7 +411,7 @@ def test_the_walkthrough_overview_stays_open_above_the_folded_table():
     assert text.index(result.walkthrough.overview) < text.index("<details>")
 
 
-def test_the_terminal_walkthrough_table_stays_open():
+def test_the_terminal_walkthrough_table_stays_open() -> None:
     """Nothing in a terminal can unfold a section, so nothing there is folded."""
     text = _terminal(make_result(walkthrough=True))
 
@@ -1167,7 +1167,7 @@ def test_the_published_check_is_a_callout_the_forge_renders():
     assert "> [!TIP]" in markdown.render(ReviewResult(block_on=Severity.CRITICAL))
 
 
-def test_the_published_check_folds_with_the_verdict_on_the_summary_line():
+def test_the_published_check_folds_with_the_verdict_on_the_summary_line() -> None:
     """Folded, the summary line is all a skimming reader gets -- so it is the verdict."""
     result = make_result()
     result.block_on = Severity.CRITICAL
