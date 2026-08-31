@@ -10,6 +10,12 @@ The structure is GitHub-flavored markdown rather than plain: collapsible
 ``<details>`` sections are what keep a review with thirty nitpicks in it from
 burying the two findings that matter.
 
+Within a section, the shape is what a forge leaves us once it has stripped the
+CSS: a severity banner leading each finding, a blockquote indenting it under the
+file it belongs to, and the alert flavour of that quote on the two severities a
+reader must not scroll past. There is no colour to be had -- see ``core.icons``
+for what the glyphs are carrying instead.
+
 ``Form.TERMINAL`` is the same document for a reader who cannot fold a section.
 Nothing there can collapse, so the sections written for a machine -- the agent
 prompts, the review-info tree -- are left out instead of opened out, and a
@@ -30,6 +36,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from roborak.core import icons
 from roborak.core.buckets import (
     BUCKET_PLAIN,
     BUCKET_TITLE,
@@ -37,6 +44,7 @@ from roborak.core.buckets import (
     by_file,
     group,
 )
+from roborak.core.icons import CATEGORY_LABEL, EFFORT_LABEL, SEVERITY_ICON, SEVERITY_LABEL
 from roborak.core.models import (
     DependencyChangeKind,
     Finding,
@@ -50,14 +58,7 @@ from roborak.core.models import (
     VerificationStatus,
     Walkthrough,
 )
-from roborak.core.severity import (
-    CATEGORY_LABEL,
-    EFFORT_LABEL,
-    EVIDENCE_LABEL,
-    SEVERITY_LABEL,
-    Kind,
-    Severity,
-)
+from roborak.core.severity import EVIDENCE_LABEL, Kind, Severity
 from roborak.core.verdict import Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
@@ -230,7 +231,7 @@ def _walkthrough_table(result: ReviewResult) -> str:
     return "\n".join(rows)
 
 
-FLOW_SUMMARY = "🗺️ Flow"
+FLOW_SUMMARY = f"{icons.FLOW} Flow"
 """Labels the flow section in both forms, folded and open."""
 
 
@@ -257,13 +258,13 @@ def _flow_section(diagram: str, *, form: Form) -> str:
 
 
 IMPACT_LABEL: dict[ImpactStatus, str] = {
-    ImpactStatus.CONTAINED: "✅ Contained",
-    ImpactStatus.CONSUMERS_FOUND: "🔗 Consumers found",
-    ImpactStatus.NO_REFERENCES_FOUND: "❔ No references found",
-    ImpactStatus.UNSUPPORTED: "🚫 Not supported",
-    ImpactStatus.LIMITED: "⚠️ Limited",
-    ImpactStatus.UNAVAILABLE: "⚠️ Unavailable",
-    ImpactStatus.NOT_APPLICABLE: "⚪ Not applicable",
+    ImpactStatus.CONTAINED: f"{icons.PASSED} Contained",
+    ImpactStatus.CONSUMERS_FOUND: f"{icons.LINKED} Consumers found",
+    ImpactStatus.NO_REFERENCES_FOUND: f"{icons.UNKNOWN} No references found",
+    ImpactStatus.UNSUPPORTED: f"{icons.NEUTRAL} Not supported",
+    ImpactStatus.LIMITED: f"{icons.WARNED} Limited",
+    ImpactStatus.UNAVAILABLE: f"{icons.WARNED} Unavailable",
+    ImpactStatus.NOT_APPLICABLE: f"{icons.NEUTRAL} Not applicable",
 }
 
 MAX_IMPACT_CONSUMERS_SHOWN = 4
@@ -295,7 +296,8 @@ def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
             return ""
         notes.append("Nothing was traced, and no reason was recorded.")
 
-    summary = f"🧭 Blast radius — {IMPACT_LABEL[impact.status].split(' ', 1)[1].lower()}"
+    named = IMPACT_LABEL[impact.status].split(" ", 1)[1].lower()
+    summary = f"{icons.IMPACT} Blast radius — {named}"
     rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
     inner = "\n\n".join(part for part in (body, rendered) if part)
     return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
@@ -317,11 +319,11 @@ def _impact_rows(impact: ImpactMap) -> str:
 
 
 VERIFICATION_LABEL: dict[VerificationStatus, str] = {
-    VerificationStatus.PASSED: "✅ Passed",
-    VerificationStatus.FAILED: "❌ Failed",
-    VerificationStatus.TIMED_OUT: "⏱️ Timed out",
-    VerificationStatus.ERRORED: "⚠️ Could not run",
-    VerificationStatus.SKIPPED: "⚪ Not executed",
+    VerificationStatus.PASSED: f"{icons.PASSED} Passed",
+    VerificationStatus.FAILED: f"{icons.FAILED} Failed",
+    VerificationStatus.TIMED_OUT: f"{icons.TIMED_OUT} Timed out",
+    VerificationStatus.ERRORED: f"{icons.WARNED} Could not run",
+    VerificationStatus.SKIPPED: f"{icons.NEUTRAL} Not executed",
 }
 
 MAX_VERIFICATION_OUTPUT_LINES = 20
@@ -340,14 +342,14 @@ SUPPLY_CHAIN_LABEL: dict[SupplyChainStatus, str] = {
 }
 
 CHANGE_LABEL: dict[DependencyChangeKind, str] = {
-    DependencyChangeKind.SOURCE_CHANGED: "🔀 Source changed",
-    DependencyChangeKind.INTEGRITY_LOST: "🔓 Checksum lost",
-    DependencyChangeKind.INTEGRITY_CHANGED: "🔁 Artefact replaced",
-    DependencyChangeKind.MANIFEST_LOCK_DRIFT: "⚠ Manifest/lock drift",
-    DependencyChangeKind.ADDED: "🆕 Added",
-    DependencyChangeKind.REMOVED: "🗑 Removed",
-    DependencyChangeKind.UPGRADED: "⬆ Upgraded",
-    DependencyChangeKind.DOWNGRADED: "⬇ Downgraded",
+    DependencyChangeKind.SOURCE_CHANGED: f"{icons.SOURCE_CHANGED} Source changed",
+    DependencyChangeKind.INTEGRITY_LOST: f"{icons.INTEGRITY_LOST} Checksum lost",
+    DependencyChangeKind.INTEGRITY_CHANGED: f"{icons.INTEGRITY_CHANGED} Artefact replaced",
+    DependencyChangeKind.MANIFEST_LOCK_DRIFT: f"{icons.WARNED} Manifest/lock drift",
+    DependencyChangeKind.ADDED: f"{icons.ADDED} Added",
+    DependencyChangeKind.REMOVED: f"{icons.REMOVED} Removed",
+    DependencyChangeKind.UPGRADED: f"{icons.UPGRADED} Upgraded",
+    DependencyChangeKind.DOWNGRADED: f"{icons.DOWNGRADED} Downgraded",
 }
 
 
@@ -391,7 +393,7 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
     if not parts:
         return ""
 
-    summary = f"📦 Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
+    summary = f"{icons.SUPPLY} Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
     if report.changes:
         summary += f" ({len(report.changes)} dependency change(s))"
     return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
@@ -455,7 +457,8 @@ def _verification_section(report: VerificationReport | None, *, form: Form) -> s
     failures = "\n\n".join(_verification_output(run) for run in report.failing if run.output)
     rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
     inner = "\n\n".join(part for part in (body, failures, rendered) if part)
-    summary = f"🧪 Verification — {VERIFICATION_LABEL[report.status].split(' ', 1)[1].lower()}"
+    named = VERIFICATION_LABEL[report.status].split(" ", 1)[1].lower()
+    summary = f"{icons.VERIFICATION} Verification — {named}"
     return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
 
 
@@ -507,30 +510,40 @@ def _nothing_to_report(result: ReviewResult) -> str:
         return "No additional inline findings; scanner findings are listed above."
     if result.changeset is not None and result.changeset.is_empty:
         return "No changes to review."
-    return "No findings. ✅"
+    return f"No findings. {icons.PASSED}"
 
 
 def _severity_table(result: ReviewResult) -> str:
-    """The same population the verdict counts.
+    """The same population the verdict counts, and where each of them is.
 
     Scanner findings reach the report through the supply-chain section rather
     than a bucket, so counting the buckets would print a total that disagrees
     with the verdict line at the bottom of the same report.
+
+    The third column is what makes the table worth reading twice: counts alone
+    say a review has three majors, which is a fact a reader can do nothing with.
+    Naming the files turns the summary into the one place a reader decides where
+    to look first. Not links -- the sections they would point at live inside
+    ``<details>``, and neither forge scrolls to an anchor it has not opened.
     """
     findings = result.all_findings()
     counts = {severity: 0 for severity in Severity}
+    where: dict[Severity, list[str]] = {severity: [] for severity in Severity}
     for finding in findings:
         counts[finding.severity] += 1
+        if finding.file not in where[finding.severity]:
+            where[finding.severity].append(finding.file)
 
     total = len(findings)
     rows = [
         f"### {total} finding{'s' if total != 1 else ''}",
         "",
-        "| Severity | Count |",
-        "| --- | --- |",
+        "| Severity | Count | Where |",
+        "| --- | --- | --- |",
     ]
     rows += [
-        f"| {SEVERITY_LABEL[severity]} | {counts[severity]} |"
+        f"| {SEVERITY_LABEL[severity]} | {counts[severity]} "
+        f"| {_listed(f'`{_escape_cell(path)}`' for path in where[severity])} |"
         for severity in Severity
         if counts[severity]
     ]
@@ -540,8 +553,15 @@ def _severity_table(result: ReviewResult) -> str:
 def _bucket_section_with_callout(
     findings: list[Finding], *, form: Form, repo: Path | None, full: bool
 ) -> str:
-    """The one section that opens itself, wrapped in a GitHub warning callout."""
-    inner = _bucket_section(Bucket.OUTSIDE_DIFF, findings, form=form, repo=repo, full=full)
+    """The one section that opens itself, wrapped in a GitHub warning callout.
+
+    Its findings are quoted but never alert-flavoured: this section is already an
+    alert, and neither forge renders one nested inside another -- the inner marker
+    would print as the literal text ``[!CAUTION]``.
+    """
+    inner = _bucket_section(
+        Bucket.OUTSIDE_DIFF, findings, form=form, repo=repo, full=full, alert=False
+    )
     note = (
         "Some comments are outside the diff and can't be posted inline due to platform limitations."
     )
@@ -551,14 +571,19 @@ def _bucket_section_with_callout(
 
 
 def _bucket_section(
-    bucket: Bucket, findings: list[Finding], *, form: Form, repo: Path | None, full: bool
+    bucket: Bucket,
+    findings: list[Finding],
+    *,
+    form: Form,
+    repo: Path | None,
+    full: bool,
+    alert: bool = True,
 ) -> str:
     files = by_file(findings)
     blocks = [
         _details(
             f"{path} ({len(items)})",
-            _findings_block(items, form=form, repo=repo, full=full),
-            nested=True,
+            _findings_block(items, form=form, repo=repo, full=full, alert=alert),
             level=3,
             collapsible=form is Form.PUBLISHED,
         )
@@ -567,17 +592,50 @@ def _bucket_section(
     return _details(
         f"{BUCKET_TITLE[bucket]} ({len(findings)})",
         "\n\n".join(blocks),
-        nested=True,
         level=2,
         collapsible=form is Form.PUBLISHED,
     )
 
 
-def _findings_block(findings: list[Finding], *, form: Form, repo: Path | None, full: bool) -> str:
-    """Findings within one file, separated by a rule."""
-    return "\n\n---\n\n".join(
-        finding_markdown(finding, form=form, repo=repo, full=full) for finding in findings
-    )
+def _findings_block(
+    findings: list[Finding], *, form: Form, repo: Path | None, full: bool, alert: bool = True
+) -> str:
+    """Findings within one file, each in a quote of its own.
+
+    Published, the quote does two things a horizontal rule could not: it indents
+    the finding under the file it belongs to, so scope is seen rather than
+    inferred, and it gives the block an edge that starts *before* the first line
+    instead of a rule that appears after the last one. A critical or major
+    finding gets the alert flavour of the same quote, which is as close to a
+    background colour as a forge comment can come.
+
+    The terminal keeps the rule: ``rich`` renders a thematic break as a full-width
+    line, and it has no quote bar worth the indent.
+    """
+    rendered = [
+        _severity_quote(finding, finding_markdown(finding, form=form, repo=repo, full=full), alert)
+        if form is Form.PUBLISHED
+        else finding_markdown(finding, form=form, repo=repo, full=full)
+        for finding in findings
+    ]
+    return ("\n\n---\n\n" if form is Form.TERMINAL else "\n\n").join(rendered)
+
+
+_SEVERITY_CALLOUT: dict[Severity, str] = {
+    Severity.CRITICAL: "CAUTION",
+    Severity.MAJOR: "WARNING",
+}
+"""Which findings are loud enough for an alert. Both forges strip colour from a
+comment, and a GFM alert is the one construct that puts a coloured bar beside a
+block without it -- so it is spent on the two severities a reader must not scroll
+past, and nowhere else."""
+
+
+def _severity_quote(finding: Finding, body: str, alert: bool) -> str:
+    """One finding, indented; alert-flavoured when it is severe enough."""
+    if alert and (kind := _SEVERITY_CALLOUT.get(finding.severity)):
+        return _callout(kind, body)
+    return _quote(body)
 
 
 def finding_markdown(
@@ -612,7 +670,7 @@ def finding_markdown(
         lines += [
             "",
             _details(
-                "🤖 Prompt for AI Agents",
+                f"{icons.AGENT} Prompt for AI Agents",
                 _fenced(_agent_prompt(finding)),
                 level=4,
                 collapsible=collapsible,
@@ -639,23 +697,33 @@ def finding_markdown(
 
 
 def _lead(finding: Finding, *, form: Form) -> str:
-    """The badge line: category, then severity, then what the fix will cost.
+    """Severity first, alone, then where it is; the rest on a quieter line.
 
-    A requirement gap's line is nominal, so it names the file and no range --
-    printing one would imply an anchor it does not have.
+    Severity used to be the middle of three italic labels joined by pipes, which
+    gave a critical finding and a nitpick the same weight on the page. It leads
+    now, in bold and in capitals, because it is the one thing a reader scanning a
+    long report is scanning *for*; category and effort are what they read once
+    they have stopped.
+
+    A requirement gap's line is nominal, so it names no range -- printing one
+    would imply an anchor it does not have.
     """
-    labels = (
-        CATEGORY_LABEL[finding.category],
-        SEVERITY_LABEL[finding.severity],
-        EFFORT_LABEL[finding.effort],
-    )
     where = finding.file if finding.kind is Kind.REQUIREMENT_GAP else finding.location
 
     if form is Form.TERMINAL:
+        labels = (
+            SEVERITY_LABEL[finding.severity],
+            CATEGORY_LABEL[finding.category],
+            EFFORT_LABEL[finding.effort],
+        )
         return f"##### {' · '.join(labels)} · {where}"
 
-    badges = " | ".join(f"_{label}_" for label in labels)
-    return badges if finding.kind is Kind.REQUIREMENT_GAP else f"`{_span(finding)}`: {badges}"
+    icon = SEVERITY_ICON[finding.severity]
+    banner = f"**{icon} {finding.severity.value.upper()}**"
+    if finding.kind is not Kind.REQUIREMENT_GAP:
+        banner += f" · `{_span(finding)}`"
+    detail = f"_{CATEGORY_LABEL[finding.category]} · {EFFORT_LABEL[finding.effort]}_"
+    return f"{banner}\n\n{detail}"
 
 
 def _code_context(finding: Finding, repo: Path | None, *, form: Form) -> str:
@@ -732,7 +800,7 @@ def _evidence_block(finding: Finding, *, form: Form) -> str:
         line = _wrap(f"_Confidence: {finding.confidence:.0%} · {_evidence_phrase(finding)}_")
         return f"{line}\n\n{files}" if files else line
 
-    summary = f"🔎 Evidence · {EVIDENCE_LABEL[finding.evidence].lower()}"
+    summary = f"{icons.EVIDENCE} Evidence · {EVIDENCE_LABEL[finding.evidence].lower()}"
     body = _wrap(_evidence_detail(finding))
     return _details(summary, f"{body}\n\n{files}" if files else body, level=4)
 
@@ -781,7 +849,7 @@ def _global_agent_prompt(grouped: dict[Bucket, list[Finding]], *, collapsible: b
 
     body = "\n\n---\n\n".join(parts)
     return _details(
-        "🤖 Prompt for all review comments with AI agents",
+        f"{icons.AGENT} Prompt for all review comments with AI agents",
         _fenced(f"{AGENT_PREAMBLE}\n\n{body}"),
         level=2,
         collapsible=collapsible,
@@ -801,14 +869,17 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
     if config_lines:
         blocks.append(
             _details(
-                "⚙️ Run configuration", "\n\n".join(config_lines), level=3, collapsible=collapsible
+                f"{icons.RUN_CONFIG} Run configuration",
+                "\n\n".join(config_lines),
+                level=3,
+                collapsible=collapsible,
             )
         )
 
     if changeset is not None and changeset.base_sha and changeset.head_sha:
         blocks.append(
             _details(
-                "📥 Commits",
+                f"{icons.COMMITS} Commits",
                 "Reviewing files that changed between "
                 f"{changeset.base_sha} and {changeset.head_sha}.",
                 level=3,
@@ -820,7 +891,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         listed = "\n".join(f"* `{file.path}`" for file in changeset.files)
         blocks.append(
             _details(
-                f"📒 Files selected for processing ({len(changeset.files)})",
+                f"{icons.FILES} Files selected for processing ({len(changeset.files)})",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -841,7 +912,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             listed += f"\n* commands read from {report.source}"
         blocks.append(
             _details(
-                f"🧪 Verification ({report.status.value.replace('_', ' ')})",
+                f"{icons.VERIFICATION} Verification ({report.status.value.replace('_', ' ')})",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -861,7 +932,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             listed += f"\n* {note}"
         blocks.append(
             _details(
-                f"📦 Supply chain ({SUPPLY_CHAIN_LABEL[supply.status]})",
+                f"{icons.SUPPLY} Supply chain ({SUPPLY_CHAIN_LABEL[supply.status]})",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -882,7 +953,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             )
         blocks.append(
             _details(
-                f"🧭 Semantic review plan ({result.review_plan.chunks} pass(es))",
+                f"{icons.REVIEW_PLAN} Semantic review plan ({result.review_plan.chunks} pass(es))",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -897,7 +968,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         )
         blocks.append(
             _details(
-                f"🚧 Review coverage ({len(result.coverage)} omission(s))",
+                f"{icons.COVERAGE} Review coverage ({len(result.coverage)} omission(s))",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -907,7 +978,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         listed = "\n".join(f"* `{path}`" for path in result.skipped_files)
         blocks.append(
             _details(
-                f"🚧 Files skipped (context budget) ({len(result.skipped_files)})",
+                f"{icons.COVERAGE} Files skipped (context budget) ({len(result.skipped_files)})",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -917,7 +988,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
     if result.errors:
         blocks.append(
             _details(
-                "❌ Errors",
+                f"{icons.ERROR} Errors",
                 "\n".join(f"* {error}" for error in result.errors),
                 level=3,
                 collapsible=collapsible,
@@ -926,13 +997,15 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
 
     if not blocks:
         return ""
-    return _details("ℹ️ Review info", "\n\n".join(blocks), level=2, collapsible=collapsible)
+    return _details(
+        f"{icons.INFO} Review info", "\n\n".join(blocks), level=2, collapsible=collapsible
+    )
 
 
 _VERDICT_TITLE: dict[Verdict, str] = {
-    Verdict.PASS: "✅ Pre-merge check: pass",
-    Verdict.BLOCKED: "⛔ Pre-merge check: blocked",
-    Verdict.ERROR: "⚠️ Pre-merge check: inconclusive",
+    Verdict.PASS: f"{icons.PASSED} Pre-merge check: pass",
+    Verdict.BLOCKED: f"{icons.BLOCKED} Pre-merge check: blocked",
+    Verdict.ERROR: f"{icons.WARNED} Pre-merge check: inconclusive",
 }
 
 _VERDICT_CALLOUT: dict[Verdict, str] = {
@@ -1017,7 +1090,7 @@ def _signature(*, form: Form) -> str:
         return (
             f'<sub><img src="{LOGO_URL}" width="14" align="top"> Reviewed by <b>roborak</b></sub>'
         )
-    return "_🤖 Reviewed by roborak_"
+    return f"_{icons.AGENT} Reviewed by roborak_"
 
 
 def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
@@ -1090,15 +1163,14 @@ def _listed(names: Iterable[str]) -> str:
     return f"{head} and {rest} more" if rest > 0 else head
 
 
-def _details(
-    summary: str, body: str, *, nested: bool = False, level: int = 4, collapsible: bool = True
-) -> str:
+def _details(summary: str, body: str, *, level: int = 4, collapsible: bool = True) -> str:
     """One section, collapsible where the reader can collapse it.
 
-    ``nested=True`` wraps the body in a ``<blockquote>``, which is what lets a
-    ``<details>`` contain another one -- without it GitHub stops rendering the
-    markdown inside. Leaf sections skip it: a quote bar running down the side of
-    a fenced code block is just noise.
+    The body is never wrapped in a ``<blockquote>``, however tempting the indent
+    is: a section can contain a critical or major finding, and a GFM alert only
+    keeps its coloured bar while it is a blockquote in its own right. Quoting the
+    section around it demotes every alert inside to plain text. The blank lines
+    are what let a ``<details>`` hold markdown -- and another ``<details>``.
 
     ``collapsible=False`` is the terminal form: a heading at ``level``, since
     nothing there can fold and the summary line is the only thing telling the
@@ -1106,17 +1178,20 @@ def _details(
     """
     if not collapsible:
         return f"{'#' * level} {summary}\n\n{body}"
-    if nested:
-        return (
-            f"<details>\n<summary>{summary}</summary><blockquote>"
-            f"\n\n{body}\n\n</blockquote></details>"
-        )
     return f"<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
 def _callout(kind: str, body: str) -> str:
-    quoted = "\n".join(f"> {line}".rstrip() for line in body.splitlines())
-    return f"> [!{kind}]\n{quoted}"
+    return f"> [!{kind}]\n{_quote(body)}"
+
+
+def _quote(body: str) -> str:
+    """Every line inside one blockquote, blank lines included.
+
+    A blank line left unprefixed would end the quote and start a second one, which
+    is how an indented block silently becomes two.
+    """
+    return "\n".join(f"> {line}".rstrip() for line in body.splitlines())
 
 
 FENCE_WIDTH = 80

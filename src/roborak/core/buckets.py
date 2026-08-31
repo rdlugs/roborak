@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from roborak.core import icons
 from roborak.core.models import ChangeSet, Finding, ReviewResult
 from roborak.core.severity import Kind
 
@@ -36,10 +37,10 @@ class Bucket(StrEnum):
 
 
 BUCKET_TITLE: dict[Bucket, str] = {
-    Bucket.ACTIONABLE: "Actionable comments",
-    Bucket.OUTSIDE_DIFF: "⚠️ Outside diff range comments",
-    Bucket.NITPICK: "🧹 Nitpick comments",
-    Bucket.REQUIREMENT_GAP: "🔍 Requirements not met",
+    Bucket.ACTIONABLE: f"{icons.ACTIONABLE} Actionable comments",
+    Bucket.OUTSIDE_DIFF: f"{icons.OUTSIDE_DIFF} Outside diff range comments",
+    Bucket.NITPICK: f"{icons.NITPICK} Nitpick comments",
+    Bucket.REQUIREMENT_GAP: f"{icons.REQUIREMENT_GAP} Requirements not met",
 }
 
 BUCKET_PLAIN: dict[Bucket, str] = {

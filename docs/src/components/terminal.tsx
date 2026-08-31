@@ -31,14 +31,14 @@ export function TerminalHero() {
             <span className="text-ink">rk review --uncommitted</span>
           </p>
 
-          <SectionRule label="Actionable comments (1)" />
+          <SectionRule label="🛠️ Actionable comments (1)" />
 
           <p className="mb-3 font-mono text-[13px] text-cyan">src/api/session.py</p>
 
           <div className="mb-3 flex flex-row flex-wrap items-center gap-x-2 gap-y-1">
-            <Badge tone="text-critical">🔒 Security</Badge>
-            <Dot />
             <Badge tone="text-critical">🔴 Critical</Badge>
+            <Dot />
+            <Badge tone="text-critical">🔒 Security</Badge>
             <Dot />
             <Badge tone="text-lime">⚡ Quick win</Badge>
             <Dot />

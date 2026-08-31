@@ -12,8 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from roborak.core.icons import SEVERITY_LABEL
 from roborak.core.models import Finding, ReviewResult, ReviewStatus
-from roborak.core.severity import SEVERITY_LABEL, Severity
+from roborak.core.severity import Severity
 
 
 class Verdict(StrEnum):
