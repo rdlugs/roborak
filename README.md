@@ -575,7 +575,7 @@ manifest/lock drift.
 | Ecosystem | Manifests | Lockfiles |
 |---|---|---|
 | npm / yarn / pnpm | `package.json` | `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (Classic and Berry), `pnpm-lock.yaml` |
-| Python | `pyproject.toml`, `requirements*.txt`, `setup.cfg` | `uv.lock`, `poetry.lock`, `pdm.lock` |
+| Python | `pyproject.toml`, `requirements*.txt` | `uv.lock`, `poetry.lock`, `pdm.lock` |
 | Go | `go.mod` | `go.sum` |
 | Rust | `Cargo.toml` | `Cargo.lock` |
 | PHP | `composer.json` | `composer.lock` |

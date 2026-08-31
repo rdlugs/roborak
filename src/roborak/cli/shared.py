@@ -37,6 +37,7 @@ from roborak.sources.gitlab import GitLabSource
 from roborak.sources.issue import load_issue, resolve_linked_change
 from roborak.sources.local_git import LocalGitSource, Scope, is_git_repo
 from roborak.sources.paths import PathsSource
+from roborak.supply.analyzer import is_supply_asset
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ def start(
             target,
             token,
             max_recovered_file_bytes=config.forge.max_recovered_file_bytes,
+            ignore_paths=config.ignore_paths,
             base=base,
             committed=committed,
             uncommitted=uncommitted,
@@ -314,6 +316,7 @@ def _load_changeset(
     token: str | None,
     *,
     max_recovered_file_bytes: int,
+    ignore_paths: list[str],
     base: str | None,
     committed: bool,
     uncommitted: bool,
@@ -337,6 +340,7 @@ def _load_changeset(
         return _load_paths(
             console,
             repo,
+            ignore_paths=ignore_paths,
             base=base,
             committed=committed,
             uncommitted=uncommitted,
@@ -357,6 +361,7 @@ def _load_paths(
     console: Console,
     repo: Path,
     *,
+    ignore_paths: list[str],
     base: str | None,
     committed: bool,
     uncommitted: bool,
@@ -385,9 +390,11 @@ def _load_paths(
             "Drop it to review every file in the directory instead."
         )
 
-    # Preserve dependency assets for supply-chain analysis. Reviewer applies
-    # ignore_paths later, before any ordinary file reaches the model prompt.
-    source = PathsSource(root=repo)
+    # `ignore_paths` is applied during the walk so that ignored noise cannot spend
+    # the `max_files` budget an actual source file needed. Dependency assets are
+    # exempt: the supply-chain stage still reads them, and Reviewer drops them
+    # again before any of it reaches the model prompt.
+    source = PathsSource(root=repo, ignore_paths=list(ignore_paths), keep=is_supply_asset)
     if quiet:
         return source.load()
     console.print(f"[dim]no git repository; reviewing every file under {repo}[/]")

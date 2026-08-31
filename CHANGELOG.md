@@ -21,11 +21,14 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   deterministic parser reads it instead, producing a bounded delta: added,
   removed, upgraded, downgraded, re-sourced, integrity lost or replaced, and
   manifest/lock drift. npm/yarn/pnpm, Python (uv, poetry, pdm, requirements), Go,
-  Cargo and Composer are supported; every other lockfile is *named* in the report
-  as unanalysed rather than passed over. Both sides are read whole from git and
-  compared, so a reformat produces no changes at all, and the old side is read at
-  the **merge base**, so a bump somebody else landed on the base branch is not
-  billed to this change. A forge diff that is not checked out reports
+  Cargo and Composer are supported; a lockfile roborak recognises but has no
+  parser for (`Pipfile.lock`, `Gemfile.lock`, `packages.lock.json`,
+  `gradle.lockfile`, `mix.lock`, `pubspec.lock`, `flake.lock`) is *named* in the
+  report as unanalysed rather than passed over. Both files are parsed whole and
+  compared, so a reformat produces no changes at all; the old side is read at the
+  **merge base**, so a bump somebody else landed on the base branch is not billed
+  to this change, and the local head side is read from the working tree, so an
+  uncommitted change is covered too. A forge diff that is not checked out reports
   `unavailable` rather than guessing.
 
   Changes to CI workflows, Dockerfiles, compose files and Terraform additionally

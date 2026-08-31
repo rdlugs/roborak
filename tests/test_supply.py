@@ -1178,3 +1178,150 @@ def test_every_registered_adapter_is_in_the_junk_matrix():
         "osv-scanner",
     }
     assert {adapter.name for adapter in ALL_ADAPTERS} == tested
+
+
+def test_go_indirect_requirements_are_not_direct():
+    """`// indirect` is the only thing separating a declared module from an inherited one."""
+    manifest = GO.read("go.mod", GO_MOD)
+    assert manifest["github.com/spf13/cobra"].direct is True
+    assert manifest["github.com/stretchr/testify"].direct is False
+
+
+def test_go_single_line_require_reads_its_indirect_marker():
+    manifest = GO.read(
+        "go.mod",
+        "module example.com/app\n\nrequire golang.org/x/sys v0.18.0 // indirect\n",
+    )
+    assert manifest["golang.org/x/sys"].direct is False
+
+
+def test_go_grouped_replace_block_is_a_source():
+    """go writes the block form as soon as there is more than one replacement."""
+    manifest = GO.read(
+        "go.mod",
+        GO_MOD + "\nreplace (\n"
+        "\tgithub.com/spf13/cobra => ../local/cobra\n"
+        "\tgithub.com/stretchr/testify v1.9.0 => example.com/fork v1.9.1\n"
+        ")\n",
+    )
+    assert manifest["github.com/spf13/cobra"].source == "../local/cobra"
+    assert manifest["github.com/stretchr/testify"].source == "example.com/fork"
+    assert manifest["github.com/stretchr/testify"].direct is False, "a replace is not a require"
+
+
+def test_poetry_group_dependencies_are_read():
+    """Poetry 1.2 moved dev dependencies into named groups."""
+    manifest = PYTHON.read(
+        "pyproject.toml",
+        "[tool.poetry]\nname = 'app'\n\n"
+        "[tool.poetry.dependencies]\nrequests = '^2.32'\n\n"
+        "[tool.poetry.group.dev.dependencies]\npytest = '^8.3'\n\n"
+        "[tool.poetry.group.docs.dependencies]\nsphinx = '^7.3'\n",
+    )
+    assert manifest["requests"].version == "^2.32"
+    assert manifest["pytest"].version == "^8.3"
+    assert manifest["sphinx"].version == "^7.3"
+
+
+def test_a_locked_prerelease_satisfies_its_constraint():
+    """A locked version is a fact, not a candidate: an rc the resolver picked is not drift."""
+    assert PYTHON.lock_satisfies(">=2.0.0rc1", "2.0.0rc1") is True
+    assert PYTHON.lock_satisfies(">=1.0", "2.0.0rc1") is True
+
+
+def test_caret_range_width_follows_how_much_was_written():
+    """`^0` allows all of 0.x; `^0.0` only 0.0.x; `^0.0.3` only 0.0.3."""
+    assert NPM.lock_satisfies("^0", "0.5.2") is True
+    assert NPM.lock_satisfies("^0", "1.0.0") is False
+    assert NPM.lock_satisfies("^0.0", "0.0.9") is True
+    assert NPM.lock_satisfies("^0.0", "0.1.0") is False
+    assert NPM.lock_satisfies("^0.0.3", "0.0.3") is True
+    assert NPM.lock_satisfies("^0.0.3", "0.0.4") is False
+
+
+def test_a_git_dependency_with_no_fragment_is_still_mutable():
+    """No fragment means the default branch, which moves under the project."""
+    packages = NPM.read(
+        "package.json",
+        json.dumps({"dependencies": {"tool": "git+https://github.com/someone/tool.git"}}),
+    )
+    assert packages["tool"].mutable_ref is True
+
+
+def test_a_registry_dependency_carries_no_reference():
+    packages = NPM.read("package.json", json.dumps({"dependencies": {"lodash": "^4.17.21"}}))
+    assert packages["lodash"].ref == ""
+    assert packages["lodash"].mutable_ref is False
+
+
+def test_a_renamed_manifest_is_read_from_its_previous_path(repo: Path):
+    """Reading the new name at the base would report every dependency as added."""
+    (repo / "app").mkdir()
+    (repo / "pyproject.toml").write_text(PYPROJECT)
+    (repo / "uv.lock").write_text(UV_LOCK)
+    _commit(repo)
+    _git(repo, "mv", "pyproject.toml", "app/pyproject.toml")
+    _git(repo, "mv", "uv.lock", "app/uv.lock")
+
+    report = _analyse(repo)
+    assert report is not None
+    assert [c.name for c in report.changes] == [], "a pure rename moves no dependency"
+
+
+def test_a_lockfile_larger_than_the_limit_is_not_read(repo: Path, monkeypatch):
+    """The size is checked before the blob is buffered, not after."""
+    from roborak.supply import revision
+
+    monkeypatch.setattr(revision, "MAX_BYTES", 10)
+    (repo / "uv.lock").write_text(UV_LOCK)
+    _commit(repo)
+    assert revision.read_at(repo, "HEAD", "uv.lock") is None
+    monkeypatch.setattr(revision, "MAX_BYTES", 8 * 1024 * 1024)
+    assert revision.read_at(repo, "HEAD", "uv.lock") is not None
+
+
+def test_osv_scanner_names_its_scan_source_subcommand(tmp_path: Path):
+    """`--lockfile` is an argument to `scan source`, not to the bare binary."""
+    run = OsvScannerAdapter().build("osv-scanner", ["package-lock.json"], tmp_path)
+    assert run.command[:4] == ["osv-scanner", "scan", "source", "--format"]
+    assert run.command[-2:] == ["--lockfile", "package-lock.json"]
+
+
+def test_an_osv_absolute_path_survives_for_the_runner_to_relativise(tmp_path: Path):
+    """`lstrip("/")` would leave a relative path that resolves against the cwd."""
+    findings = OsvScannerAdapter().parse(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "source": {"path": f"{tmp_path}/package-lock.json"},
+                        "packages": [
+                            {
+                                "package": {"name": "lodash", "version": "4.17.20"},
+                                "vulnerabilities": [{"id": "OSV-1", "summary": "Known issue"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        "",
+        1,
+    )
+    assert findings[0].file == f"{tmp_path}/package-lock.json"
+
+    runner = StaticRunner(repo=tmp_path, config=StaticConfig(), adapters=[])
+    assert runner._relativise(findings[0]).file == "package-lock.json"
+
+
+def test_a_note_does_not_lowercase_a_case_sensitive_ref():
+    """`capitalize()` would rewrite `refs/heads/Main` as `refs/heads/main`."""
+    packages = NPM.read(
+        "package.json",
+        json.dumps({"dependencies": {"tool": "git+https://github.com/someone/tool.git#Feature-X"}}),
+    )
+    from roborak.supply.delta import compare
+
+    change = next(c for c in compare("npm", {}, packages) if c.name == "tool")
+    assert "`Feature-X`" in change.note
+    assert change.note[0].isupper()

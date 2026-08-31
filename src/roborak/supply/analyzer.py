@@ -64,6 +64,16 @@ is the difference between "we support that and found nothing" and "nobody looked
 and the second is what a reader needs to be told."""
 
 
+def is_supply_asset(path: str) -> bool:
+    """Whether this stage would look at ``path`` at all.
+
+    The same two rules ``_assets`` applies, exposed so a caller that filters files
+    before the stage runs -- the directory source, which drops ``ignore_paths``
+    matches while it walks -- can keep the ones this stage still needs.
+    """
+    return classify(path) is not None or path.rsplit("/", 1)[-1] in _KNOWN_LOCK_NAMES
+
+
 def analyse(
     changeset: ChangeSet,
     repo: Path,
@@ -182,9 +192,13 @@ def _analyse_dependencies(
         eco = ecosystem_for(asset.path)
         if eco is None:
             continue
-        old_text = read_at(repo, base, asset.path, timeout=config.timeout_seconds)
-        new_text = read_working_tree(repo, asset.path)
         changed_file = changeset.file_by_path(asset.path)
+        # A rename means the old side lives under a different name at the base,
+        # and reading the new name there would report every dependency in the
+        # file as added.
+        old_path = (changed_file.previous_path if changed_file else None) or asset.path
+        old_text = read_at(repo, base, old_path, timeout=config.timeout_seconds)
+        new_text = read_working_tree(repo, asset.path)
         deleted = changed_file is not None and changed_file.change_type == "deleted"
         if new_text is None and head and not deleted:
             new_text = read_at(repo, head, asset.path, timeout=config.timeout_seconds)

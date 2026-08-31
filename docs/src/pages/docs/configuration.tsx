@@ -277,7 +277,7 @@ export default function Configuration() {
           },
           {
             eco: "Python",
-            manifests: "pyproject.toml, requirements*.txt, setup.cfg",
+            manifests: "pyproject.toml, requirements*.txt",
             locks: "uv.lock, poetry.lock, pdm.lock",
           },
           { eco: "Go", manifests: "go.mod", locks: "go.sum" },

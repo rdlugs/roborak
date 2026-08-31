@@ -77,17 +77,19 @@ export default function HowItWorks() {
       </P>
       <Ul>
         <Li>
-          Both sides are read whole from git and compared, so a reformat that moves every line
-          produces no changes at all and the old side is read at the merge base, so somebody
-          else&apos;s bump on the base branch is not billed to this change.
+          Both files are parsed whole and compared, so a reformat that moves every line produces
+          no changes at all. The old side is read at the merge base, so somebody else&apos;s bump
+          on the base branch is not billed to this change; the local head side is read from the
+          working tree, so an uncommitted change is covered too.
         </Li>
         <Li>
           Changes to CI workflows, Dockerfiles and Terraform turn on review checklists written for
           those trust boundaries, gated so an ordinary code change pays for none of them.
         </Li>
         <Li>
-          An ecosystem with no parser, and a scanner that is not installed, are <em>named</em> in
-          the report a clean section that nobody could check must not read like a checked one.
+          A recognised lockfile with no parser, and a scanner that is not installed, are{" "}
+          <em>named</em> in the report a clean section that nobody could check must not read
+          like a checked one.
         </Li>
       </Ul>
       <P>

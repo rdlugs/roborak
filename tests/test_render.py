@@ -32,7 +32,7 @@ from roborak.core.models import (
     ReviewRole,
     Walkthrough,
 )
-from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
+from roborak.core.severity import SEVERITY_LABEL, Category, Effort, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only, terminal
 
@@ -1424,3 +1424,22 @@ def test_json_carries_the_delta_for_an_agent():
     assert payload["ecosystems"] == ["npm"]
     assert payload["changes"][0]["kind"] == "source_changed"
     assert payload["changes"][0]["new_source"] == "https://evil.example.com/lodash.tgz"
+
+
+def test_the_markdown_severity_table_counts_what_the_verdict_counts():
+    """The table and the verdict line sit in one report; they must agree.
+
+    Scanner findings reach the report through the supply-chain section rather than
+    a bucket, so counting the buckets would print a smaller total than the gate.
+    """
+    result = make_result()
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+
+    rendered = markdown.render(result)
+    total = len(result.all_findings())
+
+    assert f"### {total} findings" in rendered
+    assert f"### {total - 1} findings" not in rendered
+    for severity, count in result.counts_by_severity.items():
+        if count:
+            assert f"| {SEVERITY_LABEL[severity]} | {count} |" in rendered

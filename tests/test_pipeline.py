@@ -1069,6 +1069,25 @@ def test_the_delta_is_reserved_out_of_the_diff_budget(tmp_path):
     assert baseline - reserved == config.supply_chain.token_budget
 
 
+def test_a_nothing_relevant_report_reserves_nothing(tmp_path):
+    """`for_prompt` drops this report, so the section it would pay for is never
+    rendered and the diff must keep the budget."""
+    from roborak.core.models import SupplyChainReport, SupplyChainStatus
+
+    changeset = make_changeset()
+    config = Config()
+    reviewer = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="findings: []"),
+        supply_chain=SupplyChainReport(status=SupplyChainStatus.NOTHING_RELEVANT),
+    )
+    baseline = Reviewer(
+        config=config, repo=tmp_path, llm=StubLLM(reply="findings: []")
+    )._diff_budget(changeset)
+    assert reviewer._diff_budget(changeset) == baseline
+
+
 def test_feed_to_llm_off_reserves_nothing(tmp_path):
     changeset = make_changeset()
     config = Config()

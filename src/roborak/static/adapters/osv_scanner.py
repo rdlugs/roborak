@@ -40,7 +40,7 @@ class OsvScannerAdapter(Adapter):
     )
 
     def build(self, executable: str, files: list[str], repo: Path) -> ToolRun:
-        command = [executable, "--format", "json"]
+        command = [executable, "scan", "source", "--format", "json"]
         for path in files:
             command += ["--lockfile", path]
         return ToolRun(command=command, files=files)
@@ -79,7 +79,7 @@ class OsvScannerAdapter(Adapter):
                     # runner narrows findings to changed lines -- so this anchors
                     # to line 1 and reaches the reader through the report rather
                     # than as an inline comment.
-                    file=path.lstrip("/"),
+                    file=path,
                     start_line=1,
                     end_line=1,
                     severity=Severity.MAJOR,

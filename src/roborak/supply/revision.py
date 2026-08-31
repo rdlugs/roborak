@@ -30,6 +30,8 @@ def read_at(repo: Path, ref: str, path: str, *, timeout: int = 10) -> str | None
     """
     if not ref:
         return None
+    if not _within_limit(repo, ref, path, timeout=timeout):
+        return None
     try:
         shown = subprocess.run(
             ["git", "show", f"{ref}:{path}"],
@@ -47,6 +49,36 @@ def read_at(repo: Path, ref: str, path: str, *, timeout: int = 10) -> str | None
     if shown.returncode != 0:
         return None
     return shown.stdout[:MAX_BYTES]
+
+
+def _within_limit(repo: Path, ref: str, path: str, *, timeout: int) -> bool:
+    """Whether the blob is small enough to be worth buffering.
+
+    ``git show`` would hand us the whole file before any truncation could apply,
+    so a multi-gigabyte blob would be read into memory only to be thrown away.
+    Asking git for the size first keeps the oversized case cheap; an unreadable
+    size is left to ``git show`` to report as a missing path.
+    """
+    try:
+        sized = subprocess.run(
+            ["git", "cat-file", "-s", f"{ref}:{path}"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("could not size %s at %s: %s", path, ref, exc)
+        return False
+    if sized.returncode != 0:
+        return True
+    try:
+        return int(sized.stdout.strip()) <= MAX_BYTES
+    except ValueError:
+        return True
 
 
 def read_working_tree(repo: Path, path: str) -> str | None:

@@ -163,7 +163,12 @@ def _note_for_new(package: Package) -> str:
         reasons.append(f"pinned to the mutable reference `{package.ref}`")
     if package.source and not package.integrity:
         reasons.append("resolved from a source with no checksum recorded")
-    return "; ".join(reasons).capitalize() + "." if reasons else ""
+    if not reasons:
+        return ""
+    # Not ``capitalize()``: it would lowercase the rest, and the rest can hold a
+    # case-sensitive git ref.
+    joined = "; ".join(reasons)
+    return joined[0].upper() + joined[1:] + "."
 
 
 def _note_for_source(old: Package, new: Package) -> str:

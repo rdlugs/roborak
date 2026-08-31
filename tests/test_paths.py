@@ -185,3 +185,14 @@ def test_symlinked_directories_are_not_followed(tree: Path):
     (tree / "loop").symlink_to(tree, target_is_directory=True)
     paths = {file.path for file in PathsSource(root=tree).load().files}
     assert paths == {"app/core.py", "README.md"}
+
+
+def test_a_kept_path_survives_ignore_paths(tree: Path):
+    """A lockfile is ignored for the prompt and still needed by the supply-chain stage."""
+    (tree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    changeset = PathsSource(
+        root=tree,
+        ignore_paths=list(DEFAULT_IGNORE_PATHS),
+        keep=lambda path: path == "uv.lock",
+    ).load()
+    assert changeset.file_by_path("uv.lock") is not None

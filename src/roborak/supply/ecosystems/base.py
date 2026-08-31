@@ -196,10 +196,18 @@ def _semver_token_satisfies(token: str, version: tuple[int, int, int]) -> bool |
     if operator == "^":
         if wildcard is not None:
             return None
+        # How far a caret range reaches depends on how much of the version was
+        # written: `^0` allows all of 0.x, `^0.0` only 0.0.x, and `^0.0.3` only
+        # 0.0.3 itself. Reading the components off `lower` alone would collapse
+        # all three into the narrowest.
         if lower[0] > 0:
             upper = (lower[0] + 1, 0, 0)
+        elif parts == 1:
+            upper = (1, 0, 0)
         elif lower[1] > 0:
             upper = (0, lower[1] + 1, 0)
+        elif parts == 2:
+            upper = (0, 1, 0)
         else:
             upper = (0, 0, lower[2] + 1)
         return lower <= version < upper

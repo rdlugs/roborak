@@ -168,7 +168,7 @@ def render(
     if not grouped:
         sections.append(_nothing_to_report(result))
     else:
-        sections.append(_severity_table(grouped))
+        sections.append(_severity_table(result))
         if outside := grouped.get(Bucket.OUTSIDE_DIFF):
             sections.append(_bucket_section_with_callout(outside, form=form, repo=repo, full=full))
         for bucket in _COLLAPSED:
@@ -510,8 +510,14 @@ def _nothing_to_report(result: ReviewResult) -> str:
     return "No findings. ✅"
 
 
-def _severity_table(grouped: dict[Bucket, list[Finding]]) -> str:
-    findings = [f for bucket in grouped.values() for f in bucket]
+def _severity_table(result: ReviewResult) -> str:
+    """The same population the verdict counts.
+
+    Scanner findings reach the report through the supply-chain section rather
+    than a bucket, so counting the buckets would print a total that disagrees
+    with the verdict line at the bottom of the same report.
+    """
+    findings = result.all_findings()
     counts = {severity: 0 for severity in Severity}
     for finding in findings:
         counts[finding.severity] += 1

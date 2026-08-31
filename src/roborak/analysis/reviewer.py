@@ -57,6 +57,7 @@ from roborak.llm.prompt import (
 )
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
+from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 
 log = logging.getLogger(__name__)
 
@@ -621,7 +622,11 @@ class Reviewer:
         # deliberately absent from the prompt measured above: it is capped by
         # `max_changes` before it is ever rendered, and measuring it here as well
         # as reserving it would charge the diff for it twice.
-        if self._supply_chain_for_prompt() is not None:
+        # `for_prompt` is the same call the prompt builder makes, and it drops a
+        # `nothing_relevant` report entirely -- so asking it, rather than only
+        # whether the stage ran, keeps the diff from paying for a section that
+        # renders as nothing.
+        if supply_chain_for_prompt(self._supply_chain_for_prompt()) is not None:
             reserved += self.config.supply_chain.token_budget
         return max(1, self.llm.context_budget - overhead - reserved - 200)
 

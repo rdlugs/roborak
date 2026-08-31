@@ -55,6 +55,13 @@ def _parse_pyproject(text: str) -> dict[str, Package]:
             _add_poetry_block(poetry.get("dependencies"), packages)
             dev = poetry.get("dev-dependencies")
             _add_poetry_block(dev, packages)
+            # Poetry 1.2 moved dev dependencies into named groups, so a modern
+            # file declares nothing under the legacy sections above.
+            group = poetry.get("group")
+            if isinstance(group, dict):
+                for entry in group.values():
+                    if isinstance(entry, dict):
+                        _add_poetry_block(entry.get("dependencies"), packages)
     return packages
 
 
@@ -193,7 +200,10 @@ def _normalise(name: str) -> str:
 def _version_satisfies(constraint: str, version: str) -> bool | None:
     """PEP 440 first, with Poetry's common caret/tilde ranges as a safe fallback."""
     try:
-        return Version(version) in SpecifierSet(constraint)
+        # ``prereleases=True``: the locked version is a fact, not a candidate
+        # being chosen, so an rc that a resolver already picked satisfies its
+        # constraint rather than being reported as a mismatch.
+        return SpecifierSet(constraint).contains(Version(version), prereleases=True)
     except (InvalidSpecifier, InvalidVersion):
         if constraint.lstrip().startswith(("^", "~")):
             return semver_satisfies(constraint, version)

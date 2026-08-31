@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,6 +73,12 @@ class PathsSource:
     ignore_paths: list[str] = field(default_factory=list)
     max_file_bytes: int = MAX_FILE_BYTES
     max_files: int = MAX_FILES
+    keep: Callable[[str], bool] | None = None
+    """Paths that survive ``ignore_paths``.
+
+    A lockfile is ignored for the prompt and still needed by the supply-chain
+    stage, so it is kept here and dropped later, rather than the whole of
+    ``ignore_paths`` being skipped to save it."""
 
     def load(self) -> ChangeSet:
         self._ensure_directory()
@@ -120,7 +127,9 @@ class PathsSource:
                 if path.is_symlink() or not path.is_file():
                     continue
                 relative = path.relative_to(self.root).as_posix()
-                if matches_any(relative, self.ignore_paths):
+                if matches_any(relative, self.ignore_paths) and not (
+                    self.keep is not None and self.keep(relative)
+                ):
                     log.debug("ignoring %s (matches ignore_paths)", relative)
                     continue
                 found.append(relative)

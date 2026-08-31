@@ -14,6 +14,8 @@ from roborak.supply.ecosystems.base import Ecosystem, Package, exact_version_sat
 _REQUIRE_LINE = re.compile(r"^\s*(?P<path>[^\s()]+)\s+(?P<version>v\S+)")
 _SINGLE_REQUIRE = re.compile(r"^\s*require\s+(?P<path>\S+)\s+(?P<version>v\S+)")
 _REPLACE = re.compile(r"^\s*replace\s+(?P<from>\S+)(?:\s+\S+)?\s*=>\s*(?P<to>\S+)")
+_REPLACE_ENTRY = re.compile(r"^\s*(?P<from>[^\s()]+)(?:\s+\S+)?\s*=>\s*(?P<to>\S+)")
+_INDIRECT = re.compile(r"//.*\bindirect\b")
 
 
 def parse_manifest(text: str) -> dict[str, Package]:
@@ -22,35 +24,58 @@ def parse_manifest(text: str) -> dict[str, Package]:
     ``replace`` matters more here than the version does. It redirects a module
     path to a different repository or a local directory, which is a source change
     that no version number reflects.
+
+    Both ``require`` and ``replace`` come in single-line and parenthesised block
+    forms, and go's own tooling writes the block form once there is more than one
+    entry -- so a parser that reads only the single-line form sees nothing in a
+    typical file.
     """
     packages: dict[str, Package] = {}
     in_require = False
+    in_replace = False
     for raw in text.splitlines():
+        # ``// indirect`` is a comment carrying the one fact that separates a
+        # declared dependency from an inherited one, so it is read before
+        # comments are stripped.
+        direct = not _INDIRECT.search(raw)
         line = raw.split("//", 1)[0].rstrip()
         if not line.strip():
             continue
         if line.strip().startswith("require ("):
             in_require = True
             continue
-        if in_require and line.strip() == ")":
-            in_require = False
+        if line.strip().startswith("replace ("):
+            in_replace = True
+            continue
+        if (in_require or in_replace) and line.strip() == ")":
+            in_require = in_replace = False
             continue
         if in_require:
             if match := _REQUIRE_LINE.match(line):
-                packages[match.group("path")] = Package(version=match.group("version"), direct=True)
+                packages[match.group("path")] = Package(
+                    version=match.group("version"), direct=direct
+                )
+            continue
+        if in_replace:
+            if entry := _REPLACE_ENTRY.match(line):
+                _apply_replace(packages, entry.group("from"), entry.group("to"))
             continue
         if match := _SINGLE_REQUIRE.match(line):
-            packages[match.group("path")] = Package(version=match.group("version"), direct=True)
+            packages[match.group("path")] = Package(version=match.group("version"), direct=direct)
             continue
         if replaced := _REPLACE.match(line):
-            path = replaced.group("from")
-            existing = packages.get(path, Package(direct=True))
-            packages[path] = Package(
-                version=existing.version,
-                source=replaced.group("to"),
-                direct=True,
-            )
+            _apply_replace(packages, replaced.group("from"), replaced.group("to"))
     return packages
+
+
+def _apply_replace(packages: dict[str, Package], path: str, target: str) -> None:
+    """Point an already-required module at its replacement source."""
+    existing = packages.get(path, Package(direct=True))
+    packages[path] = Package(
+        version=existing.version,
+        source=target,
+        direct=existing.direct,
+    )
 
 
 def parse_lock(text: str) -> dict[str, Package]:

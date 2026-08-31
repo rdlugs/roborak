@@ -44,10 +44,13 @@ DEFAULT_IGNORE_PATHS = [
     "**/__pycache__/**",
     "**/*.snap",
     "**/package-lock.json",
+    "**/npm-shrinkwrap.json",
     "**/yarn.lock",
+    "**/pnpm-lock.yaml",
     "**/poetry.lock",
     "**/uv.lock",
     "**/composer.lock",
+    "**/go.sum",
 ]
 
 

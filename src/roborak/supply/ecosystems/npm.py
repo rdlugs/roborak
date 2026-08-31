@@ -238,7 +238,13 @@ def _git_ref(spec: str) -> str:
     """
     if not spec or not (_GIT_SPEC.match(spec) or ".git" in spec):
         return ""
-    return spec.rpartition("#")[2] if "#" in spec else ""
+    if "#" in spec:
+        return spec.rpartition("#")[2]
+    # A git spec with no fragment installs the default branch, which is exactly
+    # the moving target this stage exists to flag. Returning "" would make it
+    # indistinguishable from a registry dependency, so the implied reference is
+    # named instead.
+    return "HEAD"
 
 
 NPM = Ecosystem(

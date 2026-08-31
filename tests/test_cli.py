@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from roborak import __version__
 from roborak.cli.main import app
-from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
+from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, _load_paths
 from roborak.publish.base import RemoteState
 
 runner = CliRunner()
@@ -115,6 +115,37 @@ def test_plain_directory_supply_analysis_keeps_lockfiles_out_of_review_context(t
     assets = {asset["path"] for asset in payload["supply_chain"]["assets"]}
     assert "package-lock.json" in assets
     assert "package-lock.json" not in payload["coverage"]["reviewed_files"]
+
+
+def test_ignored_noise_does_not_spend_a_plain_directory_review_budget(tmp_path: Path):
+    """`ignore_paths` is applied while walking, so ignored files cannot fill `max_files`.
+
+    A lockfile is exempt: the supply-chain stage still reads it, and it is dropped
+    again before anything reaches the prompt.
+    """
+    from rich.console import Console
+
+    from roborak.core.config import DEFAULT_IGNORE_PATHS
+
+    plain = tmp_path / "plain"
+    (plain / "node_modules").mkdir(parents=True)
+    (plain / "app.py").write_text("def f():\n    return 1\n")
+    (plain / "bundle.min.js").write_text("var a=1;\n")
+    (plain / "uv.lock").write_text("version = 1\n")
+
+    changeset = _load_paths(
+        Console(),
+        plain,
+        ignore_paths=list(DEFAULT_IGNORE_PATHS),
+        base=None,
+        committed=False,
+        uncommitted=False,
+        include_untracked=False,
+        quiet=True,
+    )
+    paths = {file.path for file in changeset.files}
+    assert "bundle.min.js" not in paths
+    assert paths == {"app.py", "uv.lock"}
 
 
 def test_a_missing_directory_is_reported_as_a_source_error(tmp_path: Path):
