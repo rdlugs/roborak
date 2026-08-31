@@ -76,6 +76,7 @@ NITPICK = "🧹"
 REQUIREMENT_GAP = "📋"
 
 # Sections of the report, in the order they appear.
+WALKTHROUGH = "🗂️"
 FLOW = "🗺️"
 IMPACT = "🧭"
 VERIFICATION = "🔬"

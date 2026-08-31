@@ -10,6 +10,24 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+### Changed
+
+- **The walkthrough table and the pre-merge check fold away in a published
+  report.** Every other detailed section already collapsed — flow, impact, supply
+  chain, verification, each finding bucket, the review-info tree — and these two
+  did not, which left the two things whose height is set by something other than
+  the review sitting open above and below the findings: a walkthrough table grows
+  with the number of files changed, and the verdict block sat at full height
+  between the last finding and the footer. The table now folds under a
+  `🗂️ Walkthrough (N files)` summary, with the overview prose left open above it,
+  because that paragraph is the description of the change rather than a detail of
+  it. The pre-merge check folds under its own verdict title, so a reader who never
+  expands it still sees pass, blocked or inconclusive; the callout, the severity
+  floor and the counts move inside. Terminal output is unchanged — both render as
+  ordinary headings, since `rich.Markdown` drops HTML and nothing there can unfold
+  a section — and `describe`, which judges nothing, still omits the pre-merge check
+  entirely.
+
 ## [0.6.0] - 2026-08-31
 
 ### Added
