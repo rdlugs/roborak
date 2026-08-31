@@ -26,6 +26,7 @@ from roborak.core.models import (
     SupplyChainReport,
     VerificationReport,
 )
+from roborak.core.severity import Category
 from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 from roborak.verify.runner import for_prompt as verification_for_prompt
 
@@ -147,8 +148,11 @@ def build_review_prompt(
     impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
     supply = supply_chain_for_prompt(supply_chain)
     # Computed from the changeset this pass actually shows the model, so a chunk
-    # is asked only about the surfaces its own files cross.
-    operational = operational_signals(changeset)
+    # is asked only about the surfaces its own files cross. The section asks for
+    # `reliability` findings, so it has nothing to ask when that category is off.
+    operational = (
+        operational_signals(changeset) if Category.RELIABILITY in config.review.categories else []
+    )
     system = _system(
         "review_system.jinja2",
         categories=[c.value for c in config.review.categories],

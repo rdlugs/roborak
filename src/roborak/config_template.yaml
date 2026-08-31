@@ -43,8 +43,8 @@ forge:
 review:
   # reliability covers deployment and runtime failure in otherwise correct code --
   # mixed-version compatibility, migration sequencing, retry idempotency, flag
-  # defaults. It is relevance-gated: a change touching none of those surfaces is
-  # never asked about rollout.
+  # defaults, cache staleness. It is relevance-gated: a change touching none of
+  # those surfaces is never asked about rollout.
   categories: [security, bug, performance, logic, reliability]
   # Findings below this are not reported.
   severity_floor: minor

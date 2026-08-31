@@ -199,10 +199,11 @@ policy off.
 locally correct and still fail on rollout: a field required before the version that writes it
 ships, a migration that locks a hot table or cannot be rolled back, a retry wrapped around a
 call that is not idempotent, a feature flag defaulting on where it is unset, a connection pool
-raised past what the database serves. The checklist is gated on what the change actually
-touches — migrations, deploy configuration, public contracts, jobs and queues, retries and
-timeouts, flags, limits, and logging or metrics that a change removes. A diff crossing none of
-those surfaces is never asked about rollout, and "add monitoring" is not a finding: an
+raised past what the database serves, a cache key that stops separating one tenant from the
+next. The checklist is gated on what the change actually touches — migrations, deploy
+configuration, public contracts, jobs and queues, retries and timeouts, flags, caches, limits,
+and logging or metrics that a change removes. A diff crossing none of those surfaces is never
+asked about rollout, and "add monitoring" is not a finding: an
 operational label still has to name the deployment or runtime state that breaks.
 
 **As a forge status.** A review posted with `--post` also sets a commit status on the

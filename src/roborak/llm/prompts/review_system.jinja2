@@ -183,14 +183,26 @@ states, that turning it off actually restores the previous behaviour rather than
 leaving migrated data or a half-written record behind, and whether a flag being
 removed here still has live consumers.
 {% endif %}
+{% if "cache" in operational %}
+
+**Caches.** Check what a stale entry does: which write invalidates it, whether the
+invalidation covers every path that changes the value, and what a reader sees in the
+window before it lands. Check the key -- whether it separates everything the value
+depends on, tenant and user and version included, so one caller cannot be served
+another's answer, and whether a changed key shape means the old and new versions
+read past each other during a rolling deploy. Check what happens when the cache is
+empty or gone: whether a cold start, an eviction or a mass expiry sends every miss
+to the origin at once, and whether the origin survives it. A changed TTL is a change
+to both staleness and origin load; say which way it moved.
+{% endif %}
 {% if "resource_limits" in operational or "observability" in operational %}
 
 **Limits, pools and signal.** Check a changed limit against what it now permits: a
 connection pool a database cannot serve, a concurrency or rate limit raised past a
-downstream's capacity, a cache TTL or size that shifts load onto the origin, a
-replica count that changes how much each instance holds. Where logging, metrics or
-alerting on a path is removed or narrowed, check whether it is the signal a rollout
-of this change would be watched by, and say what would go unnoticed.
+downstream's capacity, a replica count that changes how much each instance holds.
+Where logging, metrics or alerting on a path is removed or narrowed, check whether it
+is the signal a rollout of this change would be watched by, and say what would go
+unnoticed.
 {% endif %}
 {% endif %}
 {% if check_requirements %}

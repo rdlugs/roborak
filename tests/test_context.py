@@ -871,6 +871,7 @@ def _op_changeset(*files: tuple[str, str]) -> ChangeSet:
 
 
 def test_an_ordinary_change_crosses_no_operational_surface():
+    """A change that deploys like the last one pays nothing for the checklist."""
     changeset = _op_changeset(("src/app/util.py", "@@\n-total = a + b\n+total = a - b\n"))
     assert operational_signals(changeset) == []
 
@@ -891,13 +892,18 @@ def test_an_ordinary_change_crosses_no_operational_surface():
         ("src/app/gate.py", "@@\n+    if feature_flags['new_checkout']:\n", "feature_flag"),
         ("app/config/flags.py", "@@\n+FLAGS = {'new_checkout': True}\n", "feature_flag"),
         ("src/app/db.py", "@@\n-    pool_size = 5\n+    pool_size = 50\n", "resource_limits"),
+        ("app/cache/orders.py", "@@\n+    return f'order:{order.id}'\n", "cache"),
+        ("src/app/read.py", "@@\n+    cached = cache.get(cache_key(user))\n", "cache"),
+        ("src/app/write.py", "@@\n-    invalidate(f'profile:{user.id}')\n", "cache"),
     ],
 )
 def test_each_operational_surface_is_detected(path, body, expected):
+    """One representative change per surface, by path and by changed content."""
     assert expected in operational_signals(_op_changeset((path, body)))
 
 
 def test_signals_are_sorted_and_deduplicated():
+    """The template branches on membership, so the list must be stable and unique."""
     changeset = _op_changeset(
         ("migrations/001_init.sql", "@@\n+CREATE TABLE users (id INT);\n"),
         ("migrations/002_more.sql", "@@\n+CREATE TABLE orders (id INT);\n"),
@@ -921,5 +927,35 @@ def test_an_added_log_line_alone_is_not_an_observability_signal():
 
 
 def test_removed_logging_is_an_observability_signal():
+    """The rollout of this change would have been watched by the line it deletes."""
     changeset = _op_changeset(("src/app/util.py", "@@\n-    logger.warning('retrying')\n"))
     assert "observability" in operational_signals(changeset)
+
+
+def test_a_plain_sql_file_is_not_a_migration():
+    """Queries and fixtures live in .sql too; only the name makes one a migration."""
+    changeset = _op_changeset(("app/queries/top_customers.sql", "@@\n+SELECT id FROM users;\n"))
+    assert operational_signals(changeset) == []
+
+
+def test_removed_markup_is_not_an_observability_signal():
+    """`span` is a tag far more often than a trace."""
+    changeset = _op_changeset(("web/templates/card.html", "@@\n-  <span>{{ name }}</span>\n"))
+    assert operational_signals(changeset) == []
+
+
+def test_removed_tracing_is_an_observability_signal():
+    changeset = _op_changeset(("src/app/api.py", "@@\n-    with tracer.start_span('fetch'):\n"))
+    assert "observability" in operational_signals(changeset)
+
+
+def test_a_cache_change_is_not_a_resource_limit_change():
+    """Staleness and invalidation are a different failure than a pool sized wrong."""
+    changeset = _op_changeset(("src/app/read.py", "@@\n+    cache.set(key, value, ttl=60)\n"))
+    assert operational_signals(changeset) == ["cache"]
+
+
+def test_a_pool_change_is_not_a_cache_change():
+    """The other direction: a limit is not evidence of caching."""
+    changeset = _op_changeset(("src/app/db.py", "@@\n-    pool_size = 5\n+    pool_size = 50\n"))
+    assert operational_signals(changeset) == ["resource_limits"]

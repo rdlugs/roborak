@@ -27,6 +27,7 @@ BACKGROUND_JOB = "background_job"
 RETRY_TIMEOUT = "retry_timeout"
 FEATURE_FLAG = "feature_flag"
 RESOURCE_LIMITS = "resource_limits"
+CACHE = "cache"
 OBSERVABILITY = "observability"
 
 # ``context.chunker`` carries overlapping path regexes, but it deliberately
@@ -35,7 +36,10 @@ OBSERVABILITY = "observability"
 # the migration one -- so these are kept separate rather than shared.
 _PATH_PATTERNS: dict[str, re.Pattern[str]] = {
     MIGRATION: re.compile(
-        r"(^|/)(migrations?|migrate|alembic|liquibase|flyway)(/|$)|\.sql$",
+        r"(^|/)(migrations?|migrate|alembic|liquibase|flyway)(/|$)"
+        # A bare .sql file is as often a query or a fixture as a migration; only
+        # one named for the schema it changes is evidence on its own.
+        r"|(^|/)[^/]*(migrat|schema)[^/]*\.sql$",
         re.IGNORECASE,
     ),
     DEPLOYMENT: re.compile(
@@ -61,6 +65,10 @@ _PATH_PATTERNS: dict[str, re.Pattern[str]] = {
         r"(^|/)(feature_?flags?|flags?|feature_?toggles?|toggles?)(/|\.[^/]+$)",
         re.IGNORECASE,
     ),
+    CACHE: re.compile(
+        r"(^|/)(caches?|caching)(/|\.[^/]+$)",
+        re.IGNORECASE,
+    ),
 }
 
 _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -82,7 +90,14 @@ _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
     RESOURCE_LIMITS: re.compile(
         r"\b(max_connections|pool_size|connection_pool|max_pool_size|replicas|"
         r"rate_limits?|max_workers|concurrency|memory_limit|cpu_limit|batch_size|"
-        r"semaphore|memcached|redis|cache_ttl|ttl)\b",
+        r"semaphore)\b",
+        re.IGNORECASE,
+    ),
+    # Kept apart from the pools and limits above: a cache fails by serving the
+    # wrong answer or by not being there, which the limits checklist never asks.
+    CACHE: re.compile(
+        r"\b(cache|caches|cached|caching|cache_key|cache_ttl|invalidate|invalidation|"
+        r"memcache|memcached|redis|lru_cache|memoize|memoized|ttl)\b",
         re.IGNORECASE,
     ),
 }
@@ -93,7 +108,8 @@ _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
 _REMOVED_ONLY_PATTERNS: dict[str, re.Pattern[str]] = {
     OBSERVABILITY: re.compile(
         r"\b(logger|logging|log_|metrics?|prometheus|statsd|datadog|opentelemetry|otel|"
-        r"tracer|tracing|span|sentry|alerts?)\b",
+        # `span` alone is markup far more often than tracing.
+        r"tracer|tracing|start_span|start_as_current_span|sentry|alerts?)\b",
         re.IGNORECASE,
     ),
 }

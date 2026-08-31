@@ -144,11 +144,12 @@ export default function Configuration() {
         <Code>reliability</Code> is for code that is locally correct and still fails on rollout: a
         field required before the version that writes it ships, a migration that locks a hot table
         or cannot be rolled back, a retry around a call that is not idempotent, a feature flag
-        defaulting on where it is unset, a connection pool raised past what the database serves.
-        Its checklist is gated on what the change touches &mdash; migrations, deploy configuration,
-        public contracts, jobs and queues, retries and timeouts, flags, limits, and logging or
-        metrics a change removes &mdash; so a diff crossing none of those surfaces is never asked
-        about rollout, and &ldquo;add monitoring&rdquo; is not a finding.
+        defaulting on where it is unset, a connection pool raised past what the database serves, a
+        cache key that stops separating one tenant from the next. Its checklist is gated on what the
+        change touches &mdash; migrations, deploy configuration, public contracts, jobs and queues,
+        retries and timeouts, flags, caches, limits, and logging or metrics a change removes &mdash;
+        so a diff crossing none of those surfaces is never asked about rollout, and &ldquo;add
+        monitoring&rdquo; is not a finding.
       </P>
 
       <H3>static</H3>
