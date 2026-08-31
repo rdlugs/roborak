@@ -113,6 +113,7 @@ class PathsSource:
             raise SourceError(f"Could not scan {error.filename or self.root}: {error}") from error
 
         found: list[str] = []
+        retained: list[str] = []
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=raise_walk_error
         ):
@@ -127,9 +128,14 @@ class PathsSource:
                 if path.is_symlink() or not path.is_file():
                     continue
                 relative = path.relative_to(self.root).as_posix()
-                if matches_any(relative, self.ignore_paths) and not (
-                    self.keep is not None and self.keep(relative)
-                ):
+                if matches_any(relative, self.ignore_paths):
+                    if self.keep is not None and self.keep(relative):
+                        # Kept for the supply-chain stage alone, so it is held
+                        # apart from the source-file budget: a lockfile that a
+                        # vast tree pushed past `max_files` would take the whole
+                        # dependency analysis with it.
+                        retained.append(relative)
+                        continue
                     log.debug("ignoring %s (matches ignore_paths)", relative)
                     continue
                 found.append(relative)
@@ -139,7 +145,7 @@ class PathsSource:
             log.warning("%d files found; reviewing the first %d", len(found), self.max_files)
             changeset.omitted_files.extend(found[self.max_files :])
             found = found[: self.max_files]
-        return found
+        return sorted(found + retained)
 
     def _read(self, relative: str, changeset: ChangeSet) -> ChangedFile | None:
         """One file as a whole-file addition, or a marker for why it is not reviewable."""

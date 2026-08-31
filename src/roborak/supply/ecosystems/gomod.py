@@ -52,20 +52,35 @@ def parse_manifest(text: str) -> dict[str, Package]:
             continue
         if in_require:
             if match := _REQUIRE_LINE.match(line):
-                packages[match.group("path")] = Package(
-                    version=match.group("version"), direct=direct
-                )
+                _record_require(packages, match.group("path"), match.group("version"), direct)
             continue
         if in_replace:
             if entry := _REPLACE_ENTRY.match(line):
                 _apply_replace(packages, entry.group("from"), entry.group("to"))
             continue
         if match := _SINGLE_REQUIRE.match(line):
-            packages[match.group("path")] = Package(version=match.group("version"), direct=direct)
+            _record_require(packages, match.group("path"), match.group("version"), direct)
             continue
         if replaced := _REPLACE.match(line):
             _apply_replace(packages, replaced.group("from"), replaced.group("to"))
     return packages
+
+
+def _record_require(
+    packages: dict[str, Package], path: str, version: str, direct: bool
+) -> None:
+    """Record a required module without discarding a replacement already seen.
+
+    ``replace`` may be written above ``require`` -- go does not fix the order --
+    so the require line updates the entry rather than replacing it, keeping the
+    redirect ``_apply_replace`` recorded.
+    """
+    existing = packages.get(path)
+    packages[path] = Package(
+        version=version,
+        source=existing.source if existing is not None else "",
+        direct=direct,
+    )
 
 
 def _apply_replace(packages: dict[str, Package], path: str, target: str) -> None:
