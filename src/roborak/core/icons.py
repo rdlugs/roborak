@@ -56,6 +56,7 @@ CATEGORY_LABEL: dict[Category, str] = {
     Category.BUG: "🎯 Functional Correctness",
     Category.PERFORMANCE: "⏱️ Performance",
     Category.LOGIC: "🧠 Logic",
+    Category.RELIABILITY: "🚦 Reliability & Operations",
     Category.MAINTAINABILITY: "📐 Maintainability & Code Quality",
     Category.TESTING: "🧪 Testing",
     Category.STYLE: "🎨 Style",

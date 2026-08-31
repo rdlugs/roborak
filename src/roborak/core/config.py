@@ -84,6 +84,7 @@ class ReviewConfig(ConfigModel):
             Category.BUG,
             Category.PERFORMANCE,
             Category.LOGIC,
+            Category.RELIABILITY,
         ]
     )
     severity_floor: Severity = Severity.MINOR

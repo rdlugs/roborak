@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from roborak.core.icons import SEVERITY_LABEL
+from roborak.core.icons import CATEGORY_LABEL, SEVERITY_LABEL
 from roborak.core.models import (
     AssetKind,
     BoundaryKind,
@@ -1620,3 +1620,10 @@ def test_the_markdown_severity_table_counts_what_the_verdict_counts():
     for severity, count in result.counts_by_severity.items():
         if count:
             assert f"| {SEVERITY_LABEL[severity]} | {count} |" in rendered
+
+
+def test_every_category_has_a_label():
+    """The renderers index ``CATEGORY_LABEL`` directly, so a gap is a KeyError at
+    render time rather than a test failure -- which is exactly when a new category
+    is added and nobody is looking."""
+    assert set(CATEGORY_LABEL) == set(Category)

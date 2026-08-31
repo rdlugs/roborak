@@ -41,7 +41,11 @@ forge:
   max_recovered_file_bytes: 1048576
 
 review:
-  categories: [security, bug, performance, logic]
+  # reliability covers deployment and runtime failure in otherwise correct code --
+  # mixed-version compatibility, migration sequencing, retry idempotency, flag
+  # defaults. It is relevance-gated: a change touching none of those surfaces is
+  # never asked about rollout.
+  categories: [security, bug, performance, logic, reliability]
   # Findings below this are not reported.
   severity_floor: minor
   # The floor the pre-merge verdict is judged against when --fail-on is not given.

@@ -195,6 +195,16 @@ is the model grading its own homework, and it is not grounds to fail a build. St
 findings are exempt, because a tool ran. Set `review.require_evidence: false` to turn the
 policy off.
 
+**Deployment and runtime risk.** The `reliability` category covers the defects that are
+locally correct and still fail on rollout: a field required before the version that writes it
+ships, a migration that locks a hot table or cannot be rolled back, a retry wrapped around a
+call that is not idempotent, a feature flag defaulting on where it is unset, a connection pool
+raised past what the database serves. The checklist is gated on what the change actually
+touches — migrations, deploy configuration, public contracts, jobs and queues, retries and
+timeouts, flags, limits, and logging or metrics that a change removes. A diff crossing none of
+those surfaces is never asked about rollout, and "add monitoring" is not a finding: an
+operational label still has to name the deployment or runtime state that breaks.
+
 **As a forge status.** A review posted with `--post` also sets a commit status on the
 change's head commit, named `roborak/review`, so branch protection and approval rules can
 gate on it. Re-running a review replaces that status rather than stacking another. Pass
@@ -438,7 +448,7 @@ llm:
   temperature: 0.2
 
 review:
-  categories: [security, bug, performance, logic]
+  categories: [security, bug, performance, logic, reliability]
   severity_floor: minor
   max_findings: 25
   committable_suggestions: true

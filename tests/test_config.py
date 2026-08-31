@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from roborak.core.config import Config, load_config
+from roborak.core.config import Config, ReviewConfig, load_config
 from roborak.core.severity import Category, Severity
 
 
@@ -46,6 +46,16 @@ def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
     assert config.review.severity_floor is Severity.MAJOR
     assert config.review.categories == [Category.SECURITY]
     assert config.ignore_paths == ["**/*.generated.ts"]
+
+
+def test_reliability_is_a_configurable_category(tmp_path):
+    (tmp_path / ".roborak.yaml").write_text("review:\n  categories: [bug, reliability]\n")
+    config = load_config(tmp_path)
+    assert config.review.categories == [Category.BUG, Category.RELIABILITY]
+
+
+def test_reliability_is_reviewed_by_default():
+    assert Category.RELIABILITY in ReviewConfig().categories
 
 
 def test_ci_ignores_working_tree_config_but_accepts_explicit_config(tmp_path: Path, monkeypatch):

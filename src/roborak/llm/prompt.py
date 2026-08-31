@@ -14,6 +14,7 @@ from roborak.context.chunker import ContractContext
 from roborak.context.compressor import MAX_HUNK_LINES
 from roborak.context.diff import render_hunk_with_line_numbers
 from roborak.context.impact import for_prompt
+from roborak.context.operational import operational_signals
 from roborak.core.config import Config
 from roborak.core.models import (
     ChangedFile,
@@ -145,6 +146,9 @@ def build_review_prompt(
     """The system and user halves of one review pass, with every untrusted field already escaped."""
     impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
     supply = supply_chain_for_prompt(supply_chain)
+    # Computed from the changeset this pass actually shows the model, so a chunk
+    # is asked only about the surfaces its own files cross.
+    operational = operational_signals(changeset)
     system = _system(
         "review_system.jinja2",
         categories=[c.value for c in config.review.categories],
@@ -156,6 +160,7 @@ def build_review_prompt(
         # Gated on the boundaries this change actually crosses, not on the stage
         # having run. A Terraform-only diff never pays for the npm checklist.
         supply_chain=supply["kinds"] if supply else [],
+        operational=operational,
         check_requirements=issue is not None
         and config.review.check_requirements
         and not collect_reconciliation_evidence,

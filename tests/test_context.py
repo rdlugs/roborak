@@ -15,6 +15,7 @@ from roborak.context.chunker import (
     plan_chunks,
 )
 from roborak.context.diff import parse_diff
+from roborak.context.operational import operational_signals
 from roborak.core.models import (
     ChangedFile,
     ChangeSet,
@@ -854,3 +855,71 @@ def test_a_contract_is_not_carried_into_a_pass_still_reviewing_it(tmp_path):
 
     assert len(both) > 1, "the contract should span several passes for this to mean anything"
     assert not any(both)
+
+
+def _op_changeset(*files: tuple[str, str]) -> ChangeSet:
+    """A changeset whose hunks carry raw diff bodies, markers and all."""
+    return ChangeSet(
+        files=[
+            ChangedFile(
+                path=path,
+                hunks=[Hunk(old_start=1, old_lines=1, new_start=1, new_lines=1, content=body)],
+            )
+            for path, body in files
+        ]
+    )
+
+
+def test_an_ordinary_change_crosses_no_operational_surface():
+    changeset = _op_changeset(("src/app/util.py", "@@\n-total = a + b\n+total = a - b\n"))
+    assert operational_signals(changeset) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "expected"),
+    [
+        ("migrations/003_add_email.sql", "@@\n+ALTER TABLE users ADD email TEXT;\n", "migration"),
+        ("db/schema.sql", "@@\n+CREATE INDEX idx ON users (email);\n", "migration"),
+        ("k8s/deployment.yaml", "@@\n+  replicas: 3\n", "deployment"),
+        ("infra/main.tf", '@@\n+resource "aws_db_instance" "main" {}\n', "deployment"),
+        ("Dockerfile", "@@\n+USER app\n", "deployment"),
+        ("app/api/users.py", "@@\n+    return {'email': user.email}\n", "public_contract"),
+        ("app/serializers.py", "@@\n+    email = fields.Str(required=True)\n", "public_contract"),
+        ("src/jobs/nightly.py", "@@\n+    send_report()\n", "background_job"),
+        ("src/app/send.py", "@@\n+    deliver.apply_async(args=[order_id])\n", "background_job"),
+        ("src/app/client.py", "@@\n+    return get(url, timeout=5, retries=3)\n", "retry_timeout"),
+        ("src/app/gate.py", "@@\n+    if feature_flags['new_checkout']:\n", "feature_flag"),
+        ("app/config/flags.py", "@@\n+FLAGS = {'new_checkout': True}\n", "feature_flag"),
+        ("src/app/db.py", "@@\n-    pool_size = 5\n+    pool_size = 50\n", "resource_limits"),
+    ],
+)
+def test_each_operational_surface_is_detected(path, body, expected):
+    assert expected in operational_signals(_op_changeset((path, body)))
+
+
+def test_signals_are_sorted_and_deduplicated():
+    changeset = _op_changeset(
+        ("migrations/001_init.sql", "@@\n+CREATE TABLE users (id INT);\n"),
+        ("migrations/002_more.sql", "@@\n+CREATE TABLE orders (id INT);\n"),
+        ("k8s/web.yaml", "@@\n+  replicas: 2\n"),
+    )
+    assert operational_signals(changeset) == ["deployment", "migration", "resource_limits"]
+
+
+def test_a_keyword_in_untouched_context_is_not_a_signal():
+    """Only ``+`` and ``-`` lines are the change; the rest is what it was before."""
+    changeset = _op_changeset(
+        ("src/app/client.py", "@@\n     response = get(url, timeout=5)\n-    x = 1\n+    x = 2\n")
+    )
+    assert operational_signals(changeset) == []
+
+
+def test_an_added_log_line_alone_is_not_an_observability_signal():
+    """Losing signal is the failure mode; gaining it is not worth a checklist."""
+    changeset = _op_changeset(("src/app/util.py", "@@\n+    logger.info('done')\n"))
+    assert operational_signals(changeset) == []
+
+
+def test_removed_logging_is_an_observability_signal():
+    changeset = _op_changeset(("src/app/util.py", "@@\n-    logger.warning('retrying')\n"))
+    assert "observability" in operational_signals(changeset)
