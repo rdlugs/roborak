@@ -66,9 +66,7 @@ def parse_manifest(text: str) -> dict[str, Package]:
     return packages
 
 
-def _record_require(
-    packages: dict[str, Package], path: str, version: str, direct: bool
-) -> None:
+def _record_require(packages: dict[str, Package], path: str, version: str, direct: bool) -> None:
     """Record a required module without discarding a replacement already seen.
 
     ``replace`` may be written above ``require`` -- go does not fix the order --
