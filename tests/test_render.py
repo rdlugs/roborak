@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from roborak.core.icons import SEVERITY_LABEL
 from roborak.core.models import (
     AssetKind,
     BoundaryKind,
@@ -32,7 +33,7 @@ from roborak.core.models import (
     ReviewRole,
     Walkthrough,
 )
-from roborak.core.severity import SEVERITY_LABEL, Category, Effort, Evidence, Kind, Severity
+from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only, terminal
 
@@ -250,7 +251,7 @@ def test_markdown_structure():
     assert text.startswith("# Add session lookup")
     assert "`feature` → `main`" in text
     assert "### 2 findings" in text
-    assert "| 🔴 Critical | 1 |" in text
+    assert "| 🔴 Critical | 1 | `app/auth.py` |" in text
     assert "**SQL injection.**" in text
     assert "```suggestion" in text
     assert "test/model" not in text
@@ -260,16 +261,46 @@ def test_markdown_structure():
 def test_markdown_buckets_findings_into_collapsible_sections():
     """A review with thirty nitpicks must not bury the two findings that matter."""
     text = markdown.render(make_result())
-    assert "<summary>Actionable comments (1)</summary><blockquote>" in text
+    assert "<summary>🛠️ Actionable comments (1)</summary><blockquote>" in text
     assert "<summary>🧹 Nitpick comments (1)</summary><blockquote>" in text
     assert "<summary>app/auth.py (1)</summary><blockquote>" in text
     assert "<summary>🤖 Prompt for AI Agents</summary>\n" in text
 
 
-def test_a_finding_carries_its_badges_in_order():
+def test_a_finding_leads_with_its_severity():
+    """Severity is what a reader scans for, so it is alone on the first line and
+    in capitals; category and effort are what they read once they have stopped."""
     text = markdown.render(make_result())
-    assert "`11-13`: _🔒 Security_ | _🔴 Critical_ | _⚡ Quick win_" in text
-    assert "_📐 Maintainability & Code Quality_ | _🟡 Minor_ | _🔨 Moderate_" in text
+    assert "> **🔴 CRITICAL** · `11-13`\n>\n> _🔒 Security · ⚡ Quick win_" in text
+    assert "> **🟡 MINOR** · `4-4`\n>\n> _📐 Maintainability & Code Quality · 🔨 Moderate_" in text
+
+
+def test_a_severe_finding_is_marked_out_from_a_trivial_one():
+    """The point of the whole shape: weight has to be visible without reading.
+
+    A forge strips colour from a comment, so the only marks left are the alert a
+    critical finding is wrapped in and the glyph on its banner -- and a minor
+    finding must carry neither."""
+    result = make_result()
+    text = markdown.render(result)
+
+    critical = text[max(0, text.index("SQL injection") - 400) : text.index("SQL injection")]
+    minor = text[max(0, text.index("Unused import") - 400) : text.index("Unused import")]
+
+    assert "> [!CAUTION]" in critical
+    assert "> [!CAUTION]" not in minor
+    assert "> [!WARNING]" not in minor
+    assert "**🟡 MINOR**" in minor
+
+
+def test_every_finding_is_indented_under_its_file():
+    """Scope seen rather than inferred: a finding sits inside a quote, so the
+    file heading it belongs to is visibly above it rather than beside it."""
+    text = markdown.render(make_result())
+    body = text[text.index("<summary>app/util.py (1)</summary>") :]
+    body = body[: body.index("</blockquote></details>")]
+    quoted = [line for line in body.splitlines() if line.strip() and "<summary>" not in line]
+    assert all(line.startswith(">") for line in quoted)
 
 
 def test_each_finding_carries_an_agent_prompt_and_a_fingerprint():
@@ -402,6 +433,70 @@ def test_markdown_when_clean():
     assert text.endswith("\n")
 
 
+def test_the_severity_table_says_where_each_count_is():
+    """Counts alone are a fact a reader cannot act on; the files make the summary
+    the place they decide where to look first."""
+    result = make_result()
+    text = markdown.render(result)
+
+    assert "| Severity | Count | Where |" in text
+    assert "| 🔴 Critical | 1 | `app/auth.py` |" in text
+    assert "| 🟡 Minor | 1 | `app/util.py` |" in text
+
+
+def test_the_severity_table_stops_naming_files_and_counts_the_rest():
+    """A summary row that listed forty paths would stop being a summary."""
+    result = make_result()
+    result.findings = [
+        Finding(
+            file=f"app/mod{n}.py",
+            start_line=1,
+            end_line=1,
+            severity=Severity.MINOR,
+            category=Category.STYLE,
+            title=f"Nit {n}",
+            body="Small.",
+        )
+        for n in range(markdown.FOOTER_LIST_LIMIT + 2)
+    ]
+    row = next(
+        line for line in markdown.render(result).splitlines() if line.startswith("| 🟡 Minor |")
+    )
+    assert row.count("`app/mod") == markdown.FOOTER_LIST_LIMIT
+    assert "and 2 more" in row
+
+
+def test_the_terminal_keeps_a_rule_between_findings_in_one_file():
+    """It cannot fold a section and has no quote bar worth the indent, so the
+    boundary the published form gets from a blockquote is a rule here."""
+    result = make_result()
+    result.findings[1].file = "app/auth.py"
+    result.findings[1].kind = Kind.POTENTIAL_ISSUE
+    text = _terminal(result)
+
+    between = text[text.index("**SQL injection.**") : text.index("**Unused import.**")]
+    assert "\n\n---\n\n" in between
+
+
+def test_only_core_icons_owns_a_glyph():
+    """One vocabulary, one place. A glyph pasted into a renderer is how a report
+    ends up with two marks for the same thing and no way to notice."""
+    import re
+
+    glyphs = re.compile(
+        "[\u2139\u231a-\u231b\u23e9-\u23fa\u25aa-\u25ff\u2600-\u27bf"
+        "\u2b00-\u2bff\ufe0f\U0001f000-\U0001faff]"
+    )
+    for module in (
+        "src/roborak/render/markdown.py",
+        "src/roborak/render/terminal.py",
+        "src/roborak/core/severity.py",
+        "src/roborak/core/buckets.py",
+    ):
+        found = glyphs.findall(Path(module).read_text(encoding="utf-8"))
+        assert not found, f"{module} spells its own glyphs: {found}"
+
+
 def test_markdown_groups_a_bucket_by_file():
     """A reviewer reads one file at a time, so each file gets one section."""
     result = make_result()
@@ -417,9 +512,11 @@ def test_markdown_groups_a_bucket_by_file():
         )
     )
     text = markdown.render(result)
-    assert text.count("<summary>Actionable comments (2)</summary>") == 1
+    assert text.count("<summary>🛠️ Actionable comments (2)</summary>") == 1
     assert text.count("<summary>app/auth.py (2)</summary>") == 1
-    assert "\n\n---\n\n" in text
+    # Two findings in one file are two quotes, not one: a blank unquoted line
+    # between them is what keeps the second from continuing the first.
+    assert "\n\n> [!CAUTION]\n> **🔴 CRITICAL**" in text
 
 
 @pytest.mark.parametrize("renderer", [json_out.render, prompt_only.render, markdown.render])
@@ -690,7 +787,7 @@ def test_the_terminal_form_turns_sections_into_headings():
     assert "<details>" not in text
     assert "<summary>" not in text
     assert "<blockquote>" not in text
-    assert "## Actionable comments (1)" in text
+    assert "## 🛠️ Actionable comments (1)" in text
     assert "### app/auth.py (1)" in text
 
 
@@ -740,7 +837,7 @@ def test_a_finding_leads_with_a_path_an_editor_can_open():
     """The file is three headings up the screen; the finding has to say it again."""
     text = _terminal(make_result())
     assert "app/auth.py:11-13" in text
-    assert "##### 🔒 Security · 🔴 Critical · ⚡ Quick win · app/auth.py:11-13" in text
+    assert "##### 🔴 Critical · 🔒 Security · ⚡ Quick win · app/auth.py:11-13" in text
 
 
 def test_a_gap_leads_with_the_file_and_no_line(tmp_path: Path):
@@ -813,7 +910,7 @@ def test_no_finding_is_lost_between_the_forms():
         "**Unused import.**",
         "os is imported but never used.",
         "🔒 Security",
-        "🔴 Critical",
+        "🔴",
         "⚡ Quick win",
         "Introduces a session cache keyed by user id.",
         "user_id reaches line 11 unescaped",
@@ -821,6 +918,11 @@ def test_no_finding_is_lost_between_the_forms():
     ):
         assert fragment in published, fragment
         assert fragment in shown, fragment
+
+    # Severity is said in the register each form reads best: a banner in capitals
+    # where nothing can be coloured, the labelled heading rich can colour.
+    assert "**🔴 CRITICAL**" in published
+    assert "🔴 Critical" in shown
 
     # Said in the form each reader can use: folded where folding works, one
     # italic line where it does not.

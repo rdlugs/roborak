@@ -19,7 +19,14 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from roborak.core import icons
 from roborak.core.buckets import BUCKET_TITLE, Bucket, group
+from roborak.core.icons import (
+    CATEGORY_LABEL,
+    EFFORT_LABEL,
+    SEVERITY_GLYPH,
+    SEVERITY_LABEL,
+)
 from roborak.core.models import (
     Finding,
     ImpactMap,
@@ -31,11 +38,8 @@ from roborak.core.models import (
     VerificationStatus,
 )
 from roborak.core.severity import (
-    CATEGORY_LABEL,
-    EFFORT_LABEL,
     EVIDENCE_LABEL,
     KIND_LABEL,
-    SEVERITY_LABEL,
     SEVERITY_STYLE,
     Kind,
     Severity,
@@ -49,13 +53,6 @@ MAX_SUPPLY_CHAIN_LINES = 5
 """Dependency movements named in the terminal. The delta is already ordered most
 alarming first, so the head of it is the part worth a line here; the rest is in
 the markdown report, which has a table."""
-
-SEVERITY_ICON = {
-    Severity.CRITICAL: "✖",
-    Severity.MAJOR: "▲",
-    Severity.MINOR: "•",
-    Severity.INFO: "·",
-}
 
 
 def render(result: ReviewResult, console: Console, repo: Path) -> None:
@@ -163,7 +160,7 @@ def _render_supply_chain(report: SupplyChainReport | None, console: Console) -> 
         )
     for finding in report.scanner_findings[:MAX_SUPPLY_CHAIN_LINES]:
         console.print(
-            f"  [{SEVERITY_STYLE[finding.severity]}]{SEVERITY_ICON[finding.severity]} "
+            f"  [{SEVERITY_STYLE[finding.severity]}]{SEVERITY_GLYPH} "
             f"{finding.title}[/] [dim]({finding.file})[/]",
             highlight=False,
         )
@@ -307,7 +304,9 @@ def _render_clean(result: ReviewResult, console: Console) -> None:
         console.print("[yellow]No changes to review.[/]")
         return
     reviewed = len(changeset.files) if changeset else 0
-    console.print(f"\n[bold green]✓ No findings[/] across {reviewed} changed file(s).\n")
+    console.print(
+        f"\n[bold green]{icons.PASSED_GLYPH} No findings[/] across {reviewed} changed file(s).\n"
+    )
     _render_footer(result, console)
 
 
@@ -323,10 +322,9 @@ def _nitpick_line(finding: Finding) -> Text:
 
 def _finding_panel(finding: Finding, repo: Path) -> Panel:
     style = SEVERITY_STYLE[finding.severity]
-    icon = SEVERITY_ICON[finding.severity]
 
     heading = Text()
-    heading.append(f"{icon} ", style=style)
+    heading.append(f"{SEVERITY_GLYPH} ", style=style)
     heading.append(CATEGORY_LABEL[finding.category])
     heading.append(" │ ", style="dim")
     heading.append(SEVERITY_LABEL[finding.severity], style=style)
@@ -416,9 +414,9 @@ def _render_summary(result: ReviewResult, console: Console) -> None:
 
 
 VERDICT_STYLE: dict[Verdict, tuple[str, str]] = {
-    Verdict.PASS: ("✓ pre-merge check: pass", "bold green"),
-    Verdict.BLOCKED: ("⛔ pre-merge check: blocked", "bold red"),
-    Verdict.ERROR: ("⚠ pre-merge check: inconclusive", "bold yellow"),
+    Verdict.PASS: (f"{icons.PASSED_GLYPH} pre-merge check: pass", "bold green"),
+    Verdict.BLOCKED: (f"{icons.BLOCKED} pre-merge check: blocked", "bold red"),
+    Verdict.ERROR: (f"{icons.WARNED_GLYPH} pre-merge check: inconclusive", "bold yellow"),
 }
 
 
@@ -460,4 +458,4 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
         console.print(
             f"[dim]semantic review order: {result.review_plan.chunks} pass(es){suffix}[/]"
         )
-    console.print("[dim]🤖 reviewed by roborak[/]")
+    console.print(f"[dim]{icons.AGENT} reviewed by roborak[/]")

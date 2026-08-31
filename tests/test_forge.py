@@ -624,7 +624,9 @@ def test_publishing_a_local_review_is_refused():
 def test_finding_markdown_contains_everything_a_reviewer_needs():
     result = make_result()
     body = finding_markdown(result.findings[0])
-    assert "_🔒 Security_ | _🔴 Critical_" in body
+    assert body.startswith("**🔴 CRITICAL** · `11-11`")
+    assert "_🔒 Security · 🔨 Moderate_" in body
+    assert "[!CAUTION]" not in body, "an inline thread is one finding; it needs no alert box"
     assert "**SQL injection.**" in body
     assert "```suggestion" in body
     assert "🤖 Prompt for AI Agents" in body
@@ -770,7 +772,7 @@ def test_gitlab_posts_a_gap_in_the_summary_not_inline(monkeypatch):
     assert report.failed == []
 
     note = next(body for path, body in posted if path.endswith("/notes"))
-    assert "🔍 Requirements not met (1)" in note["body"]
+    assert "📋 Requirements not met (1)" in note["body"]
     assert "Rate limiting was never added" in note["body"]
 
 

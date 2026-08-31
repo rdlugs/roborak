@@ -24,8 +24,9 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement
 from rich.rule import Rule
 
+from roborak.core.icons import SEVERITY_LABEL
 from roborak.core.models import ReviewResult
-from roborak.core.severity import SEVERITY_LABEL, SEVERITY_STYLE, Severity
+from roborak.core.severity import SEVERITY_STYLE, Severity
 from roborak.render import markdown, snippet
 
 _SEVERITY_BY_LABEL = {label: severity for severity, label in SEVERITY_LABEL.items()}
@@ -47,6 +48,11 @@ class _Heading(Heading):
     rich centres ``h1`` and otherwise leaves every level looking the same, which
     loses the only thing the terminal form uses headings for. Levels here are
     fixed by ``markdown``: 2 is a bucket, 3 is a file, 5 is a finding's badges.
+
+    A bucket and a file both get a rule, because the terminal is the form that
+    cannot fold a section and so has nothing else marking where one ends. They get
+    *different* rules -- solid for the bucket, dashed for the file inside it -- so
+    the two levels stay distinguishable at a glance.
     """
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
@@ -60,7 +66,10 @@ class _Heading(Heading):
 
         if self.tag == "h3":
             text.stylize("bold cyan")
-        elif self.tag == "h5":
+            yield Rule(text, align="left", style="dim", characters="╌")
+            return
+
+        if self.tag == "h5":
             if severity := _severity_of(text.plain):
                 text.stylize(SEVERITY_STYLE[severity])
         else:
