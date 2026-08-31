@@ -95,9 +95,13 @@ _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     # Kept apart from the pools and limits above: a cache fails by serving the
     # wrong answer or by not being there, which the limits checklist never asks.
+    # Bounded on identifiers rather than words: ``\b`` counts ``_`` as a word
+    # character, so the compound names cache markers usually live in --
+    # ``DEFAULT_CACHE_TTL``, ``order_cache_key`` -- would go unseen.
     CACHE: re.compile(
-        r"\b(cache|caches|cached|caching|cache_key|cache_ttl|invalidate|invalidation|"
-        r"memcache|memcached|redis|lru_cache|memoize|memoized|ttl)\b",
+        r"(?<![0-9A-Za-z])(cache|caches|cached|caching|cache_key|cache_ttl|invalidate|"
+        r"invalidation|memcache|memcached|redis|lru_cache|memoize|memoized|ttl)"
+        r"(?![0-9A-Za-z])",
         re.IGNORECASE,
     ),
 }

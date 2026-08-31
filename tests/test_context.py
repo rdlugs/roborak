@@ -955,6 +955,21 @@ def test_a_cache_change_is_not_a_resource_limit_change():
     assert operational_signals(changeset) == ["cache"]
 
 
+def test_a_cache_marker_inside_a_compound_identifier_is_a_signal():
+    """Cache markers live in names like ``DEFAULT_CACHE_TTL``, not on their own."""
+    changeset = _op_changeset(
+        ("src/app/read.py", "@@\n+DEFAULT_CACHE_TTL = 60\n"),
+        ("src/app/keys.py", "@@\n+def order_cache_key(order):\n"),
+    )
+    assert operational_signals(changeset) == ["cache"]
+
+
+def test_a_word_that_merely_contains_a_cache_marker_is_not_a_signal():
+    """Identifier boundaries, not substrings: ``redistribute`` is not Redis."""
+    changeset = _op_changeset(("src/app/util.py", "@@\n+    redistribute(bottles)\n"))
+    assert operational_signals(changeset) == []
+
+
 def test_a_pool_change_is_not_a_cache_change():
     """The other direction: a limit is not evidence of caching."""
     changeset = _op_changeset(("src/app/db.py", "@@\n-    pool_size = 5\n+    pool_size = 50\n"))
