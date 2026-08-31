@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from roborak.core.models import ChangedFile, ChangeSet
+from roborak.core.models import ChangedFile, ChangeSet, Hunk
 
 MIGRATION = "migration"
 DEPLOYMENT = "deployment"
@@ -112,9 +112,11 @@ _CONTENT_PATTERNS: dict[str, re.Pattern[str]] = {
 #
 # These fire on the removed body, which has no new-file line of its own: a
 # finding about a deleted log can only be anchored to a line that survives the
-# change. So they are gated on the file having an added line at all -- a file
-# that only deletes can carry no finding past ``anchor_to_changed_lines``, and
-# asking for one would buy tokens for output that is discarded.
+# change. So they are gated per hunk -- the removal and the added line it would
+# anchor to must be in the same hunk. A removal whose file only adds somewhere
+# else entirely leaves nothing near enough to carry a finding past
+# ``anchor_to_changed_lines``, and asking for one would buy tokens for output
+# that is discarded.
 _REMOVED_ONLY_PATTERNS: dict[str, re.Pattern[str]] = {
     OBSERVABILITY: re.compile(
         r"\b(logger|logging|log_|metrics?|prometheus|statsd|datadog|opentelemetry|otel|"
@@ -142,9 +144,13 @@ def operational_signals(changeset: ChangeSet) -> list[str]:
         for kind, pattern in _CONTENT_PATTERNS.items():
             if pattern.search(added_body) or pattern.search(removed_body):
                 found.add(kind)
-        if added:
+        for hunk in file.hunks:
+            hunk_added, hunk_removed = _hunk_lines(hunk)
+            if not hunk_added:
+                continue
+            hunk_removed_body = "\n".join(hunk_removed)
             for kind, pattern in _REMOVED_ONLY_PATTERNS.items():
-                if pattern.search(removed_body):
+                if pattern.search(hunk_removed_body):
                     found.add(kind)
     return sorted(found)
 
@@ -154,9 +160,19 @@ def _changed_lines(file: ChangedFile) -> tuple[list[str], list[str]]:
     added: list[str] = []
     removed: list[str] = []
     for hunk in file.hunks:
-        for line in hunk.content.splitlines():
-            if line.startswith("+") and not line.startswith("+++"):
-                added.append(line[1:])
-            elif line.startswith("-") and not line.startswith("---"):
-                removed.append(line[1:])
+        hunk_added, hunk_removed = _hunk_lines(hunk)
+        added.extend(hunk_added)
+        removed.extend(hunk_removed)
+    return added, removed
+
+
+def _hunk_lines(hunk: Hunk) -> tuple[list[str], list[str]]:
+    """The added and removed lines of one hunk, without their diff markers."""
+    added: list[str] = []
+    removed: list[str] = []
+    for line in hunk.content.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            added.append(line[1:])
+        elif line.startswith("-") and not line.startswith("---"):
+            removed.append(line[1:])
     return added, removed

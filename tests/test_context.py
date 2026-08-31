@@ -940,6 +940,34 @@ def test_a_file_that_only_deletes_raises_no_observability_signal():
     assert operational_signals(changeset) == []
 
 
+def test_a_removal_far_from_every_addition_raises_no_observability_signal():
+    """The added line a finding would anchor to must sit in the hunk that lost the log."""
+    changeset = ChangeSet(
+        files=[
+            ChangedFile(
+                path="src/app/util.py",
+                hunks=[
+                    Hunk(
+                        old_start=1,
+                        old_lines=1,
+                        new_start=1,
+                        new_lines=0,
+                        content="@@\n-    logger.info('order placed')\n",
+                    ),
+                    Hunk(
+                        old_start=90,
+                        old_lines=0,
+                        new_start=89,
+                        new_lines=1,
+                        content="@@\n+    total = subtotal + tax\n",
+                    ),
+                ],
+            )
+        ]
+    )
+    assert operational_signals(changeset) == []
+
+
 def test_a_plain_sql_file_is_not_a_migration():
     """Queries and fixtures live in .sql too; only the name makes one a migration."""
     changeset = _op_changeset(("app/queries/top_customers.sql", "@@\n+SELECT id FROM users;\n"))
