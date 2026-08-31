@@ -40,6 +40,10 @@ const PIPELINE: FlagGroup = {
       help: "Skip blast-radius analysis of changed symbols.",
     },
     {
+      name: "--no-supply-chain",
+      help: "Skip the dependency, CI, container and infrastructure analysis.",
+    },
+    {
       name: "--trust-static",
       help: "Allow repository-provided static tools to execute directly in CI.",
     },

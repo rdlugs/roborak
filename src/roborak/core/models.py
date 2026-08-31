@@ -483,6 +483,165 @@ class ImpactMap(BaseModel):
         }
 
 
+class AssetKind(StrEnum):
+    """What sort of trust boundary a changed file sits on.
+
+    Every one of these is a place where a diff can change what the project trusts
+    without changing a line of application code: what gets installed, what runs in
+    CI, what the container is allowed to do, what the cloud will permit.
+    """
+
+    DEPENDENCY_MANIFEST = "dependency_manifest"
+    """A human-authored declaration of what the project depends on."""
+
+    DEPENDENCY_LOCK = "dependency_lock"
+    """The resolver's answer to a manifest: exact versions, sources, checksums."""
+
+    CI_WORKFLOW = "ci_workflow"
+    CONTAINER = "container"
+    IAC = "iac"
+    PACKAGE_MANAGER_CONFIG = "package_manager_config"
+    """Where packages are fetched from and under what rules -- a registry override
+    is a supply-chain change even when no dependency moves."""
+
+
+class DependencyChangeKind(StrEnum):
+    """What happened to one package between the base and the head revision.
+
+    Ordered by how much a reviewer should care rather than alphabetically:
+    where a package comes from and whether it is still verifiable are supply-chain
+    questions, while a version bump is an ordinary one.
+    """
+
+    SOURCE_CHANGED = "source_changed"
+    """The registry, git remote or path it resolves from is not the one it was."""
+
+    INTEGRITY_LOST = "integrity_lost"
+    """It had a checksum and no longer does. Nothing verifies what gets installed."""
+
+    INTEGRITY_CHANGED = "integrity_changed"
+    """Same name, same version, different checksum -- the artefact was replaced."""
+
+    MANIFEST_LOCK_DRIFT = "manifest_lock_drift"
+    """The manifest and the lockfile disagree, so the resolved tree is not the
+    declared one and whatever installs next is not what was reviewed."""
+
+    ADDED = "added"
+    REMOVED = "removed"
+    UPGRADED = "upgraded"
+    DOWNGRADED = "downgraded"
+
+
+class DependencyChange(BaseModel):
+    """One package's movement, as a fact rather than as a diff line.
+
+    This is the whole reason the stage exists: a lockfile is generated data that
+    never reaches the model, so what the model gets is this -- the semantic
+    content of the change, at a size that fits beside the diff.
+    """
+
+    ecosystem: str
+    name: str
+    kind: DependencyChangeKind
+    old_version: str = ""
+    new_version: str = ""
+    old_source: str = ""
+    new_source: str = ""
+    direct: bool = False
+    """Named by the manifest, rather than pulled in by something else. A transitive
+    package appearing on its own is the more interesting of the two."""
+
+    note: str = ""
+    """Why this is worth a reader's attention, when the kind does not say it."""
+
+    @property
+    def display_version(self) -> str:
+        """``1.2.3 → 1.3.0``, or the single version when it did not move.
+
+        A source or integrity change usually leaves the version alone, and showing
+        ``1.3.0 → 1.3.0`` there reads as a movement that did not happen -- the
+        arrow is what tells a reader something moved, so it is spent only when
+        something did.
+        """
+        if self.old_version and self.new_version and self.old_version != self.new_version:
+            return f"{self.old_version} → {self.new_version}"
+        return self.new_version or self.old_version
+
+
+class ChangedAsset(BaseModel):
+    """One changed file that sits on a trust boundary, and which boundary it is."""
+
+    path: str
+    kind: AssetKind
+
+
+class SupplyChainStatus(StrEnum):
+    """What the supply-chain stage was able to establish.
+
+    ``nothing_relevant`` and ``unavailable`` are deliberately different answers.
+    The first says the change does not touch a dependency, a workflow, a container
+    or any infrastructure, so there was nothing to analyse; the second says there
+    was and we could not read it. A reader deciding how much a clean review is
+    worth has to be able to tell them apart.
+    """
+
+    ANALYSED = "analysed"
+    NOTHING_RELEVANT = "nothing_relevant"
+    UNSUPPORTED = "unsupported"
+    """Assets changed, but in an ecosystem or format with no parser here."""
+
+    UNAVAILABLE = "unavailable"
+    """Assets changed and could not be read -- a diff that is not checked out, a
+    revision that is not there."""
+
+
+class SupplyChainReport(BaseModel):
+    """What the change does to the project's dependencies and infrastructure.
+
+    Structured for the same reason ``ImpactMap`` is: the question a reader of a
+    clean review has here is not "what did the diff say" but "was anybody able to
+    look", and only a report that carries its own ``status`` can answer that on
+    every surface without the renderer having to guess.
+    """
+
+    status: SupplyChainStatus = SupplyChainStatus.NOTHING_RELEVANT
+    assets: list[ChangedAsset] = Field(default_factory=list)
+    changes: list[DependencyChange] = Field(default_factory=list)
+    ecosystems: list[str] = Field(default_factory=list)
+    """Ecosystems a parser actually read, for the reader who wants to know which
+    half of a polyglot repository this report speaks for."""
+
+    truncated: bool = False
+    notes: list[str] = Field(default_factory=list)
+    """Every bound that bit, every ecosystem without a parser, and every scanner
+    that was not run, in plain words."""
+
+    @property
+    def analysed(self) -> bool:
+        """Whether anything was actually parsed."""
+        return self.status is SupplyChainStatus.ANALYSED
+
+    def kinds(self) -> set[AssetKind]:
+        """The boundaries this change actually touches.
+
+        The prompt is gated on this: a change that only edits Terraform never pays
+        for the npm checklist, and one that only bumps a dependency never pays for
+        the container one.
+        """
+        return {asset.kind for asset in self.assets}
+
+    @property
+    def has_dependency_assets(self) -> bool:
+        return bool(
+            self.kinds()
+            & {
+                AssetKind.DEPENDENCY_MANIFEST,
+                AssetKind.DEPENDENCY_LOCK,
+                AssetKind.PACKAGE_MANAGER_CONFIG,
+            }
+        )
+
+
 class VerificationStatus(StrEnum):
     """How one verification command ended.
 
@@ -629,6 +788,14 @@ class ReviewResult(BaseModel):
     ``skipped``. One says nobody asked for verification; the other says it was
     asked for and refused, and a reader deciding how much a clean review is worth
     has to be able to tell them apart."""
+
+    supply_chain: SupplyChainReport | None = None
+    """What the change does to dependencies, CI, containers and infrastructure.
+
+    ``None`` means the stage never ran -- ``describe``, the analysis switched off,
+    a command that does not do supply-chain work -- which is a different statement
+    from a report whose status is ``nothing_relevant``. One says nobody looked; the
+    other says we looked and this change does not touch any of it."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE

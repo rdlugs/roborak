@@ -33,6 +33,8 @@ from roborak.sources.base import SourceError
 from roborak.sources.forge import Target
 from roborak.state.store import StateStore, review_key
 from roborak.static.runner import StaticRunner
+from roborak.supply.analyzer import analyse as analyse_supply_chain
+from roborak.supply.analyzer import note_skipped_scanners
 from roborak.verify.runner import VerificationRunner
 
 log = logging.getLogger(__name__)
@@ -129,6 +131,13 @@ def review(
         bool,
         typer.Option("--no-impact", help="Skip blast-radius analysis of changed symbols."),
     ] = False,
+    no_supply_chain: Annotated[
+        bool,
+        typer.Option(
+            "--no-supply-chain",
+            help="Skip the dependency, CI, container and infrastructure analysis.",
+        ),
+    ] = False,
     trust_static: Annotated[
         bool,
         typer.Option(
@@ -214,6 +223,8 @@ def review(
         config.static.enabled = False
     if no_impact:
         config.impact.enabled = False
+    if no_supply_chain:
+        config.supply_chain.enabled = False
     if trust_static:
         config.static.execution = Execution.TRUSTED
     if no_walkthrough:
@@ -227,12 +238,17 @@ def review(
     if full:
         config.output.full = True
 
+    # Runs before the reviewer, on the changeset as the source produced it. By the
+    # time `Reviewer._prepare` is done, `ignore_paths` has removed every lockfile
+    # in it -- which is correct for the prompt and fatal for this analysis.
+    supply_chain = analyse_supply_chain(session.changeset, session.repo, config.supply_chain)
+
     static_findings: list[Finding] = []
     if config.static.enabled and session.changeset.origin in {"local", "paths"}:
         with console.status("[dim]running static analysis…[/]", spinner="dots"):
-            static_findings = StaticRunner(repo=session.repo, config=config.static).run(
-                session.changeset
-            )
+            runner = StaticRunner(repo=session.repo, config=config.static)
+            static_findings = runner.run(session.changeset)
+        note_skipped_scanners(supply_chain, [(tool.name, tool.reason) for tool in runner.skipped])
     elif config.static.enabled:
         log.debug(
             "skipping static analysis: %s changes are not checked out", session.changeset.origin
@@ -252,6 +268,7 @@ def review(
         llm=session.llm,
         static_findings=static_findings,
         verification=verification,
+        supply_chain=supply_chain,
         issue=session.issue,
     )
 

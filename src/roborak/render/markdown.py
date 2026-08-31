@@ -38,10 +38,13 @@ from roborak.core.buckets import (
     group,
 )
 from roborak.core.models import (
+    DependencyChangeKind,
     Finding,
     ImpactMap,
     ImpactStatus,
     ReviewResult,
+    SupplyChainReport,
+    SupplyChainStatus,
     VerificationReport,
     VerificationRun,
     VerificationStatus,
@@ -158,6 +161,9 @@ def render(
 
     if impact := _impact_section(result.impact, form=form):
         sections.append(impact)
+
+    if supply := _supply_chain_section(result.supply_chain, form=form):
+        sections.append(supply)
 
     if not grouped:
         sections.append(_nothing_to_report(result))
@@ -324,6 +330,84 @@ MAX_VERIFICATION_OUTPUT_LINES = 20
 The runner already bounds what it captures; this bounds again at the point of
 rendering, because a report is published into a comment box and the reader who
 needs the forty-first line needs their own terminal."""
+
+
+SUPPLY_CHAIN_LABEL: dict[SupplyChainStatus, str] = {
+    SupplyChainStatus.ANALYSED: "analysed",
+    SupplyChainStatus.NOTHING_RELEVANT: "nothing relevant changed",
+    SupplyChainStatus.UNSUPPORTED: "not supported",
+    SupplyChainStatus.UNAVAILABLE: "could not be read",
+}
+
+CHANGE_LABEL: dict[DependencyChangeKind, str] = {
+    DependencyChangeKind.SOURCE_CHANGED: "🔀 Source changed",
+    DependencyChangeKind.INTEGRITY_LOST: "🔓 Checksum lost",
+    DependencyChangeKind.INTEGRITY_CHANGED: "🔁 Artefact replaced",
+    DependencyChangeKind.MANIFEST_LOCK_DRIFT: "⚠ Manifest/lock drift",
+    DependencyChangeKind.ADDED: "🆕 Added",
+    DependencyChangeKind.REMOVED: "🗑 Removed",
+    DependencyChangeKind.UPGRADED: "⬆ Upgraded",
+    DependencyChangeKind.DOWNGRADED: "⬇ Downgraded",
+}
+
+
+def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> str:
+    """What the change does to dependencies and infrastructure.
+
+    Silent on ``nothing_relevant``, and only on that. A section saying "this
+    change touched no dependency" on every ordinary review is a section a reader
+    learns to skip, and it would still be there on the day it mattered. Every
+    other status renders, including a clean run: a lockfile that could not be
+    read is exactly the case where an absent section would be taken for an
+    all-clear.
+    """
+    if report is None or report.status is SupplyChainStatus.NOTHING_RELEVANT:
+        return ""
+
+    parts: list[str] = []
+    if report.changes:
+        parts.append(_supply_chain_rows(report))
+    elif report.assets:
+        parts.append(
+            _wrap(
+                "_No dependency movement was found in the files below._"
+                if report.analysed
+                else "_No dependency delta was computed._"
+            )
+        )
+    if report.assets:
+        parts.append(
+            "\n".join(
+                f"* `{_escape_cell(asset.path)}` — {asset.kind.value.replace('_', ' ')}"
+                for asset in report.assets
+            )
+        )
+    # Notes carry what was *not* checked -- an unsupported lockfile, a scanner
+    # that is not installed, a bound that bit -- which is the half of the report a
+    # reader needs in order to know what a clean section is worth.
+    parts += [_wrap(f"_{note}_") for note in report.notes]
+    if not parts:
+        return ""
+
+    summary = f"📦 Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
+    if report.changes:
+        summary += f" ({len(report.changes)} dependency change(s))"
+    return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
+
+
+def _supply_chain_rows(report: SupplyChainReport) -> str:
+    """One row per movement, in the order the delta already put them."""
+    rows = ["| Change | Package | Version | Detail |", "| --- | --- | --- | --- |"]
+    for change in report.changes:
+        scope = "direct" if change.direct else "transitive"
+        detail = change.note or (f"source: {change.new_source}" if change.new_source else "")
+        rows.append(
+            f"| {CHANGE_LABEL[change.kind]} "
+            f"| `{_escape_cell(change.name)}` <sub>{change.ecosystem}, {scope}</sub> "
+            f"| {_escape_cell(change.display_version) or '—'} "
+            f"| {_escape_cell(detail) or '—'} |"
+        )
+    return "\n".join(rows)
 
 
 def _verification_section(report: VerificationReport | None, *, form: Form) -> str:
@@ -742,6 +826,26 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             )
         )
 
+    if result.supply_chain is not None:
+        supply = result.supply_chain
+        listed = (
+            "\n".join(
+                f"* `{asset.path}` — {asset.kind.value.replace('_', ' ')}"
+                for asset in supply.assets
+            )
+            or "* no dependency or infrastructure file changed"
+        )
+        for note in supply.notes:
+            listed += f"\n* {note}"
+        blocks.append(
+            _details(
+                f"📦 Supply chain ({SUPPLY_CHAIN_LABEL[supply.status]})",
+                listed,
+                level=3,
+                collapsible=collapsible,
+            )
+        )
+
     if result.review_plan is not None:
         by_chunk: dict[int, list[str]] = {}
         for file in result.review_plan.files:
@@ -933,6 +1037,11 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
         state = report.status.value.replace("_", " ")
         counted = f"{len(report.runs)} check(s)" if report.runs else "no matching check"
         lines.append(f"_verification: {state} · {counted}_")
+
+    supply = result.supply_chain
+    if supply is not None and supply.status is not SupplyChainStatus.NOTHING_RELEVANT:
+        counted = f"{len(supply.changes)} dependency change(s)"
+        lines.append(f"_supply chain: {SUPPLY_CHAIN_LABEL[supply.status]} · {counted}_")
 
     if result.review_plan is not None:
         roles = ", ".join(

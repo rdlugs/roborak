@@ -50,7 +50,8 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 |---|---|
 | `src/roborak/sources/` | Local git, GitLab, GitHub and raw paths → `ChangeSet` |
 | `src/roborak/core/` | The IR (`models.py`), config, severity, and finding routing (`buckets.py`) |
-| `src/roborak/static/` | Running ruff, mypy, semgrep, eslint, phpstan and normalising their output |
+| `src/roborak/static/` | Running ruff, mypy, semgrep, eslint, phpstan, actionlint, hadolint, checkov and normalising their output |
+| `src/roborak/supply/` | Parsing manifest and lockfile pairs into a bounded dependency delta, and classifying files by trust boundary |
 | `src/roborak/llm/` | Prompt construction, LiteLLM calls, chunking, response parsing |
 | `src/roborak/render/` | The one document: terminal, markdown, JSON, agent and summary forms |
 | `src/roborak/publish/` | Translating new-file coordinates into each forge's position payload |

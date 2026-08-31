@@ -218,6 +218,35 @@ class ImpactConfig(ConfigModel):
     reading them takes."""
 
 
+class SupplyChainConfig(ConfigModel):
+    """Bounds on the dependency and infrastructure analysis.
+
+    The stage exists because ``ignore_paths`` is right to exclude lockfiles from
+    the prompt and wrong to make them invisible. It reads the manifest/lock pairs
+    a change touched, straight from git, and reduces them to a delta small enough
+    to sit beside the diff. Every number below is a ceiling: what does not fit is
+    reported as truncated rather than passed off as "nothing else changed".
+    """
+
+    enabled: bool = True
+
+    max_changes: int = Field(default=40, ge=0)
+    """Dependency movements carried into the report. A lockfile regeneration can
+    move a thousand packages, and the first forty are the ones anyone reads."""
+
+    max_assets: int = Field(default=20, ge=1)
+    """Manifest, lock and infrastructure files parsed per review."""
+
+    timeout_seconds: int = Field(default=10, ge=1)
+    """Wall clock for reading the base revision. Reading two sides of a large
+    lockfile is cheap; a repository that has to fetch them is not."""
+
+    feed_to_llm: bool = True
+    token_budget: int = Field(default=1200, ge=0)
+    """Prompt tokens the dependency section may occupy. Reserved out of the diff
+    budget up front, so adding this section can never squeeze out a changed file."""
+
+
 class LLMConfig(ConfigModel):
     model: str = "anthropic/claude-sonnet-5"
     fallback_models: list[str] = Field(default_factory=list)
@@ -312,6 +341,7 @@ class Config(ConfigModel):
     static: StaticConfig = Field(default_factory=StaticConfig)
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     impact: ImpactConfig = Field(default_factory=ImpactConfig)
+    supply_chain: SupplyChainConfig = Field(default_factory=SupplyChainConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -560,6 +590,9 @@ def _env_layer() -> dict[str, Any]:
         layer.setdefault("verification", {})["execution"] = execution
     if (impact_off := os.getenv("ROBORAK_NO_IMPACT")) and impact_off not in {"0", "false", ""}:
         layer.setdefault("impact", {})["enabled"] = False
+    supply_off = os.getenv("ROBORAK_NO_SUPPLY_CHAIN")
+    if supply_off and supply_off not in {"0", "false", ""}:
+        layer.setdefault("supply_chain", {})["enabled"] = False
     return layer
 
 

@@ -13,6 +13,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from roborak.context.compressor import matches_any
 from roborak.core.models import ChangedFile, Finding
 
 _WINDOWS = os.name == "nt"
@@ -31,6 +32,22 @@ class Adapter:
     binary: str = ""
     languages: frozenset[str] = frozenset()
     """Languages this tool understands. Empty means "any"."""
+
+    paths: tuple[str, ...] = ()
+    """Ignore-style globs this tool applies to, when a language is too coarse.
+
+    A GitHub workflow's language is ``yaml``, which it shares with every
+    configuration file in the repository, so a language filter would run a
+    workflow linter over all of them. When this is set it replaces the language
+    filter rather than narrowing it: the tool knows its own files by path."""
+
+    requires_network: bool = False
+    """Whether running this tool reaches the network.
+
+    Never autodetected. The static pass promises it installs nothing and fetches
+    nothing, and a tool that queries a vulnerability service breaks the second
+    half of that promise however useful it is -- so it runs only when a project
+    names it in ``static.tools``, which is a person choosing, not a default."""
 
     def find_binary(self, repo: Path) -> str | None:
         """Locate the tool, preferring a project-local install over a global one.
@@ -62,6 +79,8 @@ class Adapter:
         ]
 
     def applicable(self, files: list[ChangedFile]) -> list[ChangedFile]:
+        if self.paths:
+            return [f for f in files if matches_any(f.path, self.paths)]
         if not self.languages:
             return files
         return [f for f in files if f.language in self.languages]

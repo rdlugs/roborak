@@ -239,7 +239,7 @@ def test_json_mode_emits_only_json(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert "findings" in payload
 
 
@@ -254,6 +254,9 @@ def test_agent_mode_emits_only_json(repo: Path):
         "coverage",
         "summary",
         "findings",
+        # Present even on a change that touches no dependency: an absent key has
+        # to keep meaning "the stage never ran".
+        "supply_chain",
     }
 
 
@@ -1885,3 +1888,26 @@ def test_no_summary_leaves_the_overview_pass_exactly_as_it_was(repo: Path):
 def test_a_local_review_has_no_published_overview_to_reuse(repo: Path):
     plan = _plan(_overview_session(repo), None, publishing=False)
     assert plan.generate and not plan.post_summary
+
+
+def test_no_supply_chain_switches_the_stage_off(repo: Path):
+    """Off must mean absent, not an empty report: the two say different things."""
+    (repo / "package.json").write_text('{"name": "app", "dependencies": {"a": "^1.0.0"}}')
+    result = runner.invoke(
+        app,
+        ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json", "--no-supply-chain"],
+    )
+    assert result.exit_code == EXIT_OK
+    assert "supply_chain" not in json.loads(result.stdout)
+
+
+def test_a_dependency_change_reaches_the_json_output(repo: Path):
+    (repo / "package.json").write_text('{"name": "app", "dependencies": {"a": "^1.0.0"}}')
+    # Staged rather than merely written: `git diff HEAD` does not list an
+    # untracked file, so an unstaged manifest is not part of the change at all.
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)["supply_chain"]
+    assert payload["status"] == "analysed"
+    assert [asset["kind"] for asset in payload["assets"]] == ["dependency_manifest"]

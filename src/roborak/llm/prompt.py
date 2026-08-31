@@ -22,8 +22,10 @@ from roborak.core.models import (
     ImpactMap,
     Issue,
     ReviewComment,
+    SupplyChainReport,
     VerificationReport,
 )
+from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 from roborak.verify.runner import for_prompt as verification_for_prompt
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -136,11 +138,13 @@ def build_review_prompt(
     issue: Issue | None = None,
     impact: ImpactMap | None = None,
     verification: VerificationReport | None = None,
+    supply_chain: SupplyChainReport | None = None,
     contract_contexts: list[ContractContext] | None = None,
     collect_reconciliation_evidence: bool = False,
 ) -> RenderedPrompt:
     """The system and user halves of one review pass, with every untrusted field already escaped."""
     impact_nodes = for_prompt(impact, {file.path for file in changeset.files})
+    supply = supply_chain_for_prompt(supply_chain)
     system = _system(
         "review_system.jinja2",
         categories=[c.value for c in config.review.categories],
@@ -149,6 +153,9 @@ def build_review_prompt(
         full_file=config.review.full_file,
         require_evidence=config.review.require_evidence,
         impact=bool(impact_nodes),
+        # Gated on the boundaries this change actually crosses, not on the stage
+        # having run. A Terraform-only diff never pays for the npm checklist.
+        supply_chain=supply["kinds"] if supply else [],
         check_requirements=issue is not None
         and config.review.check_requirements
         and not collect_reconciliation_evidence,
@@ -180,6 +187,7 @@ Either list may be empty. Never infer absence from one partial chunk.
         issue=issue,
         impact_nodes=impact_nodes,
         verification=verification,
+        supply_chain=supply,
         contract_contexts=contract_contexts,
     )
     return RenderedPrompt(system=system, user=user)
@@ -251,6 +259,7 @@ def _review_user(
     issue: Issue | None = None,
     impact_nodes: list[dict[str, Any]] | None = None,
     verification: VerificationReport | None = None,
+    supply_chain: dict[str, Any] | None = None,
     contract_contexts: list[ContractContext] | None = None,
 ) -> str:
     """The user half: the change and its context, escaped before it reaches the template."""
@@ -279,6 +288,7 @@ def _review_user(
         language_notes=_escape_untrusted(_language_notes(changeset, config)),
         impact_nodes=_safe_impact(impact_nodes or []),
         verification=_safe_verification(verification),
+        supply_chain=_safe_supply_chain(supply_chain),
         contract_contexts=[
             {
                 "path": _escape_untrusted(contract.path),
@@ -366,6 +376,38 @@ def _safe_verification(report: VerificationReport | None) -> dict[str, Any] | No
             }
             | {"exit_code": run["exit_code"]}
             for run in payload["runs"]
+        ],
+    }
+
+
+def _safe_supply_chain(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Package names, registry URLs and image references come out of the diff.
+
+    Every one of them is a string an author chooses. A package can be named after
+    a code fence and a registry URL can be anything at all, so the section that
+    exists to report a hostile dependency is exactly the one that must not let a
+    dependency name write the prompt around it.
+    """
+    if payload is None:
+        return None
+    return {
+        "status": _escape_untrusted(payload["status"]),
+        "analysed": payload["analysed"],
+        "truncated": payload["truncated"],
+        "kinds": [_escape_untrusted(kind) for kind in payload["kinds"]],
+        "ecosystems": [_escape_untrusted(name) for name in payload["ecosystems"]],
+        "notes": [_escape_untrusted(note) for note in payload["notes"]],
+        "assets": [
+            {key: _escape_untrusted(asset[key]) for key in ("path", "kind")}
+            for asset in payload["assets"]
+        ],
+        "changes": [
+            {
+                key: _escape_untrusted(change[key])
+                for key in ("ecosystem", "name", "kind", "versions", "source", "note")
+            }
+            | {"direct": change["direct"]}
+            for change in payload["changes"]
         ],
     }
 

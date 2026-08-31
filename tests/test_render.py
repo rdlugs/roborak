@@ -13,6 +13,7 @@ import pytest
 from rich.console import Console
 
 from roborak.core.models import (
+    AssetKind,
     BoundaryKind,
     ChangedFile,
     ChangeSet,
@@ -150,7 +151,7 @@ def test_json_coverage_explains_semantic_order_and_omitted_roles():
         ],
     )
     payload = json.loads(json_out.render(result))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["coverage"]["file_plan"][0] == {
         "path": "app/auth.py",
         "role": "contract",
@@ -1241,3 +1242,100 @@ def test_the_panel_view_states_the_blast_radius_in_one_line():
     assert "blast radius: consumers found" in output
     assert "2 boundary(s), 1 consumer(s)" in output
     assert "impact.max_nodes" in output
+
+
+def _supply_report(**overrides):
+    from roborak.core.models import (
+        ChangedAsset,
+        DependencyChange,
+        DependencyChangeKind,
+        SupplyChainReport,
+        SupplyChainStatus,
+    )
+
+    defaults = {
+        "status": SupplyChainStatus.ANALYSED,
+        "ecosystems": ["npm"],
+        "assets": [ChangedAsset(path="package-lock.json", kind=AssetKind.DEPENDENCY_LOCK)],
+        "changes": [
+            DependencyChange(
+                ecosystem="npm",
+                name="lodash",
+                kind=DependencyChangeKind.SOURCE_CHANGED,
+                old_version="4.17.21",
+                new_version="4.17.21",
+                old_source="https://registry.npmjs.org/lodash.tgz",
+                new_source="https://evil.example.com/lodash.tgz",
+                note="Now resolved from evil.example.com.",
+            )
+        ],
+    }
+    return SupplyChainReport(**{**defaults, **overrides})
+
+
+def test_markdown_renders_the_supply_chain_delta():
+    result = make_result()
+    result.supply_chain = _supply_report()
+    rendered = markdown.render(result)
+    assert "📦 Supply chain — analysed (1 dependency change(s))" in rendered
+    assert "Source changed" in rendered
+    assert "`lodash`" in rendered
+    assert "evil.example.com" in rendered
+
+
+def test_markdown_stays_quiet_when_no_boundary_changed():
+    """A section on every ordinary review is a section nobody reads on the day it
+    matters, so the prominent one is spent only when there is something to say.
+
+    The run record is a different surface and keeps its entry: it exists to say
+    which stages ran, and "it ran and this change touches nothing" is exactly the
+    fact it is for.
+    """
+    from roborak.core.models import SupplyChainStatus
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.NOTHING_RELEVANT, assets=[], changes=[]
+    )
+    rendered = markdown.render(result)
+    assert "📦 Supply chain —" not in rendered
+    assert "📦 Supply chain (nothing relevant changed)" in rendered
+
+
+def test_markdown_reports_a_dependency_file_it_could_not_read():
+    """The load-bearing case: an absent section would read as an all-clear."""
+    from roborak.core.models import SupplyChainStatus
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.UNAVAILABLE,
+        changes=[],
+        notes=["github changes are not checked out, so neither side could be read."],
+    )
+    rendered = markdown.render(result)
+    assert "📦 Supply chain — could not be read" in rendered
+    assert "not checked out" in rendered
+
+
+def test_json_distinguishes_a_stage_that_never_ran_from_one_that_found_nothing():
+    from roborak.core.models import SupplyChainStatus
+
+    never_ran = json.loads(json_out.render(make_result()))
+    assert "supply_chain" not in never_ran
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.NOTHING_RELEVANT, assets=[], changes=[]
+    )
+    looked = json.loads(json_out.render(result))
+    assert looked["supply_chain"]["status"] == "nothing_relevant"
+    assert looked["supply_chain"]["changes"] == []
+
+
+def test_json_carries_the_delta_for_an_agent():
+    result = make_result()
+    result.supply_chain = _supply_report()
+    payload = json.loads(json_out.render(result, agent=True))["supply_chain"]
+    assert payload["ecosystems"] == ["npm"]
+    assert payload["changes"][0]["kind"] == "source_changed"
+    assert payload["changes"][0]["new_source"] == "https://evil.example.com/lodash.tgz"

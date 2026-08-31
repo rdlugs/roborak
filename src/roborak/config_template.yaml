@@ -77,6 +77,26 @@ static:
   # Pass static findings to the model as evidence rather than reporting them raw.
   feed_to_llm: true
 
+supply_chain:
+  # Read the manifest and lockfile pairs a change touched and reduce them to a
+  # small semantic delta: packages added, removed, upgraded, resolved from a
+  # different source, or no longer covered by a checksum. The lockfiles
+  # themselves stay excluded from the model's context by `ignore_paths` -- this
+  # is what replaces them. Supported: npm/yarn/pnpm, Python (uv, poetry, pdm,
+  # requirements), Go, Cargo and Composer. Changes to CI workflows, Dockerfiles
+  # and Terraform additionally turn on targeted review checklists for them.
+  enabled: true
+  # Dependency movements carried into the report. Source, integrity and drift
+  # changes sort first, so a lockfile regeneration truncates version bumps.
+  max_changes: 40
+  # Manifest, lock and infrastructure files parsed per review.
+  max_assets: 20
+  timeout_seconds: 10
+  feed_to_llm: true
+  # Prompt tokens the dependency section may occupy, reserved out of the diff
+  # budget so it can never squeeze out a changed file.
+  token_budget: 1200
+
 impact:
   # Work outward from the symbols and contracts the change touched to the
   # unchanged code that depends on them, and show the model what it found. Every
