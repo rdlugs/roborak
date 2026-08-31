@@ -1,8 +1,10 @@
 # Contributing to roborak
 
-Thanks for taking the time. This file is also what roborak reads as repository
-context when reviewing changes here, so it doubles as the conventions document —
-keep it accurate.
+Thanks for taking the time. The conventions for this repository live in
+`CLAUDE.md`, and `AGENTS.md` points every other coding agent at it. This file is
+the human-facing companion; roborak reads the first of `AGENTS.md`, `CLAUDE.md`,
+`.roborak/context.md` and `CONTRIBUTING.md` it finds as repository context, so
+keep all three in step when conventions change.
 
 Everyone taking part here is expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
