@@ -644,6 +644,67 @@ def test_a_locked_version_outside_the_manifest_range_is_drift(repo: Path):
     assert "does not satisfy" in lodash.note
 
 
+def test_a_monorepo_does_not_compare_one_app_against_another_app_lock(repo: Path):
+    """Two apps, one ecosystem, two independent dependency trees.
+
+    Keying the manifest/lock pairs by ecosystem alone made every package declared
+    in one app look absent from the other app's lockfile, and drift outranks a
+    real change in the truncation order -- so the false pair buried the true one.
+    """
+    for app, package, version in (("a", "only-in-a", "1.0.0"), ("b", "only-in-b", "2.0.0")):
+        directory = repo / "apps" / app
+        directory.mkdir(parents=True)
+        (directory / "package.json").write_text(
+            json.dumps({"name": app, "dependencies": {package: f"^{version}"}})
+        )
+        (directory / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "": {"dependencies": {package: f"^{version}"}},
+                        f"node_modules/{package}": {
+                            "version": version,
+                            "resolved": f"https://registry.npmjs.org/{package}",
+                            "integrity": f"sha512-{app}",
+                        },
+                    },
+                }
+            )
+        )
+    _commit(repo)
+    # One app's manifest moves, the other app's lock moves. Neither touches the
+    # other, and each still has its own correct counterpart on disk.
+    manifest = repo / "apps" / "a" / "package.json"
+    manifest.write_text(manifest.read_text().replace("^1.0.0", ">=1.0.0"))
+    lock = repo / "apps" / "b" / "package-lock.json"
+    lock.write_text(lock.read_text().replace("sha512-b", "sha512-changed"))
+
+    report = _analyse(repo)
+    assert report is not None
+    assert [
+        c.name for c in report.changes if c.kind is DependencyChangeKind.MANIFEST_LOCK_DRIFT
+    ] == []
+    kinds = {c.name: c.kind for c in report.changes}
+    assert kinds["only-in-b"] is DependencyChangeKind.INTEGRITY_CHANGED
+
+
+def test_drift_is_still_found_within_one_app_of_a_monorepo(repo: Path):
+    """The control for the test above: per-directory pairing must not go blind."""
+    directory = repo / "apps" / "a"
+    directory.mkdir(parents=True)
+    (directory / "package.json").write_text(PACKAGE_JSON)
+    (directory / "package-lock.json").write_text(PACKAGE_LOCK)
+    _commit(repo)
+    manifest = directory / "package.json"
+    manifest.write_text(manifest.read_text().replace("^4.17.21", "^5.0.0"))
+
+    report = _analyse(repo)
+    assert report is not None
+    drifted = [c for c in report.changes if c.kind is DependencyChangeKind.MANIFEST_LOCK_DRIFT]
+    assert "lodash" in [c.name for c in drifted]
+
+
 def test_an_unknown_manifest_constraint_does_not_guess_at_drift(repo: Path):
     (repo / "package.json").write_text(PACKAGE_JSON)
     (repo / "package-lock.json").write_text(PACKAGE_LOCK)

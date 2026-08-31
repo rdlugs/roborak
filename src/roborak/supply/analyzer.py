@@ -30,6 +30,14 @@ from roborak.supply.revision import base_revision, read_at, read_working_tree
 
 log = logging.getLogger(__name__)
 
+Pair = tuple[str, str]
+"""An ecosystem name and the directory its manifest/lock pair lives in.
+
+A repository holds one dependency tree per directory that has a manifest, not one
+per ecosystem, so the directory is part of the identity of a pair. Without it a
+monorepo's apps get compared against each other's lockfiles and every app's
+dependencies look like drift."""
+
 CHECKED_OUT_ORIGINS = {"local", "paths"}
 """Origins whose files can be read from git. A forge diff is a patch we fetched;
 the lockfile bodies it needs are not on disk, and reading the local checkout's
@@ -161,10 +169,14 @@ def _analyse_dependencies(
     changes: list[DependencyChange] = []
     ecosystems: list[str] = []
     ecosystem_defs: dict[str, Ecosystem] = {}
-    # Per-ecosystem head-side parses, so drift can compare a manifest against the
-    # lockfile that is supposed to satisfy it even though they are separate files.
-    manifests: dict[str, dict[str, Package]] = {}
-    locks: dict[str, dict[str, Package]] = {}
+    # Head-side parses keyed by ecosystem *and directory*, so drift can compare a
+    # manifest against the lockfile that is supposed to satisfy it even though
+    # they are separate files. The directory is half the key because a monorepo
+    # has many `package.json` files that answer to different lockfiles, and
+    # merging them would report every app's dependencies as missing from every
+    # other app's lock.
+    manifests: dict[Pair, dict[str, Package]] = {}
+    locks: dict[Pair, dict[str, Package]] = {}
 
     for asset in assets:
         eco = ecosystem_for(asset.path)
@@ -196,11 +208,11 @@ def _analyse_dependencies(
         ecosystem_defs[eco.name] = eco
         changes.extend(compare(eco.name, old, new))
         target = manifests if asset.kind is AssetKind.DEPENDENCY_MANIFEST else locks
-        target.setdefault(eco.name, {}).update(new)
+        target.setdefault(_pair_key(eco, asset.path), {}).update(new)
 
     _fill_counterparts(assets, repo, manifests, locks, report)
-    for name in sorted(set(manifests) & set(locks)):
-        changes.extend(drift(ecosystem_defs[name], manifests[name], locks[name]))
+    for key in sorted(set(manifests) & set(locks)):
+        changes.extend(drift(ecosystem_defs[key[0]], manifests[key], locks[key]))
 
     report.ecosystems = ecosystems
     changes = sort_changes(changes)
@@ -221,11 +233,16 @@ def _analyse_dependencies(
         log.debug("no ecosystem parser for %s", ", ".join(sorted(unread)))
 
 
+def _pair_key(eco: Ecosystem, path: str) -> Pair:
+    """Which manifest/lock pair ``path`` belongs to."""
+    return (eco.name, path.rpartition("/")[0])
+
+
 def _fill_counterparts(
     assets: list[ChangedAsset],
     repo: Path,
-    manifests: dict[str, dict[str, Package]],
-    locks: dict[str, dict[str, Package]],
+    manifests: dict[Pair, dict[str, Package]],
+    locks: dict[Pair, dict[str, Package]],
     report: SupplyChainReport,
 ) -> None:
     """Read the side of a pair the change did not touch.
@@ -245,10 +262,11 @@ def _fill_counterparts(
         if eco is None:
             continue
         wanted = locks if asset.kind is AssetKind.DEPENDENCY_MANIFEST else manifests
-        if eco.name in wanted:
+        key = _pair_key(eco, asset.path)
+        if key in wanted:
             continue
         names = eco.locks if asset.kind is AssetKind.DEPENDENCY_MANIFEST else eco.manifests
-        directory = asset.path.rpartition("/")[0]
+        directory = key[1]
         for name in names:
             candidate = f"{directory}/{name}" if directory else name
             text = read_working_tree(repo, candidate)
@@ -256,7 +274,7 @@ def _fill_counterparts(
                 continue
             parsed = eco.read(candidate, text)
             if parsed:
-                wanted.setdefault(eco.name, {}).update(parsed)
+                wanted.setdefault(key, {}).update(parsed)
                 break
         else:
             if asset.kind is AssetKind.DEPENDENCY_MANIFEST:

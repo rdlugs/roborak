@@ -1316,6 +1316,58 @@ def test_supply_scanner_findings_render_without_an_inline_anchor():
     assert payload["summary"]["verdict"] == "blocked"
 
 
+def _osv_finding() -> Finding:
+    return Finding(
+        file="package-lock.json",
+        start_line=1,
+        end_line=1,
+        severity=Severity.MAJOR,
+        category=Category.SECURITY,
+        title="OSV-1 in lodash",
+        body="lodash 4.17.20: command injection",
+        rule_id="osv/OSV-1",
+        source="static",
+        tool="osv-scanner",
+    )
+
+
+def test_a_scanner_only_review_still_prints_its_verdict():
+    """The blocking review that has nothing inline to show.
+
+    ``blocking_findings`` counts scanner facts, so this review exits non-zero. A
+    terminal that stopped after "no inline findings" would leave the reader with
+    no verdict at all and an exit code they cannot account for.
+    """
+    result = make_result()
+    result.findings = []
+    result.changeset = ChangeSet(files=[ChangedFile(path="package-lock.json")])
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+    result.block_on = Severity.MAJOR
+
+    console = Console(record=True, width=100)
+    terminal.render(result, console, Path("."))
+    text = console.export_text()
+
+    assert "No additional inline findings" in text
+    assert "pre-merge check" in text
+    assert "1 finding" in text
+
+
+def test_the_terminal_total_counts_what_its_severity_table_counts():
+    """The table above the total is built from ``all_findings``; the total must be
+    too, or the two lines of one summary contradict each other."""
+    result = make_result()
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+
+    console = Console(record=True, width=100)
+    terminal.render(result, console, Path("."))
+    text = console.export_text()
+
+    inline = len(result.findings)
+    assert f"{inline + 1} findings" in text
+    assert f"\n{inline} findings" not in text
+
+
 def test_markdown_stays_quiet_when_no_boundary_changed():
     """A section on every ordinary review is a section nobody reads on the day it
     matters, so the prominent one is spent only when there is something to say.

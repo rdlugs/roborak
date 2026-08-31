@@ -74,7 +74,11 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
 
     if not result.findings:
         if result.supply_chain and result.supply_chain.scanner_findings:
+            # Not the clean path: the scanner facts printed above are findings,
+            # they are counted in the summary, and they can block the merge. A
+            # review that exits non-zero must still show the verdict that says so.
             console.print("\n[dim]No additional inline findings.[/]\n")
+            _render_summary(result, console)
             return
         _render_clean(result, console)
         return
@@ -404,7 +408,9 @@ def _render_summary(result: ReviewResult, console: Console) -> None:
             )
     console.print(table)
 
-    total = len(result.findings)
+    # Scanner facts included, because the severity table above counts them and a
+    # total that disagreed with the rows it sits under is worse than no total.
+    total = len(result.all_findings())
     console.print(f"\n[bold]{total} finding{'s' if total != 1 else ''}[/].")
     _render_footer(result, console)
 

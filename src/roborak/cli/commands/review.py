@@ -602,7 +602,7 @@ def _offer_to_share(
         return
     if not _is_interactive():
         return
-    if not result.findings and result.walkthrough is None:
+    if not result.all_findings() and result.walkthrough is None:
         return
 
     changeset = result.changeset
