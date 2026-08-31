@@ -1005,3 +1005,100 @@ def test_a_failing_impact_stage_never_fails_the_review(tmp_path, monkeypatch):
     assert "tree-sitter fell over" not in " ".join(result.impact.notes)
     assert result.status is ReviewStatus.COMPLETE
     assert result.errors == []
+
+
+def _supply_report_with(changes: int):
+    from roborak.core.models import (
+        AssetKind,
+        ChangedAsset,
+        DependencyChange,
+        DependencyChangeKind,
+        SupplyChainReport,
+        SupplyChainStatus,
+    )
+
+    return SupplyChainReport(
+        status=SupplyChainStatus.ANALYSED,
+        ecosystems=["npm"],
+        assets=[ChangedAsset(path="package-lock.json", kind=AssetKind.DEPENDENCY_LOCK)],
+        changes=[
+            DependencyChange(
+                ecosystem="npm",
+                name=f"pkg-{index}",
+                kind=DependencyChangeKind.UPGRADED,
+                old_version="1.0.0",
+                new_version="1.0.1",
+            )
+            for index in range(changes)
+        ],
+    )
+
+
+def test_the_delta_survives_a_change_that_filters_to_nothing(tmp_path):
+    """A lockfile-only change filters to an empty diff, and that is precisely the
+    review whose whole content is the dependency delta."""
+    from roborak.core.models import ChangedFile, ChangeSet
+
+    changeset = ChangeSet(
+        files=[ChangedFile(path="package-lock.json", change_type="modified")],
+        origin="local",
+    )
+    reviewer = Reviewer(
+        config=Config(), repo=tmp_path, llm=None, supply_chain=_supply_report_with(2)
+    )
+    result = reviewer.review(changeset)
+    assert result.supply_chain is not None
+    assert len(result.supply_chain.changes) == 2
+
+
+def test_the_delta_is_reserved_out_of_the_diff_budget(tmp_path):
+    """Reserved, not measured. Without this a lockfile regeneration would push a
+    changed file out of the review it was supposed to get."""
+    changeset = make_changeset()
+    config = Config()
+
+    without = Reviewer(config=config, repo=tmp_path, llm=StubLLM(reply="findings: []"))
+    with_delta = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="findings: []"),
+        supply_chain=_supply_report_with(3),
+    )
+    baseline = without._diff_budget(changeset)
+    reserved = with_delta._diff_budget(changeset)
+    assert baseline - reserved == config.supply_chain.token_budget
+
+
+def test_a_nothing_relevant_report_reserves_nothing(tmp_path):
+    """`for_prompt` drops this report, so the section it would pay for is never
+    rendered and the diff must keep the budget."""
+    from roborak.core.models import SupplyChainReport, SupplyChainStatus
+
+    changeset = make_changeset()
+    config = Config()
+    reviewer = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="findings: []"),
+        supply_chain=SupplyChainReport(status=SupplyChainStatus.NOTHING_RELEVANT),
+    )
+    baseline = Reviewer(
+        config=config, repo=tmp_path, llm=StubLLM(reply="findings: []")
+    )._diff_budget(changeset)
+    assert reviewer._diff_budget(changeset) == baseline
+
+
+def test_feed_to_llm_off_reserves_nothing(tmp_path):
+    changeset = make_changeset()
+    config = Config()
+    config.supply_chain.feed_to_llm = False
+    reviewer = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="findings: []"),
+        supply_chain=_supply_report_with(3),
+    )
+    baseline = Reviewer(
+        config=config, repo=tmp_path, llm=StubLLM(reply="findings: []")
+    )._diff_budget(changeset)
+    assert reviewer._diff_budget(changeset) == baseline

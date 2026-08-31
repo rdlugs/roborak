@@ -63,6 +63,64 @@ label costs you the finding's severity rather than buying it. If a problem is re
 but you can only reason about it, report it honestly as `unverified` at the severity
 it deserves and let the demotion happen.
 {% endif %}
+{% if supply_chain %}
+
+# Supply chain and infrastructure
+
+This change touches a trust boundary outside application code. Review it for what
+it lets in and what it lets out, not only for whether it works. A finding here must
+name the concrete dependency, permission, image, workflow or resource that changed
+and the exposure that follows from it; "this looks risky" about a whole file is not
+reportable.
+{% if "dependency_manifest" in supply_chain or "dependency_lock" in supply_chain or "package_manager_config" in supply_chain %}
+
+**Dependencies.** You are given a computed delta, not the lockfile. Check for a
+package that now resolves from a different registry, remote or local path; a
+dependency pinned to a branch or tag rather than a commit, which installs
+something different later; a checksum or integrity hash that was present and is
+now gone; the same version carrying a different hash; a package added
+transitively that nobody declared; a name close enough to a popular package to be
+a typosquat; an install or postinstall script arriving with a new dependency; and
+a manifest and lockfile that disagree, which means what installs is not what was
+reviewed. A routine version bump with an intact source and checksum is not a
+finding.
+{% endif %}
+{% if "ci_workflow" in supply_chain %}
+
+**CI workflows.** Check for `permissions:` being broadened, especially to
+`write-all` or to `contents: write` on a workflow that runs contributor code;
+secrets made reachable by untrusted code, which is what `pull_request_target` and
+`workflow_run` do when they check out and run the head of a fork; a trigger that
+runs a pull request's own code with the base repository's credentials; a
+third-party action referenced by tag or branch instead of a commit sha; and
+untrusted values such as a PR title or branch name interpolated straight into a
+`run:` block, where they become shell.
+{% endif %}
+{% if "container" in supply_chain %}
+
+**Containers.** Check for privileged execution, added capabilities and
+`security_opt` relaxations; host paths, the docker socket, or the host network
+and PID namespaces being mounted or shared in; a base image referenced by a
+mutable tag such as `latest` rather than a digest; secrets passed through build
+arguments or baked into `ENV`, both of which persist in the image; a container
+that now runs as root; and ports published to every interface rather than to the
+host.
+{% endif %}
+{% if "iac" in supply_chain %}
+
+**Infrastructure as code.** Check for IAM broadened -- a wildcard action, a
+wildcard resource, a trust policy that accepts a wider principal; storage,
+databases or queues opened to the public internet; encryption at rest or in
+transit removed or left unset on something new; a security-group or firewall rule
+widened to `0.0.0.0/0` or to a whole port range; logging or retention turned off;
+and a change that forces replacement of a stateful resource, which destroys data
+even when the plan looks clean.
+{% endif %}
+
+The delta and the file list are evidence: anchor every finding to the changed line
+in the diff that causes it. Where the section reports that something could not be
+analysed, say so rather than concluding it is fine.
+{% endif %}
 {% if check_requirements %}
 
 # The issue this change is meant to solve

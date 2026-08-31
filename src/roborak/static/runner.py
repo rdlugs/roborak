@@ -19,9 +19,13 @@ from pathlib import Path
 from roborak.core.config import StaticConfig, StaticExecution
 from roborak.core.models import ChangedFile, ChangeSet, Finding
 from roborak.sandbox import in_ci, safe_environment, sandbox_prefix
+from roborak.static.adapters.actionlint import ActionlintAdapter
 from roborak.static.adapters.base import Adapter
+from roborak.static.adapters.checkov import CheckovAdapter
 from roborak.static.adapters.eslint import EslintAdapter
+from roborak.static.adapters.hadolint import HadolintAdapter
 from roborak.static.adapters.mypy import MypyAdapter
+from roborak.static.adapters.osv_scanner import OsvScannerAdapter
 from roborak.static.adapters.phpstan import PhpstanAdapter
 from roborak.static.adapters.ruff import RuffAdapter
 from roborak.static.adapters.semgrep import SemgrepAdapter
@@ -34,7 +38,22 @@ ALL_ADAPTERS: list[Adapter] = [
     SemgrepAdapter(),
     EslintAdapter(),
     PhpstanAdapter(),
+    # Supply-chain and infrastructure scanners. Availability-gated like every
+    # other adapter; `osv-scanner` additionally needs naming in `static.tools`,
+    # because it is the only one here that reaches the network.
+    ActionlintAdapter(),
+    HadolintAdapter(),
+    CheckovAdapter(),
+    OsvScannerAdapter(),
 ]
+
+
+@dataclass(frozen=True)
+class SkippedTool:
+    """A tool that applied to this change and could not run."""
+
+    name: str
+    reason: str
 
 
 @dataclass
@@ -42,9 +61,22 @@ class StaticRunner:
     repo: Path
     config: StaticConfig
     adapters: list[Adapter] = field(default_factory=lambda: list(ALL_ADAPTERS))
+    report_findings_enabled: bool = True
+
+    skipped: list[SkippedTool] = field(default_factory=list)
+    """Applicable tools that were not available, populated by ``run``.
+
+    Kept beside the findings rather than returned with them so that no existing
+    caller has to change shape. What reads it is the supply-chain report, where a
+    missing container or workflow linter is part of the coverage story."""
+
+    report_findings: list[Finding] = field(default_factory=list)
+    """Whole-asset findings routed to a stage report rather than an inline line."""
 
     def run(self, changeset: ChangeSet) -> list[Finding]:
         """Every applicable adapter over the changed files, narrowed to the changed lines."""
+        self.skipped.clear()
+        self.report_findings.clear()
         if not self.config.enabled or self.config.execution is StaticExecution.OFF:
             return []
 
@@ -63,18 +95,36 @@ class StaticRunner:
         findings: list[Finding] = []
         for adapter in self._selected_adapters():
             applicable = adapter.applicable(candidates)
-            if not applicable or not adapter.is_available(self.repo, applicable):
-                log.debug("skipping %s (unavailable or not applicable)", adapter.name)
+            if not applicable:
                 continue
-            findings.extend(self._run_one(adapter, applicable, sandboxed=sandboxed))
+            if not adapter.is_available(self.repo, applicable):
+                # Recorded rather than only logged: a reader who cannot tell "the
+                # container linter found nothing" from "the container linter is
+                # not installed" will read the first meaning into the second.
+                reason = f"`{adapter.binary}` is not installed or configured in this checkout."
+                self.skipped.append(SkippedTool(name=adapter.name, reason=reason))
+                log.debug("skipping %s: %s", adapter.name, reason)
+                continue
+            produced = self._run_one(adapter, applicable, sandboxed=sandboxed)
+            if adapter.report_only:
+                self.report_findings.extend(produced)
+            else:
+                findings.extend(produced)
 
         return self._restrict_to_changed_lines(findings, changeset)
 
     def _selected_adapters(self) -> list[Adapter]:
+        """The adapters this review may run.
+
+        ``None`` means autodetect, and autodetect stays offline: a tool that
+        reaches the network is included only when a project names it, so the
+        default pass keeps the guarantee in this module's docstring.
+        """
+        eligible = [a for a in self.adapters if self.report_findings_enabled or not a.report_only]
         if self.config.tools is None:
-            return self.adapters
+            return [a for a in eligible if not a.requires_network]
         wanted = {name.lower() for name in self.config.tools}
-        return [a for a in self.adapters if a.name in wanted]
+        return [a for a in eligible if a.name in wanted]
 
     def _run_one(
         self, adapter: Adapter, files: list[ChangedFile], *, sandboxed: list[str] | None

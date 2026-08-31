@@ -30,8 +30,9 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 | 🎯 **Anchored, not approximate** | Every finding points at a line the change actually touched — verified against the files on disk, not the model's word for it. |
 | 🧹 **Refuses more than it says** | Low-confidence findings filtered, duplicates collapsed, pre-existing lint debt suppressed, already-posted comments skipped. |
 | 🔌 **Four sources, one pipeline** | Local git, GitLab MRs, GitHub PRs and raw paths all normalise into one IR, so output modes can never disagree. |
-| 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan with *your* config, and feeds the results to the model to confirm or explain. |
+| 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan — plus actionlint, hadolint and checkov for workflows, containers and IaC — with *your* config, and feeds the results to the model to confirm or explain. |
 | 💬 **Publishes where you're looking** | Inline threads for what's worth interrupting for, a summary comment for the rest, incremental so re-runs don't repeat themselves. |
+| 📦 **Reads the lockfile you don't** | Lockfiles stay out of the model's context — they're generated data — so a parser reads them instead and reports what actually moved: a swapped registry, a lost checksum, a mutable git ref, manifest/lock drift. Changes to CI workflows, Dockerfiles and Terraform get their own review checklists. |
 | 🧭 **Maps the blast radius** | Traces changed symbols, routes, events, config keys and env vars out to the unchanged code that depends on them, and says plainly when it could not look. |
 | 📋 **Issue-aware** | `--issue 42` judges the diff against what was actually asked, and reports the requirements it misses. |
 
@@ -295,11 +296,22 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   revision so a change cannot define what verifies it, and every result — passed,
   failed, timed out, could not run, not executed — is recorded on the review rather
   than left for the reader to run themselves.
-- **The static pass** runs whichever of ruff, mypy, semgrep, eslint and phpstan
-  the repo actually has, using *the project's own config* — the rules a team
+- **The static pass** runs whichever of ruff, mypy, semgrep, eslint, phpstan,
+  actionlint, hadolint and checkov the repo actually has, using *the project's own
+  config* — the rules a team
   already agreed to. Findings on lines the change did not touch are dropped, so a
   linted file's pre-existing debt never lands on the author. What survives is fed
   to the model as evidence to confirm or explain, rather than reported raw.
+- **The supply-chain pass** reads the manifest and lockfile pairs a change
+  touched — npm/yarn/pnpm, Python, Go, Cargo, Composer — straight out of git, and
+  reduces them to a small delta: what was added, removed, upgraded, re-sourced, or
+  is no longer covered by a checksum. The lockfiles themselves never enter the
+  prompt, which is the point: they are excluded by `ignore_paths` for good reason,
+  and a review that could not see past that exclusion could not notice an
+  unexpected transitive package or a registry swap. When a change touches CI
+  workflows, containers or Terraform, the reviewer additionally gets a checklist
+  written for those trust boundaries rather than for application code. What could
+  not be parsed says so.
 - **Every finding is routed, not just printed.** A finding that points at a
   changed line and is worth interrupting for goes inline on the diff, where the
   author is already looking. A nitpick is folded into the summary instead, so the
@@ -438,7 +450,14 @@ review:
 static:
   enabled: true
   execution: auto     # local direct; CI sandboxed, or skipped if unavailable
-  tools: null          # null = autodetect what is on PATH
+  tools: null          # null = autodetect what is on PATH, minus networked tools
+
+supply_chain:
+  enabled: true        # dependency delta + CI/container/IaC review checklists
+  max_changes: 40      # source, integrity and drift changes sort ahead of bumps
+  max_assets: 20
+  feed_to_llm: true
+  token_budget: 1200   # reserved up front, so it never squeezes out a changed file
 
 verification:
   enabled: true        # no command configured = nothing runs, and no claim is made
@@ -540,6 +559,53 @@ so a suite that must write is reported as *could not run* rather than as a failu
 A failed suite does not move the pre-merge verdict or the exit code: that verdict
 counts findings. It does print beside it, so "pass" is never read as covering both.
 
+### Supply chain and infrastructure
+
+`ignore_paths` excludes every lockfile from the review by default, and that is the
+right call: a lockfile is generated data, and sending one to a model spends
+thousands of tokens asking it to do a diff badly. But excluding it also hides an
+unexpected transitive package, a swapped registry, a checksum that quietly
+disappeared, or a manifest edit that never reached the lock.
+
+So the lockfile stays out of the prompt and a deterministic parser reads it
+instead. What the model gets is a bounded delta — what was added, removed,
+upgraded, downgraded, re-sourced, or is no longer covered by a hash — plus
+manifest/lock drift.
+
+| Ecosystem | Manifests | Lockfiles |
+|---|---|---|
+| npm / yarn / pnpm | `package.json` | `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (Classic and Berry), `pnpm-lock.yaml` |
+| Python | `pyproject.toml`, `requirements*.txt` | `uv.lock`, `poetry.lock`, `pdm.lock` |
+| Go | `go.mod` | `go.sum` |
+| Rust | `Cargo.toml` | `Cargo.lock` |
+| PHP | `composer.json` | `composer.lock` |
+
+Anything else — `Gemfile.lock`, `Pipfile.lock`, `gradle.lockfile`, `mix.lock` — is
+named in the report as unanalysed rather than passed over in silence.
+
+Both sides are read from git, not from the diff: whole-file parses compared
+against each other, so a reformat that moves every line produces no changes at
+all. The old side is read at the **merge base**, so a dependency somebody else
+bumped on the base branch is not reported as part of this change. A forge diff
+that is not checked out has no readable sides, and the report says so instead of
+guessing.
+
+Changes to CI workflows, Dockerfiles, compose files and Terraform additionally
+turn on review checklists written for those trust boundaries — workflow
+permissions and secret exposure, container privilege and mutable base images,
+IAM and public access — gated so that a Terraform-only change never pays for the
+npm checklist.
+
+Three optional scanners run when the repository already has them:
+`actionlint` for workflows, `hadolint` for Dockerfiles and `checkov` for IaC.
+`osv-scanner` is supported too, but because it queries a vulnerability service it
+is **never autodetected**: it runs only when a project names it in `static.tools`.
+Everything else stays offline, and nothing is ever installed. A scanner that
+applied to the change and was not available is named in the report, so a clean
+section cannot be mistaken for a checked one.
+
+`--no-supply-chain` (or `supply_chain.enabled: false`) switches the stage off.
+
 ### Static-analysis trust
 
 > [!IMPORTANT]
@@ -574,7 +640,7 @@ Three decisions carry most of the weight:
 ## Development
 
 ```bash
-uv run pytest              # 502 tests
+uv run pytest              # 940 tests
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src/roborak

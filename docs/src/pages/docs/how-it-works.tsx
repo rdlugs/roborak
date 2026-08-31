@@ -48,8 +48,9 @@ export default function HowItWorks() {
 
       <H2>The static pass, as evidence</H2>
       <P>
-        roborak runs whichever of ruff, mypy, semgrep, eslint and phpstan the repository actually
-        has, using <em>the project&apos;s own config</em> the rules a team already agreed to.
+        roborak runs whichever of ruff, mypy, semgrep, eslint, phpstan, actionlint, hadolint and
+        checkov the repository actually has, using <em>the project&apos;s own config</em> the
+        rules a team already agreed to.
       </P>
       <Ul>
         <Li>
@@ -64,6 +65,36 @@ export default function HowItWorks() {
       <P>
         The trust boundary around running repository tooling has its own page:{" "}
         <A href="/docs/static-analysis">Static analysis</A>.
+      </P>
+
+      <H2>The supply-chain pass</H2>
+      <P>
+        Lockfiles are excluded from the model&apos;s context by <Code>ignore_paths</Code>, and
+        should be they are generated data. But that exclusion also hides the changes worth
+        catching, so a parser reads the manifest and lockfile pairs a change touched and reduces
+        them to a small delta: what was added, removed, upgraded, re-sourced, or is no longer
+        covered by a checksum, plus manifest/lock drift.
+      </P>
+      <Ul>
+        <Li>
+          Both files are parsed whole and compared, so a reformat that moves every line produces
+          no changes at all. The old side is read at the merge base, so somebody else&apos;s bump
+          on the base branch is not billed to this change; the local head side is read from the
+          working tree, so an uncommitted change is covered too.
+        </Li>
+        <Li>
+          Changes to CI workflows, Dockerfiles and Terraform turn on review checklists written for
+          those trust boundaries, gated so an ordinary code change pays for none of them.
+        </Li>
+        <Li>
+          A recognised lockfile with no parser, and a scanner that is not installed, are{" "}
+          <em>named</em> in the report a clean section that nobody could check must not read
+          like a checked one.
+        </Li>
+      </Ul>
+      <P>
+        Supported ecosystems and the offline guarantee are on the{" "}
+        <A href="/docs/configuration">Configuration</A> page.
       </P>
 
       <H2>Every finding is routed, not just printed</H2>

@@ -33,6 +33,7 @@ from roborak.core.models import (
     OmissionReason,
     ReviewResult,
     ReviewStatus,
+    SupplyChainReport,
     VerificationReport,
     Walkthrough,
 )
@@ -56,6 +57,7 @@ from roborak.llm.prompt import (
 )
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
+from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +86,11 @@ class Reviewer:
     verification: VerificationReport | None = None
     """What the project's own checks said, when the CLI ran them. ``None`` means
     the stage never ran, which is not the same as a report saying it was skipped."""
+
+    supply_chain: SupplyChainReport | None = None
+    """What the change does to dependencies and infrastructure, when the CLI
+    analysed it. Computed there rather than here because it needs the changeset
+    *before* ``ignore_paths`` removes every lockfile from it."""
 
     issue: Issue | None = None
     """What the change is supposed to achieve, when ``--issue`` supplied one."""
@@ -123,6 +130,11 @@ class Reviewer:
             # change whose files all filtered out still has an execution record
             # that a dropped report would silently turn into "never configured".
             verification=self.verification,
+            # Same reasoning, and load-bearing rather than defensive here: a change
+            # that only touches lockfiles filters to nothing, and dropping the
+            # report would leave the one review that most needs it with no
+            # dependency analysis at all.
+            supply_chain=self.supply_chain,
         )
 
         if not self._prepare(changeset, result):
@@ -487,6 +499,7 @@ class Reviewer:
             issue=self.issue,
             impact=self._impact,
             verification=self._verification_for_prompt(),
+            supply_chain=self._supply_chain_for_prompt(),
             contract_contexts=contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
@@ -526,6 +539,7 @@ class Reviewer:
             issue=self.issue,
             impact=self._impact,
             verification=self._verification_for_prompt(),
+            supply_chain=self._supply_chain_for_prompt(),
             contract_contexts=contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
@@ -604,6 +618,16 @@ class Reviewer:
         # before it is ever rendered, and reserving the ceiling up front is what
         # stops a large map from squeezing a changed file out of its own review.
         reserved = self.config.impact.token_budget if self._impact is not None else 0
+        # The dependency delta is reserved on the same terms and, like the map, is
+        # deliberately absent from the prompt measured above: it is capped by
+        # `max_changes` before it is ever rendered, and measuring it here as well
+        # as reserving it would charge the diff for it twice.
+        # `for_prompt` is the same call the prompt builder makes, and it drops a
+        # `nothing_relevant` report entirely -- so asking it, rather than only
+        # whether the stage ran, keeps the diff from paying for a section that
+        # renders as nothing.
+        if supply_chain_for_prompt(self._supply_chain_for_prompt()) is not None:
+            reserved += self.config.supply_chain.token_budget
         return max(1, self.llm.context_budget - overhead - reserved - 200)
 
     def _verification_for_prompt(self) -> VerificationReport | None:
@@ -611,6 +635,12 @@ class Reviewer:
         if not self.config.verification.feed_to_llm:
             return None
         return self.verification
+
+    def _supply_chain_for_prompt(self) -> SupplyChainReport | None:
+        """The dependency and infrastructure report, when the project wants it seen."""
+        if not self.config.supply_chain.feed_to_llm:
+            return None
+        return self.supply_chain
 
     def _static_for_prompt(self, changeset: ChangeSet) -> list[Finding]:
         """Only the static findings for files in this pass, so chunks stay focused."""

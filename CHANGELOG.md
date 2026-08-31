@@ -12,6 +12,46 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **Supply-chain and infrastructure review.** `ignore_paths` excludes every
+  lockfile from a review, which is right — a lockfile is generated data, and
+  sending one to a model spends thousands of tokens asking it to do a diff badly —
+  but it also meant a review could not notice an unexpected transitive package, a
+  swapped registry, a checksum that quietly disappeared, or a manifest edit that
+  never reached the lock. The lockfile now stays out of the prompt and a
+  deterministic parser reads it instead, producing a bounded delta: added,
+  removed, upgraded, downgraded, re-sourced, integrity lost or replaced, and
+  manifest/lock drift. npm/yarn/pnpm, Python (uv, poetry, pdm, requirements), Go,
+  Cargo and Composer are supported; a lockfile roborak recognises but has no
+  parser for (`Pipfile.lock`, `Gemfile.lock`, `packages.lock.json`,
+  `gradle.lockfile`, `mix.lock`, `pubspec.lock`, `flake.lock`) is *named* in the
+  report as unanalysed rather than passed over. Both files are parsed whole and
+  compared, so a reformat produces no changes at all; the old side is read at the
+  **merge base**, so a bump somebody else landed on the base branch is not billed
+  to this change, and the local head side is read from the working tree, so an
+  uncommitted change is covered too. A forge diff that is not checked out reports
+  `unavailable` rather than guessing.
+
+  Changes to CI workflows, Dockerfiles, compose files and Terraform additionally
+  turn on security checklists written for those trust boundaries — workflow
+  permission broadening and secret exposure to untrusted code, container
+  privilege, capabilities and mutable base images, IAM broadening and public
+  access — each gated on the boundary actually being touched, so a Terraform-only
+  change never pays for the npm checklist and an ordinary code change pays for
+  none of them. `actionlint`, `hadolint` and `checkov` run when the repository
+  already has them; `osv-scanner` is supported but never autodetected, because it
+  queries a vulnerability service and the static pass promises to stay offline —
+  it runs only when a project names it in `static.tools`. A scanner that applied
+  and was not installed is reported, so a clean section cannot be read as a
+  checked one.
+
+  Present on every surface — terminal, markdown, JSON (`supply_chain`, schema v4)
+  and the published comment — with the same `None`-versus-status contract the
+  blast radius and verification already keep: an absent report means the stage
+  never ran, and `nothing_relevant` means it ran and this change touches nothing.
+  The section's token cost is reserved out of the diff budget up front, so it can
+  never squeeze a changed file out of its own review. `--no-supply-chain`,
+  `ROBORAK_NO_SUPPLY_CHAIN` and `supply_chain.enabled` switch it off.
+
 - **Proportional test verification.** A review can now run the project's own tests
   and report what they said, instead of noting missing coverage and leaving the
   reader to go and find out. `verification.commands` maps changed paths to argv

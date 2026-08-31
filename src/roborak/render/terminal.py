@@ -25,6 +25,8 @@ from roborak.core.models import (
     ImpactMap,
     ImpactStatus,
     ReviewResult,
+    SupplyChainReport,
+    SupplyChainStatus,
     VerificationReport,
     VerificationStatus,
 )
@@ -42,6 +44,11 @@ from roborak.core.verdict import Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.markdown import FLOW_SUMMARY
+
+MAX_SUPPLY_CHAIN_LINES = 5
+"""Dependency movements named in the terminal. The delta is already ordered most
+alarming first, so the head of it is the part worth a line here; the rest is in
+the markdown report, which has a table."""
 
 SEVERITY_ICON = {
     Severity.CRITICAL: "✖",
@@ -63,8 +70,16 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
 
     _render_verification(result.verification, console)
     _render_impact(result.impact, console)
+    _render_supply_chain(result.supply_chain, console)
 
     if not result.findings:
+        if result.supply_chain and result.supply_chain.scanner_findings:
+            # Not the clean path: the scanner facts printed above are findings,
+            # they are counted in the summary, and they can block the merge. A
+            # review that exits non-zero must still show the verdict that says so.
+            console.print("\n[dim]No additional inline findings.[/]\n")
+            _render_summary(result, console)
+            return
         _render_clean(result, console)
         return
 
@@ -105,6 +120,57 @@ def _render_impact(impact: ImpactMap | None, console: Console) -> None:
     else:
         console.print(f"[{style}]blast radius: {label}[/]", highlight=False)
     for note in impact.notes:
+        console.print(f"  [dim]{note}[/]", highlight=False)
+
+
+_SUPPLY_CHAIN_STYLE: dict[SupplyChainStatus, str] = {
+    SupplyChainStatus.ANALYSED: "cyan",
+    SupplyChainStatus.NOTHING_RELEVANT: "dim",
+    SupplyChainStatus.UNSUPPORTED: "yellow",
+    SupplyChainStatus.UNAVAILABLE: "yellow",
+}
+
+
+def _render_supply_chain(report: SupplyChainReport | None, console: Console) -> None:
+    """What the change does to dependencies and infrastructure, in one line.
+
+    The quiet case is skipped: a change that touches no dependency, workflow,
+    container or infrastructure has nothing to say here, and saying it on every
+    review would train a reader to stop reading the line. Every other status is
+    printed, clean run included -- "no findings" and "no findings, and the
+    lockfile could not be read" are different reviews.
+    """
+    if report is None or report.status is SupplyChainStatus.NOTHING_RELEVANT:
+        return
+    label = report.status.value.replace("_", " ")
+    console.print()
+    detail = f"{len(report.assets)} file(s)"
+    if report.changes:
+        detail += f", {len(report.changes)} dependency change(s)"
+    if report.scanner_findings:
+        detail += f", {len(report.scanner_findings)} scanner finding(s)"
+    if report.truncated:
+        detail += ", truncated"
+    console.print(
+        f"[{_SUPPLY_CHAIN_STYLE[report.status]}]supply chain: {label}[/] [dim]— {detail}[/]",
+        highlight=False,
+    )
+    for change in report.changes[:MAX_SUPPLY_CHAIN_LINES]:
+        version = f" {change.display_version}" if change.display_version else ""
+        console.print(
+            f"  [dim]{change.kind.value.replace('_', ' ')}: {change.name}{version}[/]",
+            highlight=False,
+        )
+    for finding in report.scanner_findings[:MAX_SUPPLY_CHAIN_LINES]:
+        console.print(
+            f"  [{SEVERITY_STYLE[finding.severity]}]{SEVERITY_ICON[finding.severity]} "
+            f"{finding.title}[/] [dim]({finding.file})[/]",
+            highlight=False,
+        )
+    if len(report.changes) > MAX_SUPPLY_CHAIN_LINES:
+        remaining = len(report.changes) - MAX_SUPPLY_CHAIN_LINES
+        console.print(f"  [dim]… and {remaining} more; see the report[/]", highlight=False)
+    for note in report.notes:
         console.print(f"  [dim]{note}[/]", highlight=False)
 
 
@@ -342,7 +408,9 @@ def _render_summary(result: ReviewResult, console: Console) -> None:
             )
     console.print(table)
 
-    total = len(result.findings)
+    # Scanner facts included, because the severity table above counts them and a
+    # total that disagreed with the rows it sits under is worse than no total.
+    total = len(result.all_findings())
     console.print(f"\n[bold]{total} finding{'s' if total != 1 else ''}[/].")
     _render_footer(result, console)
 

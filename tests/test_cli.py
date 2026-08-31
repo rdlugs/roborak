@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from roborak import __version__
 from roborak.cli.main import app
-from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
+from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, _load_paths
 from roborak.publish.base import RemoteState
 
 runner = CliRunner()
@@ -91,6 +91,61 @@ def test_a_plain_directory_is_reviewed_file_by_file(tmp_path: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--json", "-C", str(plain)])
     assert result.exit_code == EXIT_OK
     assert json.loads(result.stdout)["changeset"]["origin"] == "paths"
+
+
+def test_plain_directory_supply_analysis_keeps_lockfiles_out_of_review_context(tmp_path: Path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "package.json").write_text('{"name":"app","dependencies":{"lodash":"^4.17.21"}}')
+    (plain / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"name": "app", "dependencies": {"lodash": "^4.17.21"}},
+                    "node_modules/lodash": {"version": "4.17.21"},
+                },
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["review", "--no-llm", "--json", "-C", str(plain)])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)
+    assets = {asset["path"] for asset in payload["supply_chain"]["assets"]}
+    assert "package-lock.json" in assets
+    assert "package-lock.json" not in payload["coverage"]["reviewed_files"]
+
+
+def test_ignored_noise_does_not_spend_a_plain_directory_review_budget(tmp_path: Path):
+    """`ignore_paths` is applied while walking, so ignored files cannot fill `max_files`.
+
+    A lockfile is exempt: the supply-chain stage still reads it, and it is dropped
+    again before anything reaches the prompt.
+    """
+    from rich.console import Console
+
+    from roborak.core.config import DEFAULT_IGNORE_PATHS
+
+    plain = tmp_path / "plain"
+    (plain / "node_modules").mkdir(parents=True)
+    (plain / "app.py").write_text("def f():\n    return 1\n")
+    (plain / "bundle.min.js").write_text("var a=1;\n")
+    (plain / "uv.lock").write_text("version = 1\n")
+
+    changeset = _load_paths(
+        Console(),
+        plain,
+        ignore_paths=list(DEFAULT_IGNORE_PATHS),
+        base=None,
+        committed=False,
+        uncommitted=False,
+        include_untracked=False,
+        quiet=True,
+    )
+    paths = {file.path for file in changeset.files}
+    assert "bundle.min.js" not in paths
+    assert paths == {"app.py", "uv.lock"}
 
 
 def test_a_missing_directory_is_reported_as_a_source_error(tmp_path: Path):
@@ -239,7 +294,7 @@ def test_json_mode_emits_only_json(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert "findings" in payload
 
 
@@ -254,6 +309,9 @@ def test_agent_mode_emits_only_json(repo: Path):
         "coverage",
         "summary",
         "findings",
+        # Present even on a change that touches no dependency: an absent key has
+        # to keep meaning "the stage never ran".
+        "supply_chain",
     }
 
 
@@ -1885,3 +1943,26 @@ def test_no_summary_leaves_the_overview_pass_exactly_as_it_was(repo: Path):
 def test_a_local_review_has_no_published_overview_to_reuse(repo: Path):
     plan = _plan(_overview_session(repo), None, publishing=False)
     assert plan.generate and not plan.post_summary
+
+
+def test_no_supply_chain_switches_the_stage_off(repo: Path):
+    """Off must mean absent, not an empty report: the two say different things."""
+    (repo / "package.json").write_text('{"name": "app", "dependencies": {"a": "^1.0.0"}}')
+    result = runner.invoke(
+        app,
+        ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json", "--no-supply-chain"],
+    )
+    assert result.exit_code == EXIT_OK
+    assert "supply_chain" not in json.loads(result.stdout)
+
+
+def test_a_dependency_change_reaches_the_json_output(repo: Path):
+    (repo / "package.json").write_text('{"name": "app", "dependencies": {"a": "^1.0.0"}}')
+    # Staged rather than merely written: `git diff HEAD` does not list an
+    # untracked file, so an unstaged manifest is not part of the change at all.
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)["supply_chain"]
+    assert payload["status"] == "analysed"
+    assert [asset["kind"] for asset in payload["assets"]] == ["dependency_manifest"]

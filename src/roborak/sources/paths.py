@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,6 +73,12 @@ class PathsSource:
     ignore_paths: list[str] = field(default_factory=list)
     max_file_bytes: int = MAX_FILE_BYTES
     max_files: int = MAX_FILES
+    keep: Callable[[str], bool] | None = None
+    """Paths that survive ``ignore_paths``.
+
+    A lockfile is ignored for the prompt and still needed by the supply-chain
+    stage, so it is kept here and dropped later, rather than the whole of
+    ``ignore_paths`` being skipped to save it."""
 
     def load(self) -> ChangeSet:
         self._ensure_directory()
@@ -106,6 +113,7 @@ class PathsSource:
             raise SourceError(f"Could not scan {error.filename or self.root}: {error}") from error
 
         found: list[str] = []
+        retained: list[str] = []
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=raise_walk_error
         ):
@@ -121,6 +129,13 @@ class PathsSource:
                     continue
                 relative = path.relative_to(self.root).as_posix()
                 if matches_any(relative, self.ignore_paths):
+                    if self.keep is not None and self.keep(relative):
+                        # Kept for the supply-chain stage alone, so it is held
+                        # apart from the source-file budget: a lockfile that a
+                        # vast tree pushed past `max_files` would take the whole
+                        # dependency analysis with it.
+                        retained.append(relative)
+                        continue
                     log.debug("ignoring %s (matches ignore_paths)", relative)
                     continue
                 found.append(relative)
@@ -130,7 +145,7 @@ class PathsSource:
             log.warning("%d files found; reviewing the first %d", len(found), self.max_files)
             changeset.omitted_files.extend(found[self.max_files :])
             found = found[: self.max_files]
-        return found
+        return sorted(found + retained)
 
     def _read(self, relative: str, changeset: ChangeSet) -> ChangedFile | None:
         """One file as a whole-file addition, or a marker for why it is not reviewable."""

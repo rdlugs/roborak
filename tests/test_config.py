@@ -235,3 +235,38 @@ def test_require_evidence_can_be_turned_off_in_a_project_config(tmp_path: Path, 
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     (tmp_path / ".roborak.yaml").write_text("review:\n  require_evidence: false\n")
     assert load_config(tmp_path).review.require_evidence is False
+
+
+def test_supply_chain_defaults_and_strictness(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    config = load_config(tmp_path)
+    assert config.supply_chain.enabled
+    assert config.supply_chain.feed_to_llm
+    assert config.supply_chain.max_changes == 40
+    assert config.supply_chain.token_budget == 1200
+
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config.model_validate({"supply_chain": {"max_assets": 0}})
+    with pytest.raises(ValidationError):
+        Config.model_validate({"supply_chain": {"enabeld": True}})
+
+
+def test_supply_chain_can_be_switched_off_by_env(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    monkeypatch.setenv("ROBORAK_NO_SUPPLY_CHAIN", "1")
+    assert load_config(tmp_path).supply_chain.enabled is False
+    monkeypatch.setenv("ROBORAK_NO_SUPPLY_CHAIN", "0")
+    assert load_config(tmp_path).supply_chain.enabled is True
+
+
+def test_the_shipped_template_matches_the_config_model(tmp_path: Path, monkeypatch):
+    """A template key the model rejects is a config file that fails on first use."""
+    from roborak.core.config import PROJECT_CONFIG_NAMES
+
+    template = Path(__file__).resolve().parents[1] / "src" / "roborak" / "config_template.yaml"
+    (tmp_path / PROJECT_CONFIG_NAMES[0]).write_text(template.read_text())
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    monkeypatch.delenv("CI", raising=False)
+    assert load_config(tmp_path).supply_chain.max_changes == 40

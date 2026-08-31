@@ -35,7 +35,15 @@ def blocking_findings(result: ReviewResult, floor: Severity) -> list[Finding]:
     The single predicate behind the exit code, the rendered block and the forge
     status. Anything that wants to know "is this blocked?" asks here.
     """
-    return [f for f in result.sorted_findings() if f.severity.at_least(floor)]
+    return sorted(
+        (finding for finding in result.all_findings() if finding.severity.at_least(floor)),
+        key=lambda finding: (
+            -finding.severity.rank,
+            -finding.confidence,
+            finding.file,
+            finding.start_line,
+        ),
+    )
 
 
 @dataclass(frozen=True)

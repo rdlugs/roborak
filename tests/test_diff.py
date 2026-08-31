@@ -232,7 +232,18 @@ def test_removed_lines_render_without_a_number():
 
 def test_detect_language():
     assert detect_language("a/b/c.php") == "php"
-    assert detect_language("Makefile") is None
+    assert detect_language("weird") is None
+
+
+def test_files_named_after_their_type_are_detected_by_name():
+    """A Dockerfile has no suffix, so a suffix lookup alone can never see one --
+    and the container checks are gated on there being a container file."""
+    assert detect_language("Dockerfile") == "dockerfile"
+    assert detect_language("ops/Dockerfile.prod") == "dockerfile"
+    assert detect_language("build/Containerfile") == "dockerfile"
+    assert detect_language("service.dockerfile") == "dockerfile"
+    assert detect_language("Makefile") == "make"
+    assert detect_language("infra/vars.tfvars") == "terraform"
 
 
 def _numbers_in(rendered: str) -> list[int]:

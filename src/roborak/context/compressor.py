@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from roborak.core.models import ChangedFile, ChangeSet
 
@@ -45,8 +45,15 @@ _LANGUAGE_PRIORITY: dict[str | None, int] = {
     "css": 3,
     "scss": 3,
     "yaml": 5,
-    "toml": 4,
-    "json": 2,
+    # A manifest is small, and what it declares -- a dependency, a permission, a
+    # base image -- outweighs most code changes it travels with. Ranked above
+    # plain data because dropping `package.json` under budget pressure while
+    # keeping a stylesheet is exactly backwards.
+    "dockerfile": 8,
+    "toml": 6,
+    "json": 4,
+    "make": 4,
+    "groovy": 4,
     "markdown": 1,
     None: 5,
 }
@@ -126,7 +133,7 @@ def _interest(file: ChangedFile) -> tuple[int, int]:
     return (_LANGUAGE_PRIORITY.get(file.language, 5), len(file.added_lines))
 
 
-def matches_any(path: str, patterns: list[str]) -> bool:
+def matches_any(path: str, patterns: Sequence[str]) -> bool:
     """Whether a repo-relative path matches any ignore-style glob."""
     for pattern in patterns:
         if fnmatch.fnmatch(path, pattern):

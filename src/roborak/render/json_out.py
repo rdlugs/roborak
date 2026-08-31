@@ -14,12 +14,13 @@ from roborak.core.models import (
     Finding,
     ImpactMap,
     ReviewResult,
+    SupplyChainReport,
     VerificationReport,
     VerificationStatus,
 )
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -41,7 +42,7 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
             ],
         },
         "summary": {
-            "total": len(result.findings),
+            "total": len(result.all_findings()),
             "by_severity": {s.value: n for s, n in result.counts_by_severity.items() if n},
             "has_blocking": result.has_blocking,
         },
@@ -68,6 +69,13 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     # wants to know whether this review has an execution record behind it.
     if result.verification is not None:
         payload["verification"] = _verification_dict(result.verification, agent=agent)
+
+    # Same contract again. An absent key means the stage never ran; a present one
+    # whose status is `nothing_relevant` means it ran and this change touches no
+    # dependency or infrastructure, and something deciding whether a change is
+    # safe to merge must not read the first as the second.
+    if result.supply_chain is not None:
+        payload["supply_chain"] = _supply_chain_dict(result.supply_chain)
     payload["summary"]["verified"] = (
         result.verification is not None and result.verification.executed
     )
@@ -129,6 +137,36 @@ def _impact_dict(impact: ImpactMap, *, agent: bool) -> dict[str, Any]:
                 ],
             }
             for node in impact.nodes
+        ],
+    }
+
+
+def _supply_chain_dict(report: SupplyChainReport) -> dict[str, Any]:
+    """The dependency and infrastructure delta as plain data.
+
+    Identical in both shapes. There is nothing here an agent should be spared:
+    the whole report is already a bounded summary, and the parts a human reads
+    first -- a changed source, a lost checksum -- are exactly the parts an agent
+    gating a merge needs.
+    """
+    return {
+        "status": report.status.value,
+        "ecosystems": list(report.ecosystems),
+        "truncated": report.truncated,
+        "notes": list(report.notes),
+        "assets": [asset.model_dump(mode="json") for asset in report.assets],
+        "changes": [change.model_dump(mode="json") for change in report.changes],
+        "scanner_findings": [
+            {
+                "file": finding.file,
+                "severity": finding.severity.value,
+                "title": finding.title,
+                "body": finding.body,
+                "rule_id": finding.rule_id,
+                "confidence": finding.confidence,
+                "tool": finding.tool,
+            }
+            for finding in report.scanner_findings
         ],
     }
 

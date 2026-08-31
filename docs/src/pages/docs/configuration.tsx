@@ -242,6 +242,72 @@ export default function Configuration() {
         there is no unchanged consumer to find.
       </P>
 
+      <H3>supply_chain</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "supply_chain:",
+          "  enabled: true         # dependency delta + CI/container/IaC checklists",
+          "  max_changes: 40       # dependency movements carried into the report",
+          "  max_assets: 20        # manifest, lock and infrastructure files parsed",
+          "  timeout_seconds: 10",
+          "  feed_to_llm: true",
+          "  token_budget: 1200    # prompt tokens the dependency section may occupy",
+        ].join("\n")}
+      />
+      <P>
+        <Code>ignore_paths</Code> excludes every lockfile from a review, and it should: a lockfile
+        is generated data, and sending one to a model spends thousands of tokens asking it to do a
+        diff badly. But that exclusion also hides an unexpected transitive package, a swapped
+        registry, a checksum that quietly disappeared, or a manifest edit that never reached the
+        lock. So the lockfile stays out of the prompt and a parser reads it instead.
+      </P>
+      <Table
+        minWidth={640}
+        columns={[
+          { key: "eco", header: "Ecosystem", width: 2 },
+          { key: "manifests", header: "Manifests", mono: true, width: 3 },
+          { key: "locks", header: "Lockfiles", mono: true, width: 4 },
+        ]}
+        rows={[
+          {
+            eco: "npm / yarn / pnpm",
+            manifests: "package.json",
+            locks: "package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml",
+          },
+          {
+            eco: "Python",
+            manifests: "pyproject.toml, requirements*.txt",
+            locks: "uv.lock, poetry.lock, pdm.lock",
+          },
+          { eco: "Go", manifests: "go.mod", locks: "go.sum" },
+          { eco: "Rust", manifests: "Cargo.toml", locks: "Cargo.lock" },
+          { eco: "PHP", manifests: "composer.json", locks: "composer.lock" },
+        ]}
+      />
+      <P>
+        Anything else <Code>Gemfile.lock</Code>, <Code>Pipfile.lock</Code>,{" "}
+        <Code>gradle.lockfile</Code>, <Code>mix.lock</Code> is named in the report as unanalysed
+        rather than passed over in silence. Both sides are read whole from git and compared, so a
+        reformat that moves every line produces no changes at all, and the old side is read at the{" "}
+        <em>merge base</em>, so a dependency somebody else bumped on the base branch is not
+        reported as part of this change. A forge diff that is not checked out has no readable
+        sides and says <Code>unavailable</Code> instead of guessing.
+      </P>
+      <P>
+        Changes to CI workflows, Dockerfiles, compose files and Terraform additionally turn on
+        review checklists written for those trust boundaries workflow permissions and secret
+        exposure, container privilege and mutable base images, IAM broadening and public access.
+        Each is gated on the boundary actually being touched, so a Terraform-only change never
+        pays for the npm checklist and an ordinary code change pays for none of them.
+      </P>
+      <P>
+        Everything here stays offline. <Code>actionlint</Code>, <Code>hadolint</Code> and{" "}
+        <Code>checkov</Code> run when the repository already has them; <Code>osv-scanner</Code> is
+        supported but never autodetected, because it queries a vulnerability service see{" "}
+        <A href="/docs/static-analysis">static analysis</A>. Nothing is ever installed.
+      </P>
+
       <H3>output</H3>
       <CodeBlock
         label=".roborak.yaml"

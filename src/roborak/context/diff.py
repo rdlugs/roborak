@@ -64,11 +64,37 @@ _LANG_BY_SUFFIX: dict[str, str] = {
     ".scss": "scss",
     ".vue": "vue",
     ".tf": "terraform",
+    ".tfvars": "terraform",
+    ".hcl": "terraform",
+    ".dockerfile": "dockerfile",
 }
+
+_LANG_BY_NAME: dict[str, str] = {
+    "dockerfile": "dockerfile",
+    "containerfile": "dockerfile",
+    "makefile": "make",
+    "gemfile": "ruby",
+    "rakefile": "ruby",
+    "jenkinsfile": "groovy",
+}
+"""Files whose name *is* their type. A suffix lookup returns nothing for these, so
+a Dockerfile was previously indistinguishable from a file with no language at
+all -- which is what kept the container checks from ever being able to fire."""
 
 
 def detect_language(path: str) -> str | None:
-    return _LANG_BY_SUFFIX.get(PurePosixPath(path).suffix.lower())
+    """The language of a file, by suffix and then by name.
+
+    Suffix first: ``Dockerfile.prod`` has the suffix ``.prod``, which matches
+    nothing, and its *stem* is what identifies it. A bare ``Dockerfile`` has no
+    suffix at all, so the name table is what answers for it.
+    """
+    name = PurePosixPath(path).name.lower()
+    if language := _LANG_BY_SUFFIX.get(PurePosixPath(name).suffix):
+        return language
+    if language := _LANG_BY_NAME.get(name):
+        return language
+    return _LANG_BY_NAME.get(name.split(".", 1)[0])
 
 
 def parse_diff(diff_text: str) -> list[ChangedFile]:

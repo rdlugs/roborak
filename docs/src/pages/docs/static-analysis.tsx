@@ -17,9 +17,10 @@ export default function StaticAnalysis() {
 
       <H2>What it runs</H2>
       <P>
-        Whichever of ruff, mypy, semgrep, eslint and phpstan the repository actually has, using{" "}
-        <em>the project&apos;s own config</em> the rules a team already agreed to, not a set
-        roborak imposes. With <Code>tools: null</Code> it autodetects what is on <Code>PATH</Code>.
+        Whichever of ruff, mypy, semgrep, eslint, phpstan, actionlint, hadolint and checkov the
+        repository actually has, using <em>the project&apos;s own config</em> the rules a team
+        already agreed to, not a set roborak imposes. With <Code>tools: null</Code> it autodetects
+        what is on <Code>PATH</Code>.
       </P>
       <Ul>
         <Li>
@@ -32,6 +33,18 @@ export default function StaticAnalysis() {
         </Li>
       </Ul>
       <CodeBlock shell code={"rk review --no-llm    # static analysis only; makes no model calls"} />
+
+      <H2>Scanners that would reach the network</H2>
+      <P>
+        One adapter is deliberately excluded from autodetection. <Code>osv-scanner</Code> queries a
+        vulnerability service, and the static pass promises it installs nothing and fetches
+        nothing so it runs only when a project names it explicitly:
+      </P>
+      <CodeBlock code={"static:\n  tools: [\"ruff\", \"osv-scanner\"]   # naming it is the opt-in"} />
+      <P>
+        A scanner that applied to the change and was not installed is named in the review&apos;s
+        supply-chain section, so a clean report cannot be mistaken for a checked one.
+      </P>
 
       <H2>Why this needs a trust boundary</H2>
       <Callout kind="warn" title="Static analysers execute repository code">

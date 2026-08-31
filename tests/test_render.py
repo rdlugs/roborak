@@ -13,6 +13,7 @@ import pytest
 from rich.console import Console
 
 from roborak.core.models import (
+    AssetKind,
     BoundaryKind,
     ChangedFile,
     ChangeSet,
@@ -31,7 +32,7 @@ from roborak.core.models import (
     ReviewRole,
     Walkthrough,
 )
-from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
+from roborak.core.severity import SEVERITY_LABEL, Category, Effort, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only, terminal
 
@@ -150,7 +151,7 @@ def test_json_coverage_explains_semantic_order_and_omitted_roles():
         ],
     )
     payload = json.loads(json_out.render(result))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["coverage"]["file_plan"][0] == {
         "path": "app/auth.py",
         "role": "contract",
@@ -1241,3 +1242,204 @@ def test_the_panel_view_states_the_blast_radius_in_one_line():
     assert "blast radius: consumers found" in output
     assert "2 boundary(s), 1 consumer(s)" in output
     assert "impact.max_nodes" in output
+
+
+def _supply_report(**overrides):
+    from roborak.core.models import (
+        ChangedAsset,
+        DependencyChange,
+        DependencyChangeKind,
+        SupplyChainReport,
+        SupplyChainStatus,
+    )
+
+    defaults = {
+        "status": SupplyChainStatus.ANALYSED,
+        "ecosystems": ["npm"],
+        "assets": [ChangedAsset(path="package-lock.json", kind=AssetKind.DEPENDENCY_LOCK)],
+        "changes": [
+            DependencyChange(
+                ecosystem="npm",
+                name="lodash",
+                kind=DependencyChangeKind.SOURCE_CHANGED,
+                old_version="4.17.21",
+                new_version="4.17.21",
+                old_source="https://registry.npmjs.org/lodash.tgz",
+                new_source="https://evil.example.com/lodash.tgz",
+                note="Now resolved from evil.example.com.",
+            )
+        ],
+    }
+    return SupplyChainReport(**{**defaults, **overrides})
+
+
+def test_markdown_renders_the_supply_chain_delta():
+    result = make_result()
+    result.supply_chain = _supply_report()
+    rendered = markdown.render(result)
+    assert "📦 Supply chain — analysed (1 dependency change(s))" in rendered
+    assert "Source changed" in rendered
+    assert "`lodash`" in rendered
+    assert "evil.example.com" in rendered
+
+
+def test_supply_scanner_findings_render_without_an_inline_anchor():
+    from roborak.core.models import Finding
+    from roborak.core.severity import Category, Severity
+
+    vulnerability = Finding(
+        file="package-lock.json",
+        start_line=1,
+        end_line=1,
+        severity=Severity.MAJOR,
+        category=Category.SECURITY,
+        title="OSV-1 in lodash",
+        body="lodash 4.17.20: command injection",
+        rule_id="osv/OSV-1",
+        source="static",
+        tool="osv-scanner",
+    )
+    result = make_result()
+    result.findings = []
+    result.changeset = ChangeSet(files=[])
+    result.supply_chain = _supply_report(scanner_findings=[vulnerability])
+    result.block_on = Severity.MAJOR
+
+    rendered = markdown.render(result)
+    payload = json.loads(json_out.render(result))
+    assert "OSV-1 in lodash" in rendered
+    assert "package-lock.json:1" not in rendered
+    assert "No additional inline findings" in rendered
+    assert payload["supply_chain"]["scanner_findings"][0]["rule_id"] == "osv/OSV-1"
+    assert "start_line" not in payload["supply_chain"]["scanner_findings"][0]
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["verdict"] == "blocked"
+
+
+def _osv_finding() -> Finding:
+    return Finding(
+        file="package-lock.json",
+        start_line=1,
+        end_line=1,
+        severity=Severity.MAJOR,
+        category=Category.SECURITY,
+        title="OSV-1 in lodash",
+        body="lodash 4.17.20: command injection",
+        rule_id="osv/OSV-1",
+        source="static",
+        tool="osv-scanner",
+    )
+
+
+def test_a_scanner_only_review_still_prints_its_verdict():
+    """The blocking review that has nothing inline to show.
+
+    ``blocking_findings`` counts scanner facts, so this review exits non-zero. A
+    terminal that stopped after "no inline findings" would leave the reader with
+    no verdict at all and an exit code they cannot account for.
+    """
+    result = make_result()
+    result.findings = []
+    result.changeset = ChangeSet(files=[ChangedFile(path="package-lock.json")])
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+    result.block_on = Severity.MAJOR
+
+    console = Console(record=True, width=100)
+    terminal.render(result, console, Path("."))
+    text = console.export_text()
+
+    assert "No additional inline findings" in text
+    assert "pre-merge check" in text
+    assert "1 finding" in text
+
+
+def test_the_terminal_total_counts_what_its_severity_table_counts():
+    """The table above the total is built from ``all_findings``; the total must be
+    too, or the two lines of one summary contradict each other."""
+    result = make_result()
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+
+    console = Console(record=True, width=100)
+    terminal.render(result, console, Path("."))
+    text = console.export_text()
+
+    inline = len(result.findings)
+    assert f"{inline + 1} findings" in text
+    assert f"\n{inline} findings" not in text
+
+
+def test_markdown_stays_quiet_when_no_boundary_changed():
+    """A section on every ordinary review is a section nobody reads on the day it
+    matters, so the prominent one is spent only when there is something to say.
+
+    The run record is a different surface and keeps its entry: it exists to say
+    which stages ran, and "it ran and this change touches nothing" is exactly the
+    fact it is for.
+    """
+    from roborak.core.models import SupplyChainStatus
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.NOTHING_RELEVANT, assets=[], changes=[]
+    )
+    rendered = markdown.render(result)
+    assert "📦 Supply chain —" not in rendered
+    assert "📦 Supply chain (nothing relevant changed)" in rendered
+
+
+def test_markdown_reports_a_dependency_file_it_could_not_read():
+    """The load-bearing case: an absent section would read as an all-clear."""
+    from roborak.core.models import SupplyChainStatus
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.UNAVAILABLE,
+        changes=[],
+        notes=["github changes are not checked out, so neither side could be read."],
+    )
+    rendered = markdown.render(result)
+    assert "📦 Supply chain — could not be read" in rendered
+    assert "not checked out" in rendered
+
+
+def test_json_distinguishes_a_stage_that_never_ran_from_one_that_found_nothing():
+    from roborak.core.models import SupplyChainStatus
+
+    never_ran = json.loads(json_out.render(make_result()))
+    assert "supply_chain" not in never_ran
+
+    result = make_result()
+    result.supply_chain = _supply_report(
+        status=SupplyChainStatus.NOTHING_RELEVANT, assets=[], changes=[]
+    )
+    looked = json.loads(json_out.render(result))
+    assert looked["supply_chain"]["status"] == "nothing_relevant"
+    assert looked["supply_chain"]["changes"] == []
+
+
+def test_json_carries_the_delta_for_an_agent():
+    result = make_result()
+    result.supply_chain = _supply_report()
+    payload = json.loads(json_out.render(result, agent=True))["supply_chain"]
+    assert payload["ecosystems"] == ["npm"]
+    assert payload["changes"][0]["kind"] == "source_changed"
+    assert payload["changes"][0]["new_source"] == "https://evil.example.com/lodash.tgz"
+
+
+def test_the_markdown_severity_table_counts_what_the_verdict_counts():
+    """The table and the verdict line sit in one report; they must agree.
+
+    Scanner findings reach the report through the supply-chain section rather than
+    a bucket, so counting the buckets would print a smaller total than the gate.
+    """
+    result = make_result()
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+
+    rendered = markdown.render(result)
+    total = len(result.all_findings())
+
+    assert f"### {total} findings" in rendered
+    assert f"### {total - 1} findings" not in rendered
+    for severity, count in result.counts_by_severity.items():
+        if count:
+            assert f"| {SEVERITY_LABEL[severity]} | {count} |" in rendered
