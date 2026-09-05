@@ -9,7 +9,7 @@ const PRECEDENCE = [
   ["1", "CLI flags", "--model, --severity, --config, and the rest."],
   ["2", "ROBORAK_* environment variables", "Set per shell or per CI job."],
   ["3", "Project .roborak.yaml / .roborak.yml", "The repository root. Ignored in CI see the warning below."],
-  ["4", "~/.config/roborak/config.yaml", "User-wide. Where secrets belong."],
+  ["4", "~/.config/roborak/.roborak.yaml", "User-wide. Where secrets belong."],
   ["5", "Built-in defaults", "Everything you did not set."],
 ];
 
@@ -20,7 +20,7 @@ export default function Configuration() {
       <H1>Configuration</H1>
       <Lead>
         Every key is optional. <Code>.roborak.yaml</Code> / <Code>.roborak.yml</Code> in the repository root holds project
-        settings; <Code>~/.config/roborak/config.yaml</Code> holds the ones that follow you between
+        settings; <Code>~/.config/roborak/.roborak.yaml</Code> holds the ones that follow you between
         checkouts.
       </Lead>
       <P>
@@ -45,6 +45,12 @@ export default function Configuration() {
       </P>
 
       <H2>Writing the file</H2>
+      <P>
+        Existing users: rename <Code>~/.config/roborak/config.yaml</Code> to{" "}
+        <Code>~/.config/roborak/.roborak.yaml</Code>, preserving its contents and permissions.
+        The old filename is no longer discovered automatically. If the new file already exists,
+        reconcile your settings before replacing either file.
+      </P>
       <Ul>
         <Li>
           <Code>roborak config init</Code> writes a fully commented <Code>.roborak.yaml</Code> with
@@ -52,7 +58,7 @@ export default function Configuration() {
         </Li>
         <Li>
           <Code>roborak config init --global</Code> writes{" "}
-          <Code>~/.config/roborak/config.yaml</Code> instead, mode 600.
+          <Code>~/.config/roborak/.roborak.yaml</Code> instead, mode 600.
         </Li>
         <Li>
           <Code>roborak setup</Code> is the guided path: it asks for a model, a credential and

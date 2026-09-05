@@ -2,7 +2,7 @@
 # Project files: .roborak.yaml (canonical generated default) / .roborak.yml.
 # If both exist, only .roborak.yaml is loaded; they are not merged.
 # Precedence: CLI flags > ROBORAK_* env vars > project config >
-# ~/.config/roborak/config.yaml > built-in defaults.
+# ~/.config/roborak/.roborak.yaml > built-in defaults.
 # In CI, project files are ignored unless explicitly selected with --config.
 version: 1
 
@@ -16,7 +16,7 @@ llm:
   context_budget: null
   # Per-provider API keys, overriding the provider's environment variable. These
   # are real secrets: keep this file out of version control, or put them in
-  # ~/.config/roborak/config.yaml instead. `roborak config show` redacts them.
+  # ~/.config/roborak/.roborak.yaml instead. `roborak config show` redacts them.
   api_keys: {}
   #   anthropic: sk-ant-...
   #   openai: sk-...
@@ -27,7 +27,7 @@ llm:
 forge:
   # Per-provider tokens for --mr/--pr/--issue, overriding GITLAB_TOKEN and
   # GITHUB_TOKEN. Real secrets, like llm.api_keys: keep this file out of version
-  # control, or put them in ~/.config/roborak/config.yaml instead.
+  # control, or put them in ~/.config/roborak/.roborak.yaml instead.
   # ROBORAK_GITLAB_TOKEN / ROBORAK_GITHUB_TOKEN still win over what is set here.
   tokens: {}
   #   gitlab: glpat-...

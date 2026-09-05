@@ -1,7 +1,7 @@
 """Layered configuration.
 
 Precedence, highest first: CLI flags, environment (``ROBORAK_*``), the project's
-``.roborak.yaml`` / ``.roborak.yml``, the user's ``~/.config/roborak/config.yaml``, then defaults.
+``.roborak.yaml`` / ``.roborak.yml``, the user's ``~/.config/roborak/.roborak.yaml``, then defaults.
 The shape is a section per stage -- review, static analysis, verification, blast
 radius, the model, forge credentials, output -- plus path ignores and a rules
 directory.
@@ -33,7 +33,7 @@ PROJECT_CONFIG_NAMES = (".roborak.yaml", ".roborak.yml")
 """Discovery order; the first name is the canonical generated default.
 Only the first existing file is loaded, so the two files are never merged.
 """
-USER_CONFIG_PATH = Path.home() / ".config" / "roborak" / "config.yaml"
+USER_CONFIG_PATH = Path.home() / ".config" / "roborak" / PROJECT_CONFIG_NAMES[0]
 
 DEFAULT_IGNORE_PATHS = [
     "**/*.lock",

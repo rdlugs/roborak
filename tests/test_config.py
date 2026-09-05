@@ -8,8 +8,46 @@ from pathlib import Path
 import pytest
 import yaml
 
-from roborak.core.config import Config, ForgeCheckout, ReviewConfig, load_config
+from roborak.core.config import (
+    USER_CONFIG_PATH,
+    Config,
+    ForgeCheckout,
+    ReviewConfig,
+    load_config,
+    load_verification,
+)
 from roborak.core.severity import Category, Severity
+
+
+def test_user_config_default_path():
+    assert Path.home() / ".config" / "roborak" / ".roborak.yaml" == USER_CONFIG_PATH
+
+
+@pytest.mark.parametrize("new_exists", [False, True])
+def test_user_config_uses_new_filename_without_legacy_fallback(
+    tmp_path: Path, monkeypatch, new_exists: bool
+):
+    directory = tmp_path / "home" / ".config" / "roborak"
+    directory.mkdir(parents=True)
+    user = directory / ".roborak.yaml"
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    legacy = directory / "config.yaml"
+    legacy_text = (
+        "llm:\n  model: legacy/model\nreview:\n  max_findings: 3\n"
+        "verification:\n  fallback: [legacy-command]\n  timeout_seconds: 7\n"
+    )
+    legacy.write_text(legacy_text)
+    if new_exists:
+        user.write_text("llm:\n  model: new/model\nverification:\n  fallback: [new-command]\n")
+
+    config = load_config(tmp_path)
+    verification, _, _ = load_verification(tmp_path, ref="")
+    defaults = Config()
+    assert config.model == ("new/model" if new_exists else defaults.model)
+    assert config.review.max_findings == defaults.review.max_findings
+    assert verification.fallback == (["new-command"] if new_exists else [])
+    assert verification.timeout_seconds == defaults.verification.timeout_seconds
+    assert legacy.read_text() == legacy_text
 
 
 def test_defaults_when_nothing_is_configured(tmp_path: Path, monkeypatch):

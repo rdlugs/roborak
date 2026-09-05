@@ -91,7 +91,7 @@ export default function StaticAnalysis() {
           <Code>ROBORAK_*</Code> environment variables, set on the job.
         </Li>
         <Li>
-          The user config at <Code>~/.config/roborak/config.yaml</Code>.
+          The user config at <Code>~/.config/roborak/.roborak.yaml</Code>.
         </Li>
         <Li>
           A trusted, base-controlled file passed with <Code>--config</Code>.

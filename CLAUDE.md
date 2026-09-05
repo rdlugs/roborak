@@ -108,7 +108,7 @@ Renderer → Publisher
 
 ## Config
 
-Precedence: CLI flags > `ROBORAK_*` env vars > project `.roborak.yaml` / `.roborak.yml` > `~/.config/roborak/config.yaml`
+Precedence: CLI flags > `ROBORAK_*` env vars > project `.roborak.yaml` / `.roborak.yml` > `~/.config/roborak/.roborak.yaml`
 > defaults. `src/roborak/config_template.yaml` is the annotated source of truth for every key and
 default, mirrored by `core/config.py`. `.roborak.yaml` is the canonical generated default and wins
 when both project files exist; they are not merged. Note `review.severity_floor` (what is reported) is not
