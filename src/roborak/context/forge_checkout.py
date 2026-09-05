@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -226,8 +228,18 @@ def _authenticated(
     """
     if not token or forge_ref is None or not url.startswith("https://"):
         return None
-    _, host = split_host(forge_ref.host)
-    if urlparse(url).netloc.casefold() != host.casefold():
+    scheme, host = split_host(forge_ref.host)
+    try:
+        remote = urlparse(url)
+        forge = urlparse(f"{scheme}://{host}")
+        if (
+            not remote.hostname
+            or remote.hostname.casefold() != (forge.hostname or "").casefold()
+            or (remote.port if remote.port is not None else 443)
+            != (forge.port if forge.port is not None else (443 if scheme == "https" else 80))
+        ):
+            return None
+    except ValueError:
         return None
     return _environment(url, token=token)
 
@@ -269,6 +281,18 @@ def _matches(url: str, forge_ref: ForgeRef) -> bool:
     return host.casefold() in url.casefold()
 
 
+def _has_batch_mode(command: str) -> bool:
+    try:
+        args = iter(shlex.split(command))
+    except ValueError:
+        return False
+    for arg in args:
+        option = next(args, "") if arg == "-o" else arg[2:] if arg.startswith("-o") else ""
+        if re.match(r"(?i)^batchmode(?:\s|=)", option):
+            return True
+    return False
+
+
 def _environment(url: str, *, token: str | None) -> dict[str, str]:
     """The parent environment, minus every way git can stop and ask a human.
 
@@ -289,7 +313,7 @@ def _environment(url: str, *, token: str | None) -> dict[str, str]:
     env["GIT_ASKPASS"] = ""
     env["SSH_ASKPASS"] = ""
     ssh = env.get("GIT_SSH_COMMAND", "").strip() or "ssh"
-    env["GIT_SSH_COMMAND"] = ssh if "batchmode" in ssh.casefold() else f"{ssh} -oBatchMode=yes"
+    env["GIT_SSH_COMMAND"] = ssh if _has_batch_mode(ssh) else f"{ssh} -oBatchMode=yes"
 
     if token and url.startswith("https://"):
         # Through git's config *environment*, never ``-c``: argv is readable by

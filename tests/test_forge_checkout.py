@@ -457,13 +457,45 @@ def test_an_inherited_ssh_command_keeps_its_options_and_gains_batch_mode(
     assert "BatchMode=yes" in env["GIT_SSH_COMMAND"]
 
 
-def test_an_explicit_batch_mode_choice_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ssh -oBatchMode=no",
+        "ssh -oBatchMode=yes",
+        "ssh -o BatchMode=no",
+        "ssh -o 'BatchMode yes'",
+        'ssh -o "bAtChMoDe=no"',
+    ],
+)
+def test_an_explicit_batch_mode_choice_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
     """ssh honours the first occurrence of an option: appending would not win."""
-    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -oBatchMode=no")
+    monkeypatch.setenv("GIT_SSH_COMMAND", command)
 
     env = forge_checkout._environment("git@example.com:a/b.git", token=None)
 
-    assert env["GIT_SSH_COMMAND"] == "ssh -oBatchMode=no"
+    assert env["GIT_SSH_COMMAND"] == command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ssh -i /tmp/batchmode-key",
+        "/tmp/batchmode-wrapper -i /tmp/key",
+        "ssh -oIdentityFile=/tmp/batchmode-key",
+        "ssh -o 'ProxyCommand=ssh -oBatchMode=no jump nc %h %p'",
+        "ssh -i 'unterminated",
+    ],
+)
+def test_batch_mode_text_is_not_an_ssh_option(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    monkeypatch.setenv("GIT_SSH_COMMAND", command)
+
+    env = forge_checkout._environment("git@example.com:a/b.git", token=None)
+
+    assert env["GIT_SSH_COMMAND"] == f"{command} -oBatchMode=yes"
 
 
 # --- the wall clock ----------------------------------------------------------
@@ -579,3 +611,33 @@ def test_no_token_and_no_https_means_no_authenticated_retry(local: Path) -> None
 
     assert forge_checkout._authenticated("https://example.com/team/project.git", ref, None) is None
     assert forge_checkout._authenticated("git@example.com:team/project.git", ref, "secret") is None
+
+
+@pytest.mark.parametrize(
+    ("host", "authority", "allowed"),
+    [
+        ("example.com", "user:password@example.com", True),
+        ("example.com", "git@EXAMPLE.com:443", True),
+        ("https://example.com:443", "example.com", True),
+        ("example.com:8443", "git@example.com:8443", True),
+        ("example.com", "example.com:8443", False),
+        ("example.com:8443", "example.com", False),
+        ("http://example.com", "example.com", False),
+        ("example.com", "example.com@evil.test", False),
+        ("example.com", "git@example.com.evil.test", False),
+        ("example.com", "example.com:invalid", False),
+        ("example.com", "example.com:99999", False),
+    ],
+)
+def test_token_retry_matches_hostname_and_effective_port(
+    host: str, authority: str, allowed: bool
+) -> None:
+    ref = forge_change("a" * 40).forge_ref
+    assert ref is not None
+    ref = ref.model_copy(update={"host": host})
+
+    env = forge_checkout._authenticated(f"https://{authority}/team/project.git", ref, "secret")
+
+    assert (env is not None) is allowed
+    if env is not None:
+        assert env["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer secret"
