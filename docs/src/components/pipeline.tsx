@@ -55,6 +55,15 @@ const STAGES = [
     rgb: VIOLET,
   },
   {
+    name: "Investigate",
+    note: "bounded, read-only",
+    desc: "Reads the repository to confirm, revise or drop the findings that would block a merge.",
+    edge: "border-violet/50",
+    ink: "text-violet",
+    dot: "bg-violet",
+    rgb: VIOLET,
+  },
+  {
     name: "Validator",
     note: "anchors checked on disk",
     desc: "Re-checks every anchor against the file on disk before a finding is allowed out.",

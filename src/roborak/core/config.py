@@ -77,6 +77,48 @@ StaticExecution = Execution
 existing configuration keep meaning what they meant."""
 
 
+class InvestigateConfig(ConfigModel):
+    """Bounds on the evidence-gathering stage that runs before findings are validated.
+
+    The stage exists to settle a small number of candidates whose severity turns on
+    context the prompt did not carry -- a caller, an implementation, a contract.
+    Every number below is a ceiling rather than a target: investigation costs a
+    model call on top of the review, so it has to stay cheap enough that nobody
+    reaches for the switch. A candidate whose budget runs out is left exactly as it
+    was, never confirmed or dropped on the strength of an investigation that did
+    not finish.
+    """
+
+    enabled: bool = True
+
+    max_candidates: int = Field(default=5, ge=1)
+    """Findings put to the stage. Selected by what the evidence policy would do to
+    them, so the ones that reach it are those where another look changes the
+    verdict rather than the wording."""
+
+    max_rounds: int = Field(default=2, ge=1)
+    """Request/result exchanges before the model must decide. One round answers a
+    direct question; the second exists for the follow-up it implies."""
+
+    max_requests_per_round: int = Field(default=4, ge=1)
+    max_files: int = Field(default=10, ge=1)
+    """Distinct files the whole investigation may open, across every round."""
+
+    max_lines_per_read: int = Field(default=200, ge=1)
+    max_search_results: int = Field(default=20, ge=1)
+
+    max_output_chars: int = Field(default=4000, ge=1)
+    """Ceiling on a single operation's result. What does not fit is truncated and
+    labelled as truncated, so the model is never left reading a silent tail."""
+
+    token_budget: int = Field(default=20000, ge=0)
+    """Prompt tokens the accumulated evidence may occupy. Once spent, the stage
+    stops asking and decides on what it has."""
+
+    timeout_seconds: int = Field(default=30, ge=1)
+    """Wall clock for the repository operations, not for the model calls."""
+
+
 class ReviewConfig(ConfigModel):
     categories: list[Category] = Field(
         default_factory=lambda: [
@@ -112,6 +154,11 @@ class ReviewConfig(ConfigModel):
 
     include_discussions: bool = True
     """Use relevant forge discussion as bounded, untrusted review context."""
+
+    investigate: InvestigateConfig = Field(default_factory=InvestigateConfig)
+    """Bounded repository reads that settle a candidate before the evidence policy
+    judges it. The one section nested inside another: it tunes what ``review``
+    already decides rather than naming a stage of its own."""
 
 
 class StaticConfig(ConfigModel):
@@ -597,6 +644,9 @@ def _env_layer() -> dict[str, Any]:
     supply_off = os.getenv("ROBORAK_NO_SUPPLY_CHAIN")
     if supply_off and supply_off not in {"0", "false", ""}:
         layer.setdefault("supply_chain", {})["enabled"] = False
+    investigate_off = os.getenv("ROBORAK_NO_INVESTIGATE")
+    if investigate_off and investigate_off not in {"0", "false", ""}:
+        layer.setdefault("review", {}).setdefault("investigate", {})["enabled"] = False
     return layer
 
 

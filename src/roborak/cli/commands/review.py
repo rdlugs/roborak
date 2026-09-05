@@ -138,6 +138,13 @@ def review(
             help="Skip the dependency, CI, container and infrastructure analysis.",
         ),
     ] = False,
+    no_investigate: Annotated[
+        bool,
+        typer.Option(
+            "--no-investigate",
+            help="Skip the bounded repository reads that confirm or drop candidate findings.",
+        ),
+    ] = False,
     trust_static: Annotated[
         bool,
         typer.Option(
@@ -225,6 +232,8 @@ def review(
         config.impact.enabled = False
     if no_supply_chain:
         config.supply_chain.enabled = False
+    if no_investigate:
+        config.review.investigate.enabled = False
     if trust_static:
         config.static.execution = Execution.TRUSTED
     if no_walkthrough:

@@ -13,6 +13,7 @@ from typing import Any
 from roborak.core.models import (
     Finding,
     ImpactMap,
+    InvestigationReport,
     ReviewResult,
     SupplyChainReport,
     VerificationReport,
@@ -20,7 +21,7 @@ from roborak.core.models import (
 )
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -76,6 +77,13 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     # safe to merge must not read the first as the second.
     if result.supply_chain is not None:
         payload["supply_chain"] = _supply_chain_dict(result.supply_chain)
+
+    # Same contract once more. An absent key means nobody investigated; a present
+    # one whose status is `unavailable` means roborak wanted to and the checkout
+    # was not the code under review, and an agent acting on this must not read the
+    # second as "the findings were checked and stand".
+    if result.investigation is not None:
+        payload["investigation"] = _investigation_dict(result.investigation, agent=agent)
     payload["summary"]["verified"] = (
         result.verification is not None and result.verification.executed
     )
@@ -139,6 +147,45 @@ def _impact_dict(impact: ImpactMap, *, agent: bool) -> dict[str, Any]:
             for node in impact.nodes
         ],
     }
+
+
+def _investigation_dict(report: InvestigationReport, *, agent: bool) -> dict[str, Any]:
+    """What was asked of the repository, and what it settled.
+
+    The agent shape keeps every decision and drops the operation *results*: an
+    agent acting on a finding needs to know the claim was checked and what it now
+    rests on, not to re-read the file contents roborak already read.
+    """
+    payload: dict[str, Any] = {
+        "status": report.status.value,
+        "candidates": report.candidates,
+        "rounds": report.rounds,
+        "unresolved": report.unresolved,
+        "notes": report.notes,
+        "decisions": [
+            {
+                "candidate": decision.candidate,
+                "disposition": decision.disposition,
+                "location": decision.location,
+                "title": decision.title,
+                "rationale": decision.rationale,
+            }
+            for decision in report.decisions
+        ],
+        "operations": [
+            {
+                "tool": operation.tool,
+                "request": operation.display_request,
+                "outcome": operation.outcome.value,
+                "round": operation.round_index,
+                "truncated": operation.truncated,
+                "note": operation.note,
+            }
+            | ({} if agent else {"result": operation.result})
+            for operation in report.operations
+        ],
+    }
+    return payload
 
 
 def _supply_chain_dict(report: SupplyChainReport) -> dict[str, Any]:

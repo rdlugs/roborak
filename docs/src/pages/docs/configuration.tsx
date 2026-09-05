@@ -254,6 +254,49 @@ export default function Configuration() {
         there is no unchanged consumer to find.
       </P>
 
+      <H3>review.investigate</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "review:",
+          "  investigate:",
+          "    enabled: true            # bounded reads that settle a candidate finding",
+          "    max_candidates: 5        # findings put to the stage, worst first",
+          "    max_rounds: 2            # request/result exchanges before it decides",
+          "    max_requests_per_round: 4",
+          "    max_files: 10            # distinct files the whole stage may open",
+          "    max_lines_per_read: 200",
+          "    max_search_results: 20",
+          "    max_output_chars: 4000   # ceiling on one operation's result",
+          "    token_budget: 20000      # prompt tokens the evidence may occupy",
+          "    timeout_seconds: 30      # wall clock for the repository operations",
+        ].join("\n")}
+      />
+      <P>
+        <Code>require_evidence</Code> demotes a critical or major model finding that cannot say
+        what makes it true. This stage is how it gets the chance to: before findings are validated,
+        the model is handed its own unproven blockers and a small set of read-only operations — a
+        bounded line range, a <Code>git grep</Code>, the reviewed diff for a file, a symbol&rsquo;s
+        declaration — and then <Code>confirm</Code>s, <Code>revise</Code>s or <Code>drop</Code>s
+        each one.
+      </P>
+      <P>
+        The boundary is narrow. Paths are proved to be inside the repository before any I/O, so{" "}
+        <Code>..</Code> and a symlink out of the tree are the same refusal; searches run as argv
+        with a scrubbed environment, never through a shell; every result is bounded and says when
+        it was cut; and everything read comes back as untrusted input. Nothing writes, applies a
+        patch, runs a repository-chosen command, or reaches the network.
+      </P>
+      <P>
+        A candidate the stage cannot settle — a tool error, an exhausted budget, an unreadable
+        reply, a provider outage — is left exactly as it arrived, so &ldquo;we could not
+        tell&rdquo; is never recorded as &ldquo;we checked&rdquo;. For a pull or merge request the
+        checkout must be clean and at the reviewed head commit before anything is read from it;
+        otherwise roborak uses the file content the forge supplied, or reports the stage
+        unavailable. It costs one model call on a review that has a candidate and nothing on one
+        that does not. <Code>--no-investigate</Code> switches it off.
+      </P>
+
       <H3>supply_chain</H3>
       <CodeBlock
         label=".roborak.yaml"

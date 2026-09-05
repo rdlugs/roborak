@@ -67,6 +67,33 @@ export default function HowItWorks() {
         <A href="/docs/static-analysis">Static analysis</A>.
       </P>
 
+      <H2>The investigation pass</H2>
+      <P>
+        A critical or major model finding that cannot say what makes it true gets demoted to a
+        minor <Code>verification_needed</Code>, because a self-assigned confidence score is not
+        grounds to fail a build. That rule is right and it used to be the end of the story: the
+        model had no way to go and check. A real blocker whose proof sat one function away was
+        demoted anyway, and a false positive that one read would have disproved survived.
+      </P>
+      <P>
+        So between the model pass and the validator, roborak hands the model its own unproven
+        blockers along with a small set of read-only operations — a bounded line range, a{" "}
+        <Code>git grep</Code> inside the repository, the reviewed diff for a file, and where a
+        parser is available, a symbol&rsquo;s declaration. It asks for what it needs, reads the
+        results, and then confirms, revises or drops each candidate. The evidence it gathers is
+        what the blocking policy then reads.
+      </P>
+      <P>
+        Roborak validates and executes every request itself; the model never gets a shell. Paths
+        are proved to be inside the repository before any I/O, searches run as argv with a
+        credential-scrubbed environment, results are bounded and labelled when truncated, and
+        everything read returns as untrusted input. A candidate the stage cannot settle is left
+        exactly as it arrived — the one thing it must never do is record &ldquo;we could not
+        tell&rdquo; as &ldquo;we checked&rdquo;. And for a pull or merge request, dynamic reads
+        happen only against a clean checkout at the reviewed head commit; anything else falls back
+        to forge-supplied content or reports the stage unavailable.
+      </P>
+
       <H2>The supply-chain pass</H2>
       <P>
         Lockfiles are excluded from the model&apos;s context by <Code>ignore_paths</Code>, and

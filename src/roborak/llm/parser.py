@@ -209,6 +209,116 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
     )
 
 
+INVESTIGATION_TOOLS = frozenset({"read_file", "search", "show_diff", "find_symbol"})
+"""The operations a model may ask for. An unknown name is refused rather than
+guessed at, so a hallucinated tool cannot become a differently-shaped read."""
+
+DISPOSITIONS = frozenset({"confirm", "revise", "drop"})
+
+
+def parse_investigation_requests(text: str, *, limit: int) -> list[dict[str, str]]:
+    """The operations a model asked for this round, validated into flat argument maps.
+
+    Shape only -- whether a path is inside the repository is the execution
+    boundary's question, not the parser's. A malformed entry is skipped rather
+    than raising, the same way a malformed finding is: one bad request in a list
+    of four should cost that request and not the round.
+    """
+    data = load_yaml_mapping(text)
+    raw = data.get("requests")
+    if not isinstance(raw, list):
+        return []
+
+    requests: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        tool = _as_str(entry.get("tool"))
+        if tool not in INVESTIGATION_TOOLS:
+            log.debug("skipping unknown investigation tool: %r", tool)
+            continue
+        arguments = {
+            key: _as_str(entry.get(key))
+            for key in ("path", "pattern", "symbol", "regex", "start", "end")
+            if entry.get(key) is not None
+        }
+        arguments["tool"] = tool
+        requests.append(arguments)
+        if len(requests) == limit:
+            break
+    return requests
+
+
+def parse_investigation_decisions(text: str, *, valid_ids: set[str]) -> list[dict[str, Any]]:
+    """What the model concluded about each candidate, keyed by roborak's own ids.
+
+    A decision naming an id we did not issue is discarded: the ids exist so that a
+    model cannot rename a candidate into one whose severity it prefers. Anything
+    that does not name a known disposition is discarded too, because the default
+    for a candidate nobody settled is to leave it exactly as it arrived.
+    """
+    data = load_yaml_mapping(text)
+    raw = data.get("decisions")
+    if not isinstance(raw, list):
+        return []
+
+    seen: set[str] = set()
+    decisions: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        candidate = _as_str(entry.get("candidate"))
+        disposition = _as_str(entry.get("disposition")).lower()
+        if candidate not in valid_ids or candidate in seen:
+            log.debug("discarding decision for unknown candidate: %r", candidate)
+            continue
+        if disposition not in DISPOSITIONS:
+            continue
+        seen.add(candidate)
+        decision: dict[str, Any] = {
+            "candidate": candidate,
+            "disposition": disposition,
+            "rationale": _as_str(entry.get("rationale"))[:MAX_EVIDENCE_CHARS],
+        }
+        if disposition == "revise":
+            decision["revision"] = _coerce_revision(entry)
+        elif disposition == "confirm":
+            decision["revision"] = _coerce_revision(entry, evidence_only=True)
+        decisions.append(decision)
+    return decisions
+
+
+def _coerce_revision(entry: dict[str, Any], *, evidence_only: bool = False) -> dict[str, Any]:
+    """The fields a decision may change, run through the same coercion findings get.
+
+    Routed through ``_as_evidence`` deliberately: a decision is a model claim like
+    any other, so it cannot mint ``static_tool`` or wear a proven label with
+    nothing written under it just because it arrived at a later stage.
+    """
+    evidence, note = _as_evidence(entry.get("evidence"), entry.get("evidence_note"))
+    revision: dict[str, Any] = {"evidence": evidence, "evidence_note": note}
+    if entry.get("evidence_files") is not None:
+        revision["evidence_files"] = _as_evidence_files(
+            entry.get("evidence_files"), flagged=_as_str(entry.get("file"))
+        )
+    if evidence_only:
+        return revision
+
+    if title := _as_str(entry.get("title")):
+        revision["title"] = title[:200]
+    if body := _as_str(entry.get("body")):
+        revision["body"] = body
+    if entry.get("severity") is not None:
+        revision["severity"] = _as_enum(entry.get("severity"), Severity, Severity.MINOR)
+    if entry.get("confidence") is not None:
+        revision["confidence"] = _as_confidence(entry.get("confidence"))
+    if (start := _as_int(entry.get("start_line"))) and start >= 1:
+        revision["start_line"] = start
+        end = _as_int(entry.get("end_line"))
+        revision["end_line"] = end if end and end >= start else start
+    return revision
+
+
 def parse_walkthrough(text: str) -> Walkthrough:
     """Read the ``describe`` reply."""
     data = load_yaml_mapping(text)
