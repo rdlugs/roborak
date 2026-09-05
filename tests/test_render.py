@@ -753,7 +753,7 @@ def test_an_unverified_finding_says_so_rather_than_going_quiet():
     result.findings = [finding]
     published = markdown.render(result)
     assert "<summary>🔎 Evidence · unverified</summary>" in published
-    assert "Unverified — from reasoning about the diff alone." in published
+    assert "Unverified - from reasoning about the diff alone." in published
     assert "Evidence: unverified, from reasoning about the diff alone" in _terminal(result)
 
 
@@ -1454,7 +1454,7 @@ def test_markdown_renders_the_supply_chain_delta():
     result = make_result()
     result.supply_chain = _supply_report()
     rendered = markdown.render(result)
-    assert "📦 Supply chain — analysed (1 dependency change(s))" in rendered
+    assert "📦 Supply chain - analysed (1 dependency change(s))" in rendered
     assert "Source changed" in rendered
     assert "`lodash`" in rendered
     assert "evil.example.com" in rendered
@@ -1560,7 +1560,7 @@ def test_markdown_stays_quiet_when_no_boundary_changed():
         status=SupplyChainStatus.NOTHING_RELEVANT, assets=[], changes=[]
     )
     rendered = markdown.render(result)
-    assert "📦 Supply chain —" not in rendered
+    assert "📦 Supply chain -" not in rendered
     assert "📦 Supply chain (nothing relevant changed)" in rendered
 
 
@@ -1575,7 +1575,7 @@ def test_markdown_reports_a_dependency_file_it_could_not_read():
         notes=["github changes are not checked out, so neither side could be read."],
     )
     rendered = markdown.render(result)
-    assert "📦 Supply chain — could not be read" in rendered
+    assert "📦 Supply chain - could not be read" in rendered
     assert "not checked out" in rendered
 
 

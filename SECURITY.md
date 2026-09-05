@@ -66,13 +66,13 @@ welcome.
 
 ### Out of scope
 
-- Bugs in third-party LLM providers, or in LiteLLM itself — report those upstream.
+- Bugs in third-party LLM providers, or in LiteLLM itself - report those upstream.
 - The fact that reviewing a diff sends that diff to the configured model provider.
   That is what the tool is for; choosing the provider, or pointing `api_base` at a
   local model, is the user's control.
 - Anything that requires an already-compromised local machine, or an attacker who
   already holds the user's tokens.
-- Local resource exhaustion — enormous diffs, runaway token spend — with no
+- Local resource exhaustion - enormous diffs, runaway token spend - with no
   security impact.
 - Social engineering, and automated-scanner output with no demonstrated impact.
 

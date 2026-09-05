@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
     url: https://github.com/rdlugs/roborak/security/advisories/new
-    about: Security problems do not go in the issue tracker — open a private draft advisory instead. See SECURITY.md.
+    about: Security problems do not go in the issue tracker - open a private draft advisory instead. See SECURITY.md.
   - name: Question or usage help
     url: https://github.com/rdlugs/roborak/discussions
     about: Not sure whether it is a bug? Ask here, and check the README's Configuration section first.

@@ -7,7 +7,7 @@
 {% endif %}
 {% if issue %}
 ## Issue being addressed
-{{ issue.reference }}{% if issue.title %} — {{ issue.title }}{% endif %}
+{{ issue.reference }}{% if issue.title %} - {{ issue.title }}{% endif %}
 {% if issue.labels %}
 labels: {{ issue.labels | join(", ") }}
 {% endif %}

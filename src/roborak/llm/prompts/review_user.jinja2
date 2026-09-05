@@ -7,7 +7,7 @@
 {% endif %}
 {% if issue %}
 ## Issue being addressed
-{{ issue.reference }}{% if issue.title %} — {{ issue.title }}{% endif %}
+{{ issue.reference }}{% if issue.title %} - {{ issue.title }}{% endif %}
 {% if issue.labels %}
 labels: {{ issue.labels | join(", ") }}
 {% endif %}
@@ -41,7 +41,7 @@ These came from tools that already ran on this diff. Treat them as evidence: con
 explain the consequence, or silently drop them if they are false positives. Do not
 simply repeat them.
 {% for f in static_findings %}
-- {{ f.file }}:{{ f.start_line }} [{{ f.tool }}] {{ f.title }} — {{ f.body }}
+- {{ f.file }}:{{ f.start_line }} [{{ f.tool }}] {{ f.title }} - {{ f.body }}
 {% endfor %}
 {% endif %}
 {% if verification %}
@@ -70,7 +70,7 @@ Bounds and reasons:
 Checks:
 {% endif %}
 {% for run in verification.runs %}
-- `{{ run.command }}` ({{ run.scope }}) — {{ run.status }}{{ ", exit %s" % run.exit_code if run.exit_code is not none }}
+- `{{ run.command }}` ({{ run.scope }}) - {{ run.status }}{{ ", exit %s" % run.exit_code if run.exit_code is not none }}
 {% if run.note %}
   {{ run.note }}
 {% endif %}
@@ -115,14 +115,14 @@ Files on a trust boundary:
 
 Dependency changes{{ " (truncated; the most significant are shown)" if supply_chain.truncated }}:
 {% for change in supply_chain.changes %}
-- [{{ change.kind }}] `{{ change.name }}` ({{ change.ecosystem }}{{ ", direct" if change.direct else ", transitive" }}){% if change.versions %} {{ change.versions }}{% endif %}{% if change.source %} · source: {{ change.source }}{% endif %}{{ " — " ~ change.note if change.note else "" }}
+- [{{ change.kind }}] `{{ change.name }}` ({{ change.ecosystem }}{{ ", direct" if change.direct else ", transitive" }}){% if change.versions %} {{ change.versions }}{% endif %}{% if change.source %} · source: {{ change.source }}{% endif %}{{ " - " ~ change.note if change.note else "" }}
 {% endfor %}
 {% endif %}
 {% if supply_chain.scanner_findings %}
 
 Scanner-confirmed vulnerabilities (report-level; do not restate them as inline findings):
 {% for finding in supply_chain.scanner_findings %}
-- [{{ finding.severity }}] `{{ finding.file }}` · {{ finding.title }}{% if finding.rule_id %} ({{ finding.rule_id }}){% endif %} — {{ finding.body }}
+- [{{ finding.severity }}] `{{ finding.file }}` · {{ finding.title }}{% if finding.rule_id %} ({{ finding.rule_id }}){% endif %} - {{ finding.body }}
 {% endfor %}
 {% endif %}
 {% if supply_chain.notes %}
@@ -158,7 +158,7 @@ it. One listed as `no references found` was searched by name only: an alias, a
 re-export or a runtime lookup would not have matched, so it is not proof of
 anything.
 {% for node in impact_nodes %}
-### `{{ node.name }}` — {{ node.kind }} in `{{ node.file }}`:{{ node.line }} — {{ node.status }}
+### `{{ node.name }}` - {{ node.kind }} in `{{ node.file }}`:{{ node.line }} - {{ node.status }}
 {% if node.note %}
 {{ node.note }}
 {% endif %}
@@ -182,7 +182,7 @@ findings only on the files shown in the diff below; when one of them is incompat
 with a contract, anchor the finding to the line in this pass and return the
 compatibility evidence for the global reconciliation step.
 {% for contract in contract_contexts %}
-- `{{ contract.name }}` — {{ contract.kind }} in `{{ contract.path }}`:{{ contract.line }}
+- `{{ contract.name }}` - {{ contract.kind }} in `{{ contract.path }}`:{{ contract.line }}
 {% if contract.summary %}
   changed declaration/context:
 ```

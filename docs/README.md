@@ -42,7 +42,7 @@ anyway, and a build-time transformer is a lot of machinery to save some angle
 brackets.
 
 Routes are listed one by one in `src/routes.tsx` rather than generated from a
-catch-all. At this size a concrete list is the more legible thing — the component
+catch-all. At this size a concrete list is the more legible thing - the component
 behind any URL is greppable from one file.
 
 ## Deployment
@@ -73,12 +73,12 @@ Note that this is a single-page app: every URL serves the same `index.html`, and
 titles, descriptions and body copy are filled in by JavaScript. Crawlers that
 render pages see the real content; link-preview bots that do not will fall back to
 the shell. Moving to prerendered HTML per route later means adopting React
-Router's framework mode and listing the routes to prerender — the components do
+Router's framework mode and listing the routes to prerender - the components do
 not change.
 
 ## Editing content
 
-Every page is derived from something in the repository above this directory —
+Every page is derived from something in the repository above this directory -
 `README.md`, `CONTRIBUTING.md`, the Typer `help=` strings, and
 `src/roborak/config_template.yaml`. See "Working on the website" in
 [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for which page tracks which source.

@@ -19,7 +19,7 @@ uv run roborak --help          # smoke-test the CLI
 Python 3.12 is the floor; CI runs 3.12 and 3.13. Everything is driven through
 `uv run`, so there is no virtualenv to activate by hand.
 
-For an end-to-end run you need a model credential — `ANTHROPIC_API_KEY`,
+For an end-to-end run you need a model credential - `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, or anything else LiteLLM speaks. Most work
 does not: `uv run roborak review --no-llm` exercises the whole pipeline on static
 analysis alone, and the test suite never calls a real model.
@@ -37,7 +37,7 @@ uv build
 ```
 
 Coverage is gated at 90%, `mypy` runs with `disallow_untyped_defs`, and
-`ruff format --check` is enforced — so format before you commit rather than after
+`ruff format --check` is enforced - so format before you commit rather than after
 the red build.
 
 ## Where things live
@@ -71,7 +71,7 @@ These are the parts where a plausible-looking change quietly corrupts output.
 - **Line numbers are new-file coordinates everywhere.** Only publishers translate
   them into a forge's position payload. `tests/test_local_git.py` checks computed
   numbers against the real files on disk, so an off-by-one cannot agree with
-  itself and pass — do not "fix" it by adjusting the expectation.
+  itself and pass - do not "fix" it by adjusting the expectation.
 - **`roborak.core.buckets` is the single place that decides where a finding goes.**
   The terminal, the markdown report, the summary comment and the publisher must
   never disagree about inline vs. summary.
@@ -100,7 +100,7 @@ These are the parts where a plausible-looking change quietly corrupts output.
 - Ruff with `E, F, I, UP, B, SIM, RUF, BLE`, 100-column lines. Bare `except` is an
   error, not a lint suggestion.
 - Full type annotations on every function; `mypy` will not accept less.
-- Comments explain *why*, not *what*. Match the density of the surrounding file —
+- Comments explain *why*, not *what*. Match the density of the surrounding file -
   the existing code is comparatively sparse and specific.
 - Pydantic models for anything crossing a boundary (config, IR, LLM responses).
 - User-facing strings go through Rich; do not `print()`.
@@ -108,7 +108,7 @@ These are the parts where a plausible-looking change quietly corrupts output.
 ## Tests
 
 `pytest`, one `tests/test_<area>.py` per area, fixtures in `tests/conftest.py`.
-No test may reach the network or call a real model — stub at the LiteLLM boundary.
+No test may reach the network or call a real model - stub at the LiteLLM boundary.
 
 New behaviour needs a test that would fail without it. For anything touching line
 anchoring, prefer a test that builds a real diff against real files over one that
@@ -129,16 +129,16 @@ catch.
 
 ## Pull requests
 
-1. Branch off `main`. Outside contributors work from a fork — direct branch
+1. Branch off `main`. Outside contributors work from a fork - direct branch
    creation in this repository is restricted to admins.
 2. Keep the change focused; a refactor and a behaviour change in one PR are two
    reviews for whoever reads it.
-3. Commit messages: imperative mood, sentence case, no type prefix — e.g. `Add an
+3. Commit messages: imperative mood, sentence case, no type prefix - e.g. `Add an
    interactive rk setup wizard for first-run configuration`.
 4. Run the checks above, and update `README.md` when you change a flag, a config
    key, or an exit code.
-5. Open the PR against `main`. CI must be green on every leg — three operating
-   systems by three Python versions — and all nine are required checks, so a red
+5. Open the PR against `main`. CI must be green on every leg - three operating
+   systems by three Python versions - and all nine are required checks, so a red
    one blocks the merge. `main` takes no direct pushes and keeps a linear
    history, so PRs land squashed or rebased.
 
@@ -150,7 +150,7 @@ before you ask anyone else to read it.
 **Releases are cut by the maintainer only.** Tag creation is restricted to repo
 admins by a ruleset, and PyPI trusts exactly one workflow in one repository to
 publish, so a tag pushed by anyone else neither creates a release nor reaches
-PyPI. Please do not bump `version` in a PR — it is the maintainer's step, and a
+PyPI. Please do not bump `version` in a PR - it is the maintainer's step, and a
 version already published can never be reused. If you think a release is due,
 say so in an issue.
 
@@ -160,7 +160,7 @@ token to manage: PyPI is configured to trust that workflow through OIDC, and the
 job mints a short-lived credential per run.
 
 1. Land the changes, and wait for CI to be green on `main`.
-2. Bump `version` in `pyproject.toml`. Nothing else records the version —
+2. Bump `version` in `pyproject.toml`. Nothing else records the version -
    `roborak.__version__` reads it back from the installed metadata.
 3. Move the `## [Unreleased]` entries in `CHANGELOG.md` under a new
    `## [x.y.z] - YYYY-MM-DD` heading, and update the link references at the
@@ -173,7 +173,7 @@ the changelog has no section for it.
 
 Rehearse anything you are unsure of with a release candidate first: a PyPI
 version number can never be reused, even after the file is deleted. An `rc` is
-the same four steps with `version = "x.y.zrc1"` and a matching tag — the version
+the same four steps with `version = "x.y.zrc1"` and a matching tag - the version
 has to be bumped for it too, since the tag must agree with the package. It needs
 no changelog entry of its own, because a prerelease reads the section for the
 version it precedes, and the GitHub Release is marked a pre-release.
@@ -195,7 +195,7 @@ npm run serve        # serve the build, exactly as Pages will
 
 The route table is written out by hand in `docs/src/routes.tsx`, one entry per
 page under `docs/src/pages/`. Pages are written as a flat list of the components
-in `docs/src/components/` — `H1`, `P`, `CodeBlock`, `Callout`, `Table`, `Cmd` —
+in `docs/src/components/` - `H1`, `P`, `CodeBlock`, `Callout`, `Table`, `Cmd` -
 which is what keeps ten hand-written pages looking like one site. The neon
 palette is defined once, in `docs/tailwind.config.js`.
 
@@ -214,7 +214,7 @@ it in the same PR. A reference page that quietly disagrees with `--help` is wors
 than no page at all.
 
 The `Website` job in CI runs `npm ci`, `tsc --noEmit` and the production build,
-then greps the emitted bundle for copy that has to be there — a page dropped from
+then greps the emitted bundle for copy that has to be there - a page dropped from
 the route table still builds cleanly, so a green build is not by itself evidence
 the page exists.
 
@@ -225,7 +225,7 @@ and what you expected instead. Add `--full` output when the problem is in the
 report itself. If it involves a forge, say which one and whether the instance is
 self-hosted.
 
-Please do not paste tokens or API keys into an issue — `roborak config show`
+Please do not paste tokens or API keys into an issue - `roborak config show`
 redacts them, raw config files do not.
 
 Security problems do not go in the issue tracker. See

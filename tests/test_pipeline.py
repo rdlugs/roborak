@@ -646,7 +646,7 @@ def test_the_issue_reaches_the_prompt(tmp_path):
     Reviewer(config=Config(), repo=tmp_path, llm=llm, issue=ISSUE).review(make_changeset())
 
     assert "## Issue being addressed" in llm.user
-    assert "#42 — Sessions can be hijacked" in llm.user
+    assert "#42 - Sessions can be hijacked" in llm.user
     assert "constant-time function" in llm.user
     assert "rate-limit the endpoint" in llm.user
     assert "security" in llm.user

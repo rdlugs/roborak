@@ -7,17 +7,17 @@ write down.
 Report findings in these categories: {{ categories | join(", ") }}.
 
 Prioritise, in this order:
-1. Security — injection, authz/IDOR, secrets, unsafe deserialisation, timing-unsafe
+1. Security - injection, authz/IDOR, secrets, unsafe deserialisation, timing-unsafe
    comparison, SSRF, path traversal, missing validation on untrusted input.
-2. Correctness — logic that produces wrong results, off-by-one, null/None handling,
+2. Correctness - logic that produces wrong results, off-by-one, null/None handling,
    unhandled error paths, race conditions and concurrent access, resource leaks.
-3. Performance — N+1 queries, unbounded collection growth, blocking calls on hot or
+3. Performance - N+1 queries, unbounded collection growth, blocking calls on hot or
    async paths, accidental quadratic behaviour.
-{% if operational %}4. Reliability — a rollout or runtime failure this change makes
+{% if operational %}4. Reliability - a rollout or runtime failure this change makes
    possible, as set out in the deployment and runtime section below. Rank these with
    correctness: the code is right and still takes production down.
-5. Everything else — maintainability, missing tests for new branching logic, docs.
-{% else %}4. Everything else — maintainability, missing tests for new branching logic, docs.
+5. Everything else - maintainability, missing tests for new branching logic, docs.
+{% else %}4. Everything else - maintainability, missing tests for new branching logic, docs.
 {% endif %}
 # What NOT to report
 
@@ -45,14 +45,14 @@ Every finding carries an `evidence` label saying what makes it true, and an
 you feel; `evidence` says what you can point at, and only the second one is
 checkable.
 
-- `execution_path` — you can name a concrete trigger and trace it through the code
+- `execution_path` - you can name a concrete trigger and trace it through the code
   shown to the failure. Say the input and the path.
-- `reproduction` — you can state an input and the wrong result it produces.
-- `contract` — the change violates a contract visible in what you were given: a
+- `reproduction` - you can state an input and the wrong result it produces.
+- `contract` - the change violates a contract visible in what you were given: a
   type, a signature, a documented guarantee, an invariant stated in the repository
   context. Name the contract.
-- `static_tool` — reserved for analyser output. Do not claim it.
-- `unverified` — reasoning alone, or a concern that depends on code you were not
+- `static_tool` - reserved for analyser output. Do not claim it.
+- `unverified` - reasoning alone, or a concern that depends on code you were not
   shown. Use it freely; it is the correct answer more often than not.
 
 When the evidence rests on code in *other* files -- the caller on the other side
@@ -221,7 +221,7 @@ kind, its line does not have to be one the diff changed.
 
 Do not report a gap for work the issue explicitly puts out of scope, defers, or
 leaves to a follow-up. Do not report one merely because you cannot see the file
-that would contain the work — use `verification_needed` and name what to check.
+that would contain the work - use `verification_needed` and name what to check.
 An issue that the diff fully satisfies produces no gaps at all.
 
 The issue also narrows the ordinary review: a trade-off the issue asked for is not
@@ -253,7 +253,7 @@ with correct indentation and no diff markers. It must be directly committable. O
 
 # Output
 
-Respond with YAML only — no prose before or after, no code fences.
+Respond with YAML only - no prose before or after, no code fences.
 
 ```
 findings:
@@ -275,9 +275,9 @@ findings:
       <replacement code, only when unambiguous>
 ```
 
-Severity means: `critical` — must be fixed before merge (security hole, data loss,
-crash on a common path). `major` — will produce wrong behaviour for real inputs.
-`minor` — genuine but low-impact. `info` — worth knowing, not worth blocking.
+Severity means: `critical` - must be fixed before merge (security hole, data loss,
+crash on a common path). `major` - will produce wrong behaviour for real inputs.
+`minor` - genuine but low-impact. `info` - worth knowing, not worth blocking.
 
 Report at most {{ max_findings }} findings, highest severity first. If you have
 nothing to report, respond with exactly `findings: []`.

@@ -116,7 +116,7 @@ class GitHubIssueSource:
             raise SourceError("Unexpected issue payload from GitHub.")
         if payload.get("pull_request"):
             raise SourceError(
-                f"#{self.target.number} is a pull request, not an issue — "
+                f"#{self.target.number} is a pull request, not an issue - "
                 f"use --pr {self.target.number}."
             )
 
