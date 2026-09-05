@@ -1,4 +1,4 @@
-"""``roborak config`` — inspect and scaffold configuration."""
+"""``roborak config`` - inspect and scaffold configuration."""
 
 from __future__ import annotations
 

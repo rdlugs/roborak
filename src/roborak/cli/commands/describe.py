@@ -1,4 +1,4 @@
-"""``roborak describe`` — a walkthrough of the change, not a critique."""
+"""``roborak describe`` - a walkthrough of the change, not a critique."""
 
 from __future__ import annotations
 

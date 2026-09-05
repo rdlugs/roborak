@@ -20,7 +20,7 @@ from roborak.cli.commands.rules import rules_app
 
 app = typer.Typer(
     name="roborak",
-    help="AI code review from the terminal — local diffs, GitLab MRs, and GitHub PRs.",
+    help="AI code review from the terminal - local diffs, GitLab MRs, and GitHub PRs.",
     no_args_is_help=False,
     add_completion=False,
     rich_markup_mode="rich",
