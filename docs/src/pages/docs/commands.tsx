@@ -108,7 +108,7 @@ export default function Commands() {
         shell
         code={[
           "rk config init                    # write a commented .roborak.yaml with every default",
-          "rk config init --global           # …or ~/.config/roborak/config.yaml, mode 600",
+          "rk config init --global           # …or ~/.config/roborak/.roborak.yaml, mode 600",
           "rk config init --force            # overwrite an existing file",
           "rk config show                    # the effective config, all layers merged",
         ].join("\n")}

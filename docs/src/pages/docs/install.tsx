@@ -81,14 +81,14 @@ export default function Install() {
         </Li>
         <Li>
           <Code>roborak config init --global</Code> scaffolds{" "}
-          <Code>~/.config/roborak/config.yaml</Code> and creates it mode 600.
+          <Code>~/.config/roborak/.roborak.yaml</Code> and creates it mode 600.
         </Li>
       </Ul>
 
       <Callout kind="warn" title="These are real secrets on disk">
         <P>
-          Keep them in <Code>~/.config/roborak/config.yaml</Code>, or in a{" "}
-          <Code>.roborak.yaml</Code> your repository ignores.{" "}
+          Keep them in <Code>~/.config/roborak/.roborak.yaml</Code>, or in a{" "}
+          <Code>.roborak.yaml</Code> / <Code>.roborak.yml</Code> your repository ignores.{" "}
           <Code>roborak config show</Code> redacts them; git does not.
         </P>
       </Callout>

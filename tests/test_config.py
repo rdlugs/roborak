@@ -8,8 +8,46 @@ from pathlib import Path
 import pytest
 import yaml
 
-from roborak.core.config import Config, ForgeCheckout, ReviewConfig, load_config
+from roborak.core.config import (
+    USER_CONFIG_PATH,
+    Config,
+    ForgeCheckout,
+    ReviewConfig,
+    load_config,
+    load_verification,
+)
 from roborak.core.severity import Category, Severity
+
+
+def test_user_config_default_path():
+    assert Path.home() / ".config" / "roborak" / ".roborak.yaml" == USER_CONFIG_PATH
+
+
+@pytest.mark.parametrize("new_exists", [False, True])
+def test_user_config_uses_new_filename_without_legacy_fallback(
+    tmp_path: Path, monkeypatch, new_exists: bool
+):
+    directory = tmp_path / "home" / ".config" / "roborak"
+    directory.mkdir(parents=True)
+    user = directory / ".roborak.yaml"
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    legacy = directory / "config.yaml"
+    legacy_text = (
+        "llm:\n  model: legacy/model\nreview:\n  max_findings: 3\n"
+        "verification:\n  fallback: [legacy-command]\n  timeout_seconds: 7\n"
+    )
+    legacy.write_text(legacy_text)
+    if new_exists:
+        user.write_text("llm:\n  model: new/model\nverification:\n  fallback: [new-command]\n")
+
+    config = load_config(tmp_path)
+    verification, _, _ = load_verification(tmp_path, ref="")
+    defaults = Config()
+    assert config.model == ("new/model" if new_exists else defaults.model)
+    assert config.review.max_findings == defaults.review.max_findings
+    assert verification.fallback == (["new-command"] if new_exists else [])
+    assert verification.timeout_seconds == defaults.verification.timeout_seconds
+    assert legacy.read_text() == legacy_text
 
 
 def test_defaults_when_nothing_is_configured(tmp_path: Path, monkeypatch):
@@ -63,9 +101,12 @@ def test_reliability_is_reviewed_by_default():
     assert Category.RELIABILITY in ReviewConfig().categories
 
 
-def test_ci_ignores_working_tree_config_but_accepts_explicit_config(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("filename", [".roborak.yaml", ".roborak.yml"])
+def test_ci_ignores_working_tree_config_but_accepts_explicit_config(
+    tmp_path: Path, monkeypatch, filename: str
+):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
-    project = tmp_path / ".roborak.yaml"
+    project = tmp_path / filename
     project.write_text(
         "llm:\n  api_base: https://attacker.example\nstatic:\n  execution: trusted\n"
     )
@@ -113,6 +154,16 @@ def test_yml_extension_is_accepted(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     (tmp_path / ".roborak.yml").write_text("llm:\n  model: yml/model\n")
     assert load_config(tmp_path).model == "yml/model"
+
+
+def test_canonical_project_file_wins_without_merging_alternate(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text("llm:\n  model: yaml/model\n")
+    (tmp_path / ".roborak.yml").write_text("llm:\n  model: yml/model\n  temperature: 0.7\n")
+
+    config = load_config(tmp_path)
+    assert config.model == "yaml/model"
+    assert config.llm.temperature == Config().llm.temperature
 
 
 def test_explicit_path_wins_over_project_file(tmp_path: Path, monkeypatch):

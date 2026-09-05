@@ -83,8 +83,8 @@ llm:
 ```
 
 A configured key wins over the provider's environment variable. These are real
-secrets on disk, so keep them in `~/.config/roborak/config.yaml` or in a
-`.roborak.yaml` your repo ignores - `roborak config show` redacts them, git does
+secrets on disk, so keep them in `~/.config/roborak/.roborak.yaml` or in a
+`.roborak.yaml` / `.roborak.yml` your repo ignores - `roborak config show` redacts them, git does
 not. `roborak config init --global` scaffolds that user-wide file and creates it
 mode 600. Setting `api_base` alone is enough for endpoints that need no key.
 
@@ -232,7 +232,7 @@ uv run roborak rules list                   # what roborak will apply here
 uv run roborak rules test <rule.md> <file>  # validate a rule and check its scope
 uv run roborak setup                        # guided first run: model, key, forge tokens
 uv run roborak config init                  # write a commented .roborak.yaml
-uv run roborak config init --global         # …or ~/.config/roborak/config.yaml, mode 600
+uv run roborak config init --global         # …or ~/.config/roborak/.roborak.yaml, mode 600
 uv run roborak config show                  # the effective config, all layers merged
 ```
 
@@ -257,8 +257,8 @@ forge:
 A configured token wins over `GITLAB_TOKEN` / `GITHUB_TOKEN` and over the `gh`
 session, while `ROBORAK_GITLAB_TOKEN` / `ROBORAK_GITHUB_TOKEN` still win over the
 file. They are secrets on disk, so the same advice applies: keep them in
-`~/.config/roborak/config.yaml` (`roborak config init --global` creates it mode
-600) or in a `.roborak.yaml` your repo ignores. `roborak config show` redacts them.
+`~/.config/roborak/.roborak.yaml` (`roborak config init --global` creates it mode
+600) or in a `.roborak.yaml` / `.roborak.yml` your repo ignores. `roborak config show` redacts them.
 
 ### Self-hosted instances
 
@@ -421,9 +421,16 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
 
 ## Configuration
 
-`.roborak.yaml` in the repo root. Precedence: CLI flags > `ROBORAK_*` env vars >
-project config > `~/.config/roborak/config.yaml` > defaults. `config init` writes
-the first, `config init --global` the second; both get the same commented template,
+Existing users: rename `~/.config/roborak/config.yaml` to
+`~/.config/roborak/.roborak.yaml`, preserving its contents and permissions. The old
+filename is no longer discovered automatically. If the new file already exists,
+reconcile your settings before replacing either file.
+
+Project config is `.roborak.yaml` / `.roborak.yml` in the repo root. `.roborak.yaml`
+is the canonical generated default and wins if both exist; the files are not merged.
+Precedence: CLI flags > `ROBORAK_*` env vars > project config >
+`~/.config/roborak/.roborak.yaml` > defaults. `config init` writes `.roborak.yaml`,
+`config init --global` writes the user-wide file; both get the same commented template,
 which ships inside the package rather than being read out of a source checkout.
 
 `roborak setup` is the guided path to the same files: it asks for a model, a
@@ -678,7 +685,7 @@ untrusted code directly. `--trust-static` (or `static.execution: trusted`) is th
 explicit override for a checkout you control. Every static subprocess receives a
 credential-scrubbed environment in all modes.
 
-CI also ignores `.roborak.yaml` from the working tree entirely, since it could
+CI also ignores `.roborak.yaml` / `.roborak.yml` from the working tree entirely, since either could
 redirect an API key or opt into trusted execution. (The `verification` section is
 read from the base revision in every environment, not just CI.) Put CI settings in environment variables,
 the user config, or pass a trusted base-controlled file with `--config`.

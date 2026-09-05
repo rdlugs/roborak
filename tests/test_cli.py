@@ -452,10 +452,76 @@ def test_config_init_and_show(repo: Path):
     created = runner.invoke(app, ["config", "init", "-C", str(repo)])
     assert created.exit_code == EXIT_OK
     assert (repo / ".roborak.yaml").is_file()
+    assert not (repo / ".roborak.yml").exists()
+    assert str(repo / ".roborak.yaml") in unwrapped(created.output)
 
     shown = runner.invoke(app, ["config", "show", "-C", str(repo)])
     assert shown.exit_code == EXIT_OK
     assert "severity_floor" in flatten(shown.output)
+
+
+def test_config_init_help_explains_project_filenames():
+    result = runner.invoke(app, ["config", "init", "--help"])
+    assert result.exit_code == EXIT_OK
+    output = flatten(result.output)
+    assert ".roborak.yaml is the canonical generated name" in output
+    assert ".roborak.yml is also accepted" in output
+    assert "If both exist, .roborak.yaml wins." in output
+
+
+def test_config_init_keeps_alternate_file_and_writes_canonical_default(repo: Path):
+    alternate = repo / ".roborak.yml"
+    contents = "llm:\n  model: yml/model\n"
+    alternate.write_text(contents)
+
+    result = runner.invoke(app, ["config", "init", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK
+    assert (repo / ".roborak.yaml").is_file()
+    assert alternate.read_text() == contents
+
+
+@pytest.mark.parametrize("filename", [".roborak.yaml", ".roborak.yml"])
+def test_config_show_loads_and_reports_either_project_filename(repo: Path, filename: str):
+    project = repo / filename
+    project.write_text("llm:\n  model: test/project\n  api_keys:\n    openai: secret-value\n")
+
+    result = runner.invoke(app, ["config", "show", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK
+    assert "test/project" in flatten(result.output)
+    assert "secret-value" not in result.output
+    assert f"loaded from: {project}" in unwrapped(result.output)
+
+
+def test_config_show_reports_only_canonical_file_when_both_exist(repo: Path):
+    (repo / ".roborak.yaml").write_text("llm:\n  model: test/canonical\n")
+    (repo / ".roborak.yml").write_text("llm:\n  model: test/alternate\n")
+
+    result = runner.invoke(app, ["config", "show", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK
+    assert "test/canonical" in flatten(result.output)
+    assert "test/alternate" not in result.output
+    assert str(repo / ".roborak.yaml") in unwrapped(result.output)
+    assert str(repo / ".roborak.yml") not in unwrapped(result.output)
+
+
+@pytest.mark.parametrize("filename", [".roborak.yaml", ".roborak.yml"])
+def test_config_show_in_ci_reports_only_explicit_project_config(
+    repo: Path, monkeypatch, filename: str
+):
+    project = repo / filename
+    project.write_text("llm:\n  model: test/project\n")
+    monkeypatch.setenv("CI", "true")
+
+    automatic = runner.invoke(app, ["config", "show", "-C", str(repo)])
+    assert automatic.exit_code == EXIT_OK
+    assert "test/project" not in automatic.output
+    assert "loaded from: defaults only" in flatten(automatic.output)
+    assert str(project) not in unwrapped(automatic.output)
+
+    explicit = runner.invoke(app, ["config", "show", "-C", str(repo), "--config", str(project)])
+    assert explicit.exit_code == EXIT_OK
+    assert "test/project" in flatten(explicit.output)
+    assert str(project) in unwrapped(explicit.output)
 
 
 def test_config_init_refuses_to_overwrite_without_force(repo: Path):
@@ -626,7 +692,7 @@ def test_post_with_an_unlinked_issue_is_refused(repo: Path, monkeypatch):
 @pytest.fixture
 def user_config(tmp_path: Path, monkeypatch) -> Path:
     """Point the user-wide config somewhere disposable, for both readers of it."""
-    path = tmp_path / "home" / ".config" / "roborak" / "config.yaml"
+    path = tmp_path / "home" / ".config" / "roborak" / ".roborak.yaml"
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", path)
     return path
 
@@ -677,6 +743,8 @@ def test_the_scaffolded_file_is_the_commented_template(repo: Path):
     written = (repo / ".roborak.yaml").read_text(encoding="utf-8")
 
     assert written.startswith("# roborak configuration")
+    assert ".roborak.yaml (canonical generated default) / .roborak.yml" in written
+    assert "only .roborak.yaml is loaded; they are not merged" in written
     assert "check_requirements" in written
     assert "include_discussions" in written
     assert "# null autodetects whatever is on PATH." in written
@@ -692,11 +760,17 @@ def test_the_template_ships_inside_the_package():
 
 
 def test_config_show_names_an_explicit_config_file(repo: Path, tmp_path: Path):
+    (repo / ".roborak.yaml").write_text("llm:\n  model: test/automatic\n")
+    (repo / ".roborak.yml").write_text("llm:\n  model: test/alternate\n")
     explicit = tmp_path / "elsewhere.yaml"
     explicit.write_text("version: 1\n")
     shown = runner.invoke(app, ["config", "show", "-C", str(repo), "--config", str(explicit)])
     assert shown.exit_code == EXIT_OK
     assert str(explicit) in unwrapped(shown.output)
+    assert str(repo / ".roborak.yaml") not in unwrapped(shown.output)
+    assert str(repo / ".roborak.yml") not in unwrapped(shown.output)
+    assert "test/automatic" not in shown.output
+    assert "test/alternate" not in shown.output
 
 
 @pytest.fixture

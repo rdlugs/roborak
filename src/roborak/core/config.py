@@ -1,7 +1,7 @@
 """Layered configuration.
 
 Precedence, highest first: CLI flags, environment (``ROBORAK_*``), the project's
-``.roborak.yaml``, the user's ``~/.config/roborak/config.yaml``, then defaults.
+``.roborak.yaml`` / ``.roborak.yml``, the user's ``~/.config/roborak/.roborak.yaml``, then defaults.
 The shape is a section per stage -- review, static analysis, verification, blast
 radius, the model, forge credentials, output -- plus path ignores and a rules
 directory.
@@ -30,7 +30,10 @@ from roborak.sandbox import in_ci
 log = logging.getLogger(__name__)
 
 PROJECT_CONFIG_NAMES = (".roborak.yaml", ".roborak.yml")
-USER_CONFIG_PATH = Path.home() / ".config" / "roborak" / "config.yaml"
+"""Discovery order; the first name is the canonical generated default.
+Only the first existing file is loaded, so the two files are never merged.
+"""
+USER_CONFIG_PATH = Path.home() / ".config" / "roborak" / PROJECT_CONFIG_NAMES[0]
 
 DEFAULT_IGNORE_PATHS = [
     "**/*.lock",
@@ -431,6 +434,15 @@ class Config(ConfigModel):
         return self.llm.model
 
 
+def project_config_path(repo: Path, explicit_path: Path | None = None) -> Path | None:
+    """Select the project layer consistently for loading and source reporting."""
+    if explicit_path is not None:
+        return explicit_path
+    if in_ci():
+        return None
+    return next((repo / name for name in PROJECT_CONFIG_NAMES if (repo / name).is_file()), None)
+
+
 def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
     """Merge every configuration layer into one ``Config``."""
     layers: list[dict[str, Any]] = []
@@ -438,17 +450,12 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
     if USER_CONFIG_PATH.is_file():
         layers.append(_read_yaml(USER_CONFIG_PATH))
 
-    if explicit_path is not None:
-        if not explicit_path.is_file():
-            raise FileNotFoundError(f"Config file not found: {explicit_path}")
-        layers.append(_read_yaml(explicit_path))
-    elif not in_ci():
-        for name in PROJECT_CONFIG_NAMES:
-            candidate = repo / name
-            if candidate.is_file():
-                layers.append(_read_yaml(candidate))
-                break
-    else:
+    project_path = project_config_path(repo, explicit_path)
+    if project_path is not None:
+        if not project_path.is_file():
+            raise FileNotFoundError(f"Config file not found: {project_path}")
+        layers.append(_read_yaml(project_path))
+    elif in_ci():
         log.debug(
             "ignoring working-tree project configuration in CI; pass --config with a trusted "
             "path or use environment/user configuration"

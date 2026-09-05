@@ -55,10 +55,9 @@ def show_config(
 
     user_path = core_config.USER_CONFIG_PATH
     sources = [str(user_path)] if user_path.is_file() else []
-    if config_path is not None:
-        sources.append(str(config_path))
-    else:
-        sources += [str(repo / name) for name in PROJECT_CONFIG_NAMES if (repo / name).is_file()]
+    project_path = core_config.project_config_path(repo, config_path)
+    if project_path is not None:
+        sources.append(str(project_path))
     console.print(f"[dim]loaded from: {', '.join(sources) or 'defaults only'}[/]")
 
     if missing := missing_credentials(config.model, config.llm):
@@ -79,7 +78,11 @@ def init_config(
     ] = False,
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
 ) -> None:
-    """Write a commented config file with every option at its default."""
+    """Write a commented .roborak.yaml with every option at its default.
+
+    .roborak.yaml is the canonical generated name; .roborak.yml is also accepted
+    when loading project configuration. If both exist, .roborak.yaml wins.
+    """
     console = Console()
 
     if user and repo is not None:
