@@ -201,7 +201,9 @@ def search(
     except OSError as exc:
         return ToolResult(error=f"search could not run: {exc}")
 
-    if done.returncode > 1:  # 1 is "no matches", which is an answer
+    if done.returncode not in (0, 1):  # 1 is "no matches", which is an answer
+        # Not `> 1`: a git killed by a signal comes back negative, and reading that
+        # as success would hand the model an empty result as if it were evidence.
         # 128 is usually a pattern git itself rejected, and saying so is the
         # difference between a question the model can rephrase and one it cannot.
         detail = next((line for line in done.stderr.splitlines() if line.strip()), "")

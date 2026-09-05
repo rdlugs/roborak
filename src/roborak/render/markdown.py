@@ -422,7 +422,9 @@ def _investigation_section(report: InvestigationReport | None, *, form: Form) ->
     # needs in order to know what a settled candidate is actually worth.
     parts += [_wrap(f"_{note}_") for note in report.notes]
     if not parts:
-        return ""
+        # The status line is the whole point of a stage that recorded nothing else:
+        # an absent section reads as an all-clear, which is the one thing it is not.
+        parts.append(_wrap("_The stage recorded no further detail._"))
 
     summary = f"{icons.INVESTIGATION} Investigation — {INVESTIGATION_LABEL[report.status]}"
     if report.candidates:
@@ -468,7 +470,9 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
     # reader needs in order to know what a clean section is worth.
     parts += [_wrap(f"_{note}_") for note in report.notes]
     if not parts:
-        return ""
+        # The status line is the whole point of a stage that recorded nothing else:
+        # an absent section reads as an all-clear, which is the one thing it is not.
+        parts.append(_wrap("_The stage recorded no further detail._"))
 
     summary = f"{icons.SUPPLY} Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
     if report.changes:

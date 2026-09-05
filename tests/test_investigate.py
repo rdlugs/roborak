@@ -235,6 +235,18 @@ def test_search_finding_nothing_is_an_answer(repo: Path):
     assert result.text == ""
 
 
+def test_a_search_killed_by_a_signal_is_a_failure_not_an_empty_answer(repo: Path, monkeypatch):
+    """A negative returncode is git dying, and empty stdout is not "no matches"."""
+
+    def killed(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args, returncode=-9, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", killed)
+    result = tools.search(repo, "charge", regex=False, path_prefix="", config=cfg())
+    assert not result.ok
+    assert "search failed" in result.error
+
+
 def test_show_diff_comes_from_the_changeset_not_the_tree(repo: Path):
     result = tools.show_diff(changeset(), "app.py", config=cfg())
     assert result.ok
@@ -807,6 +819,15 @@ def test_markdown_speaks_up_when_the_checkout_did_not_match():
     body = markdown.render(result)
     assert "Investigation" in body
     assert "no matching checkout" in body
+
+
+def test_markdown_still_shows_a_status_that_recorded_nothing_else():
+    """Terminal prints every non-skipped status; markdown must not go quiet on one."""
+    result = ReviewResult(changeset=changeset())
+    result.investigation = InvestigationReport(status=InvestigationStatus.ERRORED)
+    body = markdown.render(result)
+    assert "Investigation" in body
+    assert "no further detail" in body
 
 
 def test_the_terminal_view_prints_a_line(repo: Path, capsys):
