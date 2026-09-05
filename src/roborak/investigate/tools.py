@@ -31,6 +31,9 @@ from roborak.sources.paths import MAX_FILE_BYTES
 
 log = logging.getLogger(__name__)
 
+VCS_METADATA = frozenset({".git", ".hg", ".svn"})
+"""Directories that live inside the tree without being part of it."""
+
 MAX_PATTERN_CHARS = 200
 """Ceiling on a search pattern. A regular expression long enough to exceed this is
 not a question about the change."""
@@ -58,6 +61,8 @@ def resolve_in_repo(repo: Path, candidate: str) -> Path | None:
     ``../`` fail the same containment check rather than needing separate tests. An
     absolute path is rejected outright: the model is asking about a repository, and
     a path that does not start relative to one is not a question about the change.
+    Version-control metadata is rejected on the same grounds: it sits inside the
+    tree without being part of the change.
     """
     if not candidate or candidate.strip() != candidate:
         return None
@@ -72,6 +77,11 @@ def resolve_in_repo(repo: Path, candidate: str) -> Path | None:
         return None
     if target != root and not target.is_relative_to(root):
         log.debug("refusing path outside the repository: %s", candidate)
+        return None
+    if VCS_METADATA.intersection(target.relative_to(root).parts):
+        # Inside the repository but not part of it: `.git` holds the object store,
+        # hooks and remote configuration, none of which is a question about the change.
+        log.debug("refusing version-control metadata path: %s", candidate)
         return None
     return target
 
@@ -98,7 +108,7 @@ def read_lines(
     """
     target = resolve_in_repo(repo, path)
     if target is None:
-        return ToolResult(error=f"path is outside the repository: {path}")
+        return ToolResult(error=f"path is outside the repository or not part of it: {path}")
     if not target.is_file():
         return ToolResult(error=f"not a file: {path}")
     try:
@@ -167,7 +177,9 @@ def search(
     if path_prefix:
         contained = resolve_in_repo(repo, path_prefix)
         if contained is None:
-            return ToolResult(error=f"path is outside the repository: {path_prefix}")
+            return ToolResult(
+                error=f"path is outside the repository or not part of it: {path_prefix}"
+            )
         # Pass the path as the model wrote it, not as we resolved it: git wants a
         # repo-relative pathspec, and the resolution above was the containment proof.
         argv.append(path_prefix)
@@ -190,6 +202,11 @@ def search(
         return ToolResult(error=f"search could not run: {exc}")
 
     if done.returncode > 1:  # 1 is "no matches", which is an answer
+        # 128 is usually a pattern git itself rejected, and saying so is the
+        # difference between a question the model can rephrase and one it cannot.
+        detail = next((line for line in done.stderr.splitlines() if line.strip()), "")
+        if done.returncode == 128 and detail:
+            return ToolResult(error=f"search failed: {detail.strip()}")
         return ToolResult(error="search failed; the checkout may not be a git repository")
 
     rows = done.stdout.splitlines()

@@ -626,7 +626,7 @@ def test_post_with_an_unlinked_issue_is_refused(repo: Path, monkeypatch):
 @pytest.fixture
 def user_config(tmp_path: Path, monkeypatch) -> Path:
     """Point the user-wide config somewhere disposable, for both readers of it."""
-    path = tmp_path / "home" / ".config" / "roborak" / ".roborak.yaml"
+    path = tmp_path / "home" / ".config" / "roborak" / "config.yaml"
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", path)
     return path
 

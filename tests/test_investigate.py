@@ -26,6 +26,7 @@ from roborak.core.models import (
     ChangeSet,
     Finding,
     Hunk,
+    InvestigationDecision,
     InvestigationOutcome,
     InvestigationReport,
     InvestigationStatus,
@@ -144,6 +145,14 @@ def test_a_symlink_pointing_out_of_the_tree_is_refused(repo: Path, tmp_path: Pat
     assert "outside the repository" in result.error
 
 
+def test_version_control_metadata_is_refused(repo: Path):
+    """`.git` sits inside the tree without being part of the change."""
+    assert tools.resolve_in_repo(repo, ".git/config") is None
+    result = tools.read_lines(repo, ".git/config", start=1, end=5, config=cfg())
+    assert not result.ok
+    assert "not part of it" in result.error
+
+
 def test_a_contained_path_resolves(repo: Path):
     assert tools.resolve_in_repo(repo, "app.py") == (repo / "app.py").resolve()
 
@@ -201,6 +210,13 @@ def test_search_rejects_a_broken_regular_expression(repo: Path):
     assert "invalid regular expression" in result.error
 
 
+def test_a_pattern_git_rejects_reports_what_git_said(repo: Path):
+    """`(?P<x>a)` compiles in Python and not in POSIX, and the difference is the answer."""
+    result = tools.search(repo, "(?P<x>a)", regex=True, path_prefix="", config=cfg())
+    assert not result.ok
+    assert "Invalid preceding regular expression" in result.error
+
+
 def test_search_rejects_an_oversized_pattern(repo: Path):
     result = tools.search(repo, "x" * 500, regex=False, path_prefix="", config=cfg())
     assert not result.ok
@@ -246,7 +262,8 @@ def test_a_forge_change_against_a_different_checkout_never_reads_it(repo: Path):
     access = availability.resolve(changeset(origin="github", head_sha="b" * 40), repo)
     assert not access.reads_working_tree
     assert not access.searches
-    assert "does not match" not in "".join(access.notes) or access.notes
+    note = " ".join(access.notes)
+    assert "the checkout is at" in note and "but the change is at" in note
 
 
 def test_a_dirty_checkout_is_not_trusted_even_at_the_right_commit(repo: Path):
@@ -314,6 +331,22 @@ def test_the_degraded_mode_refuses_a_search(repo: Path):
     assert "checkout" in report.operations[0].note
 
 
+def test_the_degraded_mode_says_when_a_read_was_cut(repo: Path):
+    """A silently truncated tail reads as "there is nothing else there"."""
+    complete = replies(
+        "requests:\n  - tool: read_file\n    path: app.py\n    start: 1\n    end: 2\n",
+        CONFIRM,
+    )
+    _, report = investigate(
+        [finding()],
+        forge_change(),
+        repo=repo,
+        config=cfg(max_lines_per_read=1),
+        complete=complete,
+    )
+    assert report.operations[0].truncated
+
+
 def test_the_degraded_mode_cannot_read_a_file_the_change_does_not_carry(repo: Path):
     complete = replies(
         "requests:\n  - tool: read_file\n    path: other.py\n    start: 1\n    end: 2\n",
@@ -374,6 +407,16 @@ def test_a_search_operation_runs_for_a_local_change(repo: Path):
     assert "app.py" in report.operations[0].result
 
 
+def test_a_boolean_regex_request_is_honoured(repo: Path):
+    """`regex: true` is how a model writes it, and a blanked bool would search literally."""
+    complete = replies(
+        "requests:\n  - tool: search\n    pattern: char.e\n    regex: true\n", CONFIRM
+    )
+    _, report = investigate([finding()], changeset(), repo=repo, config=cfg(), complete=complete)
+    assert report.operations[0].outcome is InvestigationOutcome.OK
+    assert "app.py" in report.operations[0].result
+
+
 # --- candidate selection -----------------------------------------------------
 
 
@@ -411,6 +454,25 @@ def test_confirming_a_candidate_saves_it_from_demotion(repo: Path):
     kept = validator.enforce_evidence(findings)
     assert kept[0].severity is Severity.CRITICAL
     assert kept[0].kind is Kind.POTENTIAL_ISSUE
+
+
+def test_a_confirmation_that_says_nothing_keeps_the_evidence_there_was(repo: Path):
+    """A decision always carries an evidence pair; the default must not erase a real one."""
+    candidate = finding(
+        evidence=Evidence.EXECUTION_PATH,
+        evidence_note="caller() at app.py:6 passes None.",
+    )
+    investigate(
+        [candidate],
+        changeset(),
+        repo=repo,
+        config=cfg(),
+        complete=replies(
+            "decisions:\n  - candidate: c1\n    disposition: confirm\n    rationale: it holds.\n"
+        ),
+    )
+    assert candidate.evidence is Evidence.EXECUTION_PATH
+    assert candidate.evidence_note == "caller() at app.py:6 passes None."
 
 
 def test_an_unconfirmed_candidate_is_still_demoted(repo: Path):
@@ -749,3 +811,24 @@ def test_the_terminal_view_prints_a_line(repo: Path, capsys):
     )
     terminal.render(result, Console(force_terminal=False, width=100), repo)
     assert "investigation:" in capsys.readouterr().out
+
+
+def test_the_terminal_view_never_reads_a_title_as_markup(repo: Path, capsys):
+    """A model quoting `[/]` in a title must not close a style tag with it."""
+    from rich.console import Console
+
+    result = ReviewResult(changeset=changeset())
+    result.investigation = InvestigationReport(
+        status=InvestigationStatus.COMPLETED,
+        candidates=1,
+        decisions=[
+            InvestigationDecision(
+                candidate="c1",
+                disposition="confirm",
+                location="app.py:2",
+                title="the [/] marker is mishandled",
+            )
+        ],
+    )
+    terminal.render(result, Console(force_terminal=False, width=100), repo)
+    assert "the [/] marker is mishandled" in capsys.readouterr().out

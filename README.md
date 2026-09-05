@@ -462,6 +462,7 @@ review:
     enabled: true
     max_candidates: 5        # findings put to the stage, worst first
     max_rounds: 2            # request/result exchanges before it must decide
+    max_requests_per_round: 4
     max_files: 10
     max_lines_per_read: 200
     max_search_results: 20

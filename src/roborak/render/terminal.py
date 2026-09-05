@@ -151,8 +151,13 @@ def _render_investigation(report: InvestigationReport | None, console: Console) 
         highlight=False,
     )
     for decision in report.settled[:MAX_INVESTIGATION_LINES]:
+        # A title is model-written text quoting code, so it goes through `Text`
+        # rather than the markup parser, which would read `[/]` in it as a tag.
         console.print(
-            f"  [dim]{decision.disposition}: {decision.title or decision.location}[/]",
+            Text(
+                f"  {decision.disposition}: {decision.title or decision.location}",
+                style="dim",
+            ),
             highlight=False,
         )
 

@@ -41,7 +41,7 @@ from roborak.core.models import (
     InvestigationReport,
     InvestigationStatus,
 )
-from roborak.core.severity import Severity
+from roborak.core.severity import Evidence, Severity
 from roborak.investigate import availability, tools
 from roborak.llm.parser import (
     ParseError,
@@ -317,9 +317,12 @@ def _read(
     last = min(len(lines), max(start, end))
     if start > len(lines):
         return tools.ToolResult(error=f"{path} has {len(lines)} lines; {start} is past the end")
-    window = lines[start - 1 : last][: config.max_lines_per_read]
-    text = "\n".join(f"{start + offset}: {line}" for offset, line in enumerate(window))
-    return tools.ToolResult(text=text[: config.max_output_chars])
+    window = lines[start - 1 : last]
+    clipped = len(window) > config.max_lines_per_read
+    window = window[: config.max_lines_per_read]
+    numbered = "\n".join(f"{start + offset}: {line}" for offset, line in enumerate(window))
+    text, cut = tools.bound(numbered, config.max_output_chars)
+    return tools.ToolResult(text=text, truncated=clipped or cut)
 
 
 def _find_symbol(repo: Path, path: str, symbol: str, config: InvestigateConfig) -> tools.ToolResult:
@@ -464,7 +467,20 @@ def _revise(finding: Finding, revision: dict[str, object]) -> None:
         "evidence_note",
         "evidence_files",
     ):
-        if attribute in revision:
-            setattr(finding, attribute, revision[attribute])
+        if attribute not in revision:
+            continue
+        value = revision[attribute]
+        # A decision always carries an evidence pair, defaulted when the model said
+        # nothing about it. Writing that default back would strip the evidence a
+        # confirmed finding already had, and demote the finding this stage just proved.
+        if (
+            attribute == "evidence"
+            and value is Evidence.UNVERIFIED
+            and finding.evidence is not Evidence.UNVERIFIED
+        ):
+            continue
+        if attribute == "evidence_note" and not value and finding.evidence_note:
+            continue
+        setattr(finding, attribute, value)
     if finding.end_line < finding.start_line:
         finding.end_line = finding.start_line

@@ -238,7 +238,7 @@ def parse_investigation_requests(text: str, *, limit: int) -> list[dict[str, str
             log.debug("skipping unknown investigation tool: %r", tool)
             continue
         arguments = {
-            key: _as_str(entry.get(key))
+            key: _as_argument(entry.get(key))
             for key in ("path", "pattern", "symbol", "regex", "start", "end")
             if entry.get(key) is not None
         }
@@ -247,6 +247,18 @@ def parse_investigation_requests(text: str, *, limit: int) -> list[dict[str, str
         if len(requests) == limit:
             break
     return requests
+
+
+def _as_argument(value: Any) -> str:
+    """One request argument as text. A YAML boolean keeps its word.
+
+    ``_as_str`` blanks a bool deliberately -- ``true`` is not a title -- but
+    ``regex: true`` is the natural way to ask for a regular expression, and a
+    blank there would quietly run the pattern as a fixed string.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return _as_str(value)
 
 
 def parse_investigation_decisions(text: str, *, valid_ids: set[str]) -> list[dict[str, Any]]:
