@@ -22,6 +22,7 @@ import textwrap
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -385,11 +386,16 @@ def test_a_checkout_git_marked_read_only_is_still_removed(
     obj.chmod(stat.S_IREAD)
 
     unlink = os.unlink
+    target = obj.stat()
 
-    def refuse_while_read_only(path: str, **kwargs: object) -> None:
-        if Path(path) == obj and not stat.S_IMODE(os.stat(path).st_mode) & stat.S_IWRITE:
+    def refuse_while_read_only(path: str, **kwargs: Any) -> None:
+        # ``shutil.rmtree`` walks by directory descriptor, so ``path`` is a bare
+        # name and only ``dir_fd`` says which file it is; identity is the inode.
+        found = os.stat(path, dir_fd=kwargs.get("dir_fd"), follow_symlinks=False)
+        is_object = (found.st_dev, found.st_ino) == (target.st_dev, target.st_ino)
+        if is_object and not stat.S_IMODE(found.st_mode) & stat.S_IWRITE:
             raise PermissionError(13, "Access is denied", str(path))
-        unlink(path)
+        unlink(path, **kwargs)
 
     monkeypatch.setattr(os, "unlink", refuse_while_read_only)
 
