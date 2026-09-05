@@ -364,18 +364,34 @@ def test_a_change_with_no_forge_reference_has_nowhere_to_fetch_from(local: Path)
 # --- cleanup -----------------------------------------------------------------
 
 
-def test_a_checkout_git_marked_read_only_is_still_removed(tmp_path: Path) -> None:
+def test_a_checkout_git_marked_read_only_is_still_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Windows makes everything under ``.git/objects`` read-only.
 
     Deleting one raises ``PermissionError`` there, and swallowing that would leave
     a full clone in the user's temp directory after every review -- the failure
     cleanup exists to prevent, made invisible.
+
+    POSIX unlinks by directory permission, so the read-only bit alone would not
+    reach the recovery path on the two thirds of CI that is not Windows. Removal
+    of the read-only object is refused here instead, exactly as Windows refuses
+    it, so the retry is what the assertion rests on everywhere.
     """
     scratch = tmp_path / "scratch"
     (scratch / ".git" / "objects").mkdir(parents=True)
     obj = scratch / ".git" / "objects" / "cafe"
     obj.write_text("packed", encoding="utf-8")
     obj.chmod(stat.S_IREAD)
+
+    unlink = os.unlink
+
+    def refuse_while_read_only(path: str, **kwargs: object) -> None:
+        if Path(path) == obj and not stat.S_IMODE(os.stat(path).st_mode) & stat.S_IWRITE:
+            raise PermissionError(13, "Access is denied", str(path))
+        unlink(path)
+
+    monkeypatch.setattr(os, "unlink", refuse_while_read_only)
 
     forge_checkout._remove(scratch)
 
