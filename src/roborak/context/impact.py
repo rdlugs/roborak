@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from roborak.context import ast_context
+from roborak.context import ast_context, forge_checkout
 from roborak.context.diff import detect_language
 from roborak.core.config import ImpactConfig
 from roborak.core.models import (
@@ -233,14 +233,42 @@ _LITERAL_NODES = frozenset(
 """Node types a name can appear inside without being a reference to anything."""
 
 
-def analyse(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> ImpactMap:
-    """Map the blast radius of ``changeset``, as far as the evidence allows."""
-    status, notes = _availability(changeset, repo)
+def analyse(
+    changeset: ChangeSet, repo: Path, config: ImpactConfig, *, forge_token: str | None = None
+) -> ImpactMap:
+    """Map the blast radius of ``changeset``, as far as the evidence allows.
+
+    A forge change whose head commit is nowhere local used to end here: no tree,
+    no consumers, nothing to say. ``forge_checkout`` fetches a throwaway one, so
+    the search runs against exactly the reviewed commit. Its lifetime is this
+    call -- every path below reads the tree while the map is being built, and
+    none of them holds a reference to it afterwards.
+    """
+    present = _head_present(changeset, repo)
+    with forge_checkout.acquire(
+        changeset, repo, config, head_present=present, token=forge_token
+    ) as fetched:
+        return _analyse(changeset, fetched.repo or repo, config, fetched=fetched, present=present)
+
+
+def _analyse(
+    changeset: ChangeSet,
+    repo: Path,
+    config: ImpactConfig,
+    *,
+    fetched: forge_checkout.Checkout,
+    present: bool,
+) -> ImpactMap:
+    """The map itself, against whichever tree ``analyse`` settled on."""
+    status, notes = _availability(changeset, fetched=fetched, present=present)
     if status is not None:
         return ImpactMap(status=status, notes=notes)
 
-    limited = changeset.origin in {"gitlab", "github"}
-    nodes, parsed_any = _seed(changeset, config)
+    # A verified temporary checkout *is* the change under review, so the caveat
+    # that the tree may not match would be false. Only the local-checkout path,
+    # where a matching commit says nothing about the working directory, keeps it.
+    limited = changeset.origin in {"gitlab", "github"} and not fetched.verified
+    nodes, parsed_any = _seed(changeset, repo, config)
     if not nodes:
         return ImpactMap(
             status=ImpactStatus.UNSUPPORTED,
@@ -292,6 +320,8 @@ def analyse(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> ImpactMap
             "The change was fetched from the forge and searched against the local "
             "checkout, which may not hold exactly the code under review.",
         )
+    elif fetched.verified:
+        notes.insert(0, fetched.notes[0])
 
     return ImpactMap(
         nodes=nodes,
@@ -302,7 +332,9 @@ def analyse(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> ImpactMap
     )
 
 
-def _availability(changeset: ChangeSet, repo: Path) -> tuple[ImpactStatus | None, list[str]]:
+def _availability(
+    changeset: ChangeSet, *, fetched: forge_checkout.Checkout, present: bool
+) -> tuple[ImpactStatus | None, list[str]]:
     """Whether there is anything to search, decided before any work happens.
 
     ``None`` means go ahead. The interesting case is ``paths``: a directory with
@@ -323,16 +355,31 @@ def _availability(changeset: ChangeSet, repo: Path) -> tuple[ImpactStatus | None
             )
         return ImpactStatus.NOT_APPLICABLE, [note]
 
-    if changeset.origin == "local":
+    if changeset.origin == "local" or present or fetched.verified:
         return None, []
 
-    head = changeset.head_sha
-    if head and _git(repo, "cat-file", "-e", f"{head}^{{commit}}") is not None:
-        return None, []
+    # ``fetched.notes`` says why the fallback did not work, when it was tried at
+    # all. Reported alongside rather than instead of, because "we could not fetch
+    # one either" is the more specific half of the same answer.
     return ImpactStatus.UNAVAILABLE, [
         "This change was fetched from the forge and the working directory does not "
-        "hold its head commit, so there was no checkout to search for consumers."
+        "hold its head commit, so there was no checkout to search for consumers.",
+        *fetched.notes,
     ]
+
+
+def _head_present(changeset: ChangeSet, repo: Path) -> bool:
+    """Whether ``repo`` already holds the reviewed commit.
+
+    The one probe behind two decisions -- whether the local checkout can be
+    searched, and whether it is worth fetching another one -- so the two can
+    never answer it differently. ``cat-file -e`` proves the object was *fetched*,
+    not that it is checked out, which is why anything built on it stays limited.
+    """
+    if changeset.origin in {"local", "paths"}:
+        return True
+    head = changeset.head_sha
+    return bool(head) and _git(repo, "cat-file", "-e", f"{head}^{{commit}}") is not None
 
 
 def _git(repo: Path, *args: str, timeout: float = 10) -> str | None:
@@ -353,7 +400,7 @@ def _git(repo: Path, *args: str, timeout: float = 10) -> str | None:
     return done.stdout if done.returncode == 0 else None
 
 
-def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode], bool]:
+def _seed(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> tuple[list[ImpactNode], bool]:
     """Every changed boundary worth tracing, and whether a parser read any of it.
 
     Parsed once here and handed down, because "a parser ran" and "a parser found
@@ -366,9 +413,16 @@ def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode],
     parsed_any = False
 
     for file in changeset.files:
-        if file.is_binary or file.change_type == "deleted" or file.new_content is None:
+        if file.is_binary or file.change_type == "deleted":
             continue
-        tree = ast_context.parse(file.language, file.new_content)
+        content = _content(file, repo, changeset.head_sha)
+        if content is None:
+            continue
+        # A copy, never the changeset's own file: content read here is evidence
+        # for the map and must not become diff surface. Writing it back would put
+        # whole files into the compressor's budget and the anchoring path.
+        file = file.model_copy(update={"new_content": content})
+        tree = ast_context.parse(file.language, content)
         parsed_any = parsed_any or tree is not None
         for node in (*_symbols(file, tree), *_exports(file), *_contracts(file, tree)):
             key = (node.kind.value, node.name)
@@ -379,6 +433,28 @@ def _seed(changeset: ChangeSet, config: ImpactConfig) -> tuple[list[ImpactNode],
 
     nodes.sort(key=lambda n: (_PRIORITY[n.kind], n.file, n.line))
     return nodes, parsed_any
+
+
+def _content(file: ChangedFile, repo: Path, head: str) -> str | None:
+    """The new text of a changed file, from the change or from the reviewed tree.
+
+    Only the local and path sources populate ``new_content``; a merge or pull
+    request arrives as hunks alone. Without the whole file there is no parse tree,
+    so every forge change would seed nothing and the map would report the change
+    untraceable rather than untraced. Reading it back out of the commit under
+    review costs one ``git show`` per changed file and is the same text the forge
+    would have sent.
+    """
+    if file.new_content is not None:
+        return file.new_content
+    if not head:
+        return None
+    # Sized before it is read, the way ``supply.revision`` does: a generated
+    # bundle in the diff must not be pulled into memory to be discarded.
+    size = (_git(repo, "cat-file", "-s", f"{head}:{file.path}") or "").strip()
+    if not size.isdigit() or int(size) > MAX_FILE_BYTES:
+        return None
+    return _git(repo, "show", f"{head}:{file.path}")
 
 
 def _symbols(file: ChangedFile, tree: Any | None) -> list[ImpactNode]:

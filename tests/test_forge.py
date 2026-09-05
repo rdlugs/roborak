@@ -126,7 +126,7 @@ def test_an_http_url_is_not_silently_upgraded():
 
 def test_an_http_remote_keeps_its_scheme(monkeypatch):
     monkeypatch.setattr(
-        "roborak.sources.forge._remote_url", lambda *a, **k: "http://gl.local:8080/a/b.git"
+        "roborak.sources.forge.remote_url", lambda *a, **k: "http://gl.local:8080/a/b.git"
     )
     assert resolve_host("gitlab") == "http://gl.local:8080"
 

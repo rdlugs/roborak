@@ -36,11 +36,44 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   switches it off, and `investigate.*` bounds rounds, requests, files, lines,
   search results, output characters and tokens.
 
+- **Blast-radius analysis works on a merge or pull request this machine has never
+  fetched.** A forge change arrives as a diff, but finding the unchanged caller of
+  a changed function needs the surrounding tree. When the reviewed head commit was
+  not in the local repository there was nothing to search, so the stage reported
+  itself unavailable and remote reviews silently lost the map unless the user had
+  fetched the branch by hand. roborak now clones the reviewed commit into a
+  temporary directory, searches that, and deletes it. Nothing is written to the
+  user's repository — not its objects, refs, worktrees or config — and the fetch is
+  verified against the head SHA afterwards, because a published head ref moves and
+  searching whatever it points at now would describe a different change; an
+  unverified checkout is discarded rather than downgraded. The fetch prefers the
+  URL of the local `origin` remote, so an existing credential helper or SSH agent
+  keeps working and no token is handled at all; a token, where one is needed,
+  travels in git's config environment and never on a command line. Interactive
+  prompting is disabled so a private repository fails in seconds instead of hanging
+  a review behind a spinner, and every failure degrades to a note rather than
+  failing the review. Because the searched tree *is* the reviewed commit, these
+  reviews are no longer flattened to `limited` and can claim `contained` on the
+  same evidence a local review would. This is the only part of a review that
+  reaches the network for repository content: `impact.forge_checkout: off`, or
+  `ROBORAK_IMPACT_FORGE_CHECKOUT=off`, restores the previous behaviour, and
+  `impact.forge_checkout_timeout_seconds` bounds the fetch.
+
 ### Changed
 
 - **JSON output gains an `investigation` block and moves to schema version 5.**
   It records what was investigated and how each candidate was settled, and is
   absent when the stage never ran.
+
+### Fixed
+
+- **Forge reviews seed the blast radius again.** The pass skips any file it has no
+  full text for, and only the local-git and path sources ever populated it — so a
+  merge or pull request produced an empty map and reported the change untraceable
+  even when its head commit *was* available locally. The missing text is now read
+  out of the reviewed commit, onto a copy of the file rather than the changeset,
+  so evidence gathered for the map cannot leak into the diff budget or the
+  anchoring path.
 
 ## [0.7.0] - 2026-09-01
 

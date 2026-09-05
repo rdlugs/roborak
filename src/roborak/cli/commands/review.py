@@ -288,6 +288,7 @@ def review(
         verification=verification,
         supply_chain=supply_chain,
         issue=session.issue,
+        forge_token=session.token,
     )
 
     status = f"reviewing with {config.model}…" if session.llm else "collecting findings…"

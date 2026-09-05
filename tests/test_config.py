@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from roborak.core.config import Config, ReviewConfig, load_config
+from roborak.core.config import Config, ForgeCheckout, ReviewConfig, load_config
 from roborak.core.severity import Category, Severity
 
 
@@ -274,6 +274,21 @@ def test_supply_chain_can_be_switched_off_by_env(tmp_path: Path, monkeypatch):
     assert load_config(tmp_path).supply_chain.enabled is False
     monkeypatch.setenv("ROBORAK_NO_SUPPLY_CHAIN", "0")
     assert load_config(tmp_path).supply_chain.enabled is True
+
+
+def test_the_forge_checkout_can_be_switched_off_by_env(tmp_path: Path, monkeypatch):
+    """CI is where a network fetch is least wanted and the repo config least editable."""
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    assert load_config(tmp_path).impact.forge_checkout is ForgeCheckout.AUTO
+    monkeypatch.setenv("ROBORAK_IMPACT_FORGE_CHECKOUT", "off")
+    assert load_config(tmp_path).impact.forge_checkout is ForgeCheckout.OFF
+
+
+def test_an_unknown_forge_checkout_mode_is_rejected():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config.model_validate({"impact": {"forge_checkout": "sometimes"}})
 
 
 def test_the_shipped_template_matches_the_config_model(tmp_path: Path, monkeypatch):
