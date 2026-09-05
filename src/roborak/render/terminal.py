@@ -31,6 +31,8 @@ from roborak.core.models import (
     Finding,
     ImpactMap,
     ImpactStatus,
+    InvestigationReport,
+    InvestigationStatus,
     ReviewResult,
     SupplyChainReport,
     SupplyChainStatus,
@@ -68,6 +70,7 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
     _render_verification(result.verification, console)
     _render_impact(result.impact, console)
     _render_supply_chain(result.supply_chain, console)
+    _render_investigation(result.investigation, console)
 
     if not result.findings:
         if result.supply_chain and result.supply_chain.scanner_findings:
@@ -125,6 +128,48 @@ _SUPPLY_CHAIN_STYLE: dict[SupplyChainStatus, str] = {
     SupplyChainStatus.NOTHING_RELEVANT: "dim",
     SupplyChainStatus.UNSUPPORTED: "yellow",
     SupplyChainStatus.UNAVAILABLE: "yellow",
+}
+
+
+def _render_investigation(report: InvestigationReport | None, console: Console) -> None:
+    """What was read to settle the findings, in one line.
+
+    The quiet case is skipped: a review with no candidate worth checking has
+    nothing to say here. Every other status prints, because "nothing was found"
+    and "nothing could be checked" are different reviews and only one of them is
+    reassuring.
+    """
+    if report is None or report.status is InvestigationStatus.SKIPPED:
+        return
+    console.print()
+    detail = f"{report.candidates} candidate(s), {len(report.operations)} operation(s)"
+    if report.unresolved:
+        detail += f", {report.unresolved} left unverified"
+    console.print(
+        f"[{_INVESTIGATION_STYLE[report.status]}]investigation: "
+        f"{report.status.value.replace('_', ' ')}[/] [dim]— {detail}[/]",
+        highlight=False,
+    )
+    for decision in report.settled[:MAX_INVESTIGATION_LINES]:
+        # A title is model-written text quoting code, so it goes through `Text`
+        # rather than the markup parser, which would read `[/]` in it as a tag.
+        console.print(
+            Text(
+                f"  {decision.disposition}: {decision.title or decision.location}",
+                style="dim",
+            ),
+            highlight=False,
+        )
+
+
+MAX_INVESTIGATION_LINES = 5
+
+_INVESTIGATION_STYLE: dict[InvestigationStatus, str] = {
+    InvestigationStatus.COMPLETED: "green",
+    InvestigationStatus.PARTIAL: "yellow",
+    InvestigationStatus.SKIPPED: "dim",
+    InvestigationStatus.UNAVAILABLE: "yellow",
+    InvestigationStatus.ERRORED: "yellow",
 }
 
 

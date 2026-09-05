@@ -28,6 +28,8 @@ from roborak.core.models import (
     Finding,
     ImpactMap,
     ImpactStatus,
+    InvestigationReport,
+    InvestigationStatus,
     Issue,
     LLMCallUsage,
     OmissionReason,
@@ -38,6 +40,7 @@ from roborak.core.models import (
     Walkthrough,
 )
 from roborak.core.severity import Kind
+from roborak.investigate.runner import investigate
 from roborak.llm.client import LLMClient, LLMError, LLMResponse
 from roborak.llm.parser import (
     ParseError,
@@ -151,9 +154,40 @@ class Reviewer:
                 result.errors.append(str(exc))
                 result.status = ReviewStatus.FAILED
 
+        result.investigation = self._investigate(findings, changeset)
+
         result.findings = validator.validate(findings, changeset, self.config)
         self.apply_usage(result)
         return result
+
+    def _investigate(
+        self, findings: list[Finding], changeset: ChangeSet
+    ) -> InvestigationReport | None:
+        """Settle what the evidence policy is about to judge, before it judges it.
+
+        Runs here rather than after validation because ``enforce_evidence`` is the
+        gate this stage exists to feed: a candidate that comes back proven keeps
+        its severity, and one that comes back disproved never reaches a reader.
+        Non-fatal by construction, like the overview pass -- a review whose
+        investigation broke is still a review.
+        """
+        if self.llm is None or not self.config.review.investigate.enabled:
+            return None
+        try:
+            _, report = investigate(
+                findings,
+                changeset,
+                repo=self.repo,
+                config=self.config.review.investigate,
+                complete=lambda system, user: self._complete("investigation", system, user).text,
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence is optional; a review is not
+            log.warning("investigation stage failed; findings stand as they were: %s", exc)
+            return InvestigationReport(
+                status=InvestigationStatus.ERRORED,
+                notes=[f"investigation did not run: {exc}"],
+            )
+        return report
 
     def describe(self, changeset: ChangeSet) -> ReviewResult:
         """Produce a walkthrough instead of findings."""

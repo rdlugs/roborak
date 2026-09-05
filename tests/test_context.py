@@ -376,8 +376,7 @@ def test_an_empty_changeset_yields_no_chunks():
 def test_multi_pass_review_merges_findings(tmp_path):
     """A large change gets a complete review, not a partial one."""
     from roborak.analysis.reviewer import Reviewer
-    from roborak.core.config import Config
-    from tests.test_pipeline import StubLLM
+    from tests.test_pipeline import StubLLM, uninvestigated
 
     diff = "".join(
         f"diff --git a/pkg{i}/mod.py b/pkg{i}/mod.py\n"
@@ -411,7 +410,7 @@ def test_multi_pass_review_merges_findings(tmp_path):
             )
 
     llm = Counting(reply="", context_budget=40)
-    result = Reviewer(config=Config(), repo=tmp_path, llm=llm).review(changeset)
+    result = Reviewer(config=uninvestigated(), repo=tmp_path, llm=llm).review(changeset)
 
     assert Counting.calls > 1, "a change this size should take several passes"
     assert len(result.findings) == Counting.calls, "every pass's findings must be kept"
@@ -527,11 +526,10 @@ def test_context_omitted_contract_is_not_carried_into_later_passes(tmp_path, mon
 
 def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
     from roborak.analysis.reviewer import Reviewer
-    from roborak.core.config import Config
     from roborak.core.models import Issue
     from roborak.core.severity import Kind
     from roborak.llm.client import LLMResponse
-    from tests.test_pipeline import StubLLM
+    from tests.test_pipeline import StubLLM, uninvestigated
 
     changeset = ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(4)])
 
@@ -562,7 +560,7 @@ def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
 
     issue = Issue(provider="github", host="github.com", project="a/b", number=1, body="Timeout")
     result = Reviewer(
-        config=Config(),
+        config=uninvestigated(),
         repo=tmp_path,
         llm=EvidenceLLM(reply="", context_budget=140),
         issue=issue,
@@ -574,9 +572,8 @@ def test_chunked_issue_uses_one_global_requirement_reducer(tmp_path):
 def test_global_reconciliation_can_report_a_cross_chunk_contract_mismatch(tmp_path, monkeypatch):
     from roborak.analysis.reviewer import Reviewer
     from roborak.context import impact as impact_module
-    from roborak.core.config import Config
     from roborak.llm.client import LLMResponse
-    from tests.test_pipeline import StubLLM
+    from tests.test_pipeline import StubLLM, uninvestigated
 
     contract = make_text_file("public/api.py", "def load(limit: int):\n    return limit")
     consumer = make_text_file("zzz/client.py", "from public.api import load\nload()")
@@ -626,7 +623,7 @@ def test_global_reconciliation_can_report_a_cross_chunk_contract_mismatch(tmp_pa
             )
 
     result = Reviewer(
-        config=Config(), repo=tmp_path, llm=Reconciling(reply="", context_budget=12)
+        config=uninvestigated(), repo=tmp_path, llm=Reconciling(reply="", context_budget=12)
     ).review(ChangeSet(files=[consumer, contract]))
     assert [finding.file for finding in result.findings] == ["public/api.py"]
     assert result.usage[-1].purpose == "reconciliation"

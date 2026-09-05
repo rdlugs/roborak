@@ -294,7 +294,7 @@ def test_json_mode_emits_only_json(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert "findings" in payload
 
 

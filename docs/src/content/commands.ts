@@ -44,6 +44,10 @@ const PIPELINE: FlagGroup = {
       help: "Skip the dependency, CI, container and infrastructure analysis.",
     },
     {
+      name: "--no-investigate",
+      help: "Skip the bounded repository reads that confirm or drop candidate findings.",
+    },
+    {
       name: "--trust-static",
       help: "Allow repository-provided static tools to execute directly in CI.",
     },

@@ -42,7 +42,8 @@ Docs site (`docs/`, Vite + React Router + Tailwind, Node 20+):
 One directional pipeline; each stage only knows the stage before it.
 
 ```text
-Source → ChangeSet → Compressor → Static/supply/verify passes → LLM → Validator → Renderer → Publisher
+Source → ChangeSet → Compressor → Static/supply/verify passes → LLM → Investigate → Validator →
+Renderer → Publisher
 ```
 
 - `sources/` — local git, GitLab, GitHub, raw paths, all producing the same `ChangeSet` IR
@@ -58,6 +59,11 @@ Source → ChangeSet → Compressor → Static/supply/verify passes → LLM → 
   bounded delta. Lockfiles deliberately never enter the prompt.
 - `verify/` — runs the project's own configured test commands, proportionally to the change,
   reading the commands from the *base* revision so a change cannot define what verifies it.
+- `investigate/` — the bounded evidence pass between candidate findings and validation:
+  `tools.py` (the read-only execution boundary — path containment, `git grep` as argv, bounded
+  results), `availability.py` (whether this checkout *is* the reviewed change), `runner.py` (the
+  round loop and confirm/revise/drop). Read-only by construction; nothing here writes, executes a
+  repository-chosen command, or reaches the network.
 - `analysis/reviewer.py` — the orchestrator (`review`, `describe`, `improve`, `ask`, `walkthrough`);
   `analysis/validator.py` — drops unanchored findings, snaps near misses, filters by confidence
   and severity, collapses duplicates.
@@ -88,6 +94,13 @@ Source → ChangeSet → Compressor → Static/supply/verify passes → LLM → 
 - **Blocking takes evidence**: a critical/major model finding without a trigger, failure path,
   violated contract or reproduction is demoted to a `minor` `verification_needed`. Self-reported
   confidence is not evidence. Static findings are exempt.
+- **Investigation never settles a candidate by default.** A tool error, an exhausted budget, an
+  unparseable reply or a provider failure leaves the finding exactly as it arrived — "we could not
+  tell" must never be recorded as "we checked". `validator.is_unproven_blocker` is the single
+  predicate deciding both what gets investigated and what gets demoted; two copies would drift.
+- **A forge review never reads a checkout that is not the reviewed change.** Dynamic reads require
+  a clean tree at the reviewed head SHA; otherwise roborak uses forge-supplied file content or
+  reports the stage unavailable.
 
 ## Config
 

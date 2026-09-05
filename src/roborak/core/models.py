@@ -761,6 +761,122 @@ class VerificationReport(BaseModel):
         ]
 
 
+class InvestigationStatus(StrEnum):
+    """How the investigation stage ended.
+
+    ``skipped`` and ``unavailable`` are deliberately different answers. Skipped
+    means the stage looked and found nothing worth the cost -- no candidate whose
+    verdict another read would move. Unavailable means it wanted to look and could
+    not, because the checkout in front of us is not the code under review. A reader
+    who cannot tell those apart reads the second as a clean bill of health.
+    """
+
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    """Some candidates were settled and some ran out of budget, rounds, or luck."""
+
+    SKIPPED = "skipped"
+    UNAVAILABLE = "unavailable"
+    ERRORED = "errored"
+
+
+class InvestigationOutcome(StrEnum):
+    """What one requested operation produced."""
+
+    OK = "ok"
+    REFUSED = "refused"
+    """The request was rejected before any I/O -- an escaping path, an unknown
+    operation, a budget already spent. The refusal is recorded rather than
+    silently dropped, because a model that never learns its request was refused
+    will keep making it."""
+
+    ERRORED = "errored"
+    EMPTY = "empty"
+    """The operation ran and found nothing, which is an answer and not a failure."""
+
+
+class InvestigationOperation(BaseModel):
+    """One read or search the model asked for, and what came back."""
+
+    tool: str
+    arguments: dict[str, str] = Field(default_factory=dict)
+    """The request as roborak validated it, not as the model phrased it."""
+
+    outcome: InvestigationOutcome = InvestigationOutcome.OK
+    round_index: int = 1
+    result: str = ""
+    """The bounded, sanitised result. Untrusted repository content."""
+
+    truncated: bool = False
+    note: str = ""
+    """Why an operation was refused or errored, in words a reader can act on."""
+
+    @property
+    def display_request(self) -> str:
+        """The request as a reader would describe it, for a report row."""
+        arguments = ", ".join(f"{key}={value}" for key, value in sorted(self.arguments.items()))
+        return f"{self.tool}({arguments})"
+
+
+class InvestigationDecision(BaseModel):
+    """What the model concluded about one candidate once it had looked."""
+
+    candidate: str
+    """The id roborak assigned. A decision naming anything else is discarded."""
+
+    disposition: Literal["confirm", "revise", "drop", "unresolved"] = "unresolved"
+    """``unresolved`` is the default for a reason: a candidate the stage could not
+    settle keeps whatever it arrived with, and is never confirmed or dropped by
+    omission."""
+
+    location: str = ""
+    """Where the candidate ended up, for the report. Empty until it is settled."""
+
+    title: str = ""
+    rationale: str = ""
+    """Why the model landed where it did, grounded in what it read."""
+
+
+class InvestigationReport(BaseModel):
+    """What the investigation stage selected, asked, and concluded.
+
+    Present on a ``ReviewResult`` whenever the stage was asked to do something --
+    including when it decided it must not run. Absent means it was switched off;
+    a report saying ``skipped`` means it ran and had nothing to settle. Those are
+    different claims and a reader acts differently on each.
+    """
+
+    status: InvestigationStatus = InvestigationStatus.SKIPPED
+    operations: list[InvestigationOperation] = Field(default_factory=list)
+    decisions: list[InvestigationDecision] = Field(default_factory=list)
+    rounds: int = 0
+    candidates: int = 0
+    """How many findings were put to the stage, before any of them were settled."""
+
+    notes: list[str] = Field(default_factory=list)
+    """Every bound that bit and every reason an operation did not run."""
+
+    @property
+    def executed(self) -> bool:
+        """Whether the stage actually gathered anything.
+
+        A refusal is not execution: it is how a request that never reached the
+        repository is recorded, and counting it would let an investigation that
+        read nothing report evidence behind it.
+        """
+        return any(op.outcome is not InvestigationOutcome.REFUSED for op in self.operations)
+
+    @property
+    def settled(self) -> list[InvestigationDecision]:
+        """The decisions a reader has to act on -- never an unresolved candidate."""
+        return [d for d in self.decisions if d.disposition != "unresolved"]
+
+    @property
+    def unresolved(self) -> int:
+        """Candidates the stage could not settle, which stay exactly as they were."""
+        return len(self.decisions) - len(self.settled)
+
+
 class ReviewResult(BaseModel):
     """Everything a review produced, ready for any renderer or publisher."""
 
@@ -799,6 +915,14 @@ class ReviewResult(BaseModel):
     a command that does not do supply-chain work -- which is a different statement
     from a report whose status is ``nothing_relevant``. One says nobody looked; the
     other says we looked and this change does not touch any of it."""
+
+    investigation: InvestigationReport | None = None
+    """What the bounded investigation stage asked of the repository and concluded.
+
+    ``None`` means the stage never ran -- ``--no-investigate``, no model, no
+    candidate worth the call -- which is a different statement from a report whose
+    status is ``unavailable``. One says nobody looked; the other says we wanted to
+    and the checkout in front of us was not the code under review."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE

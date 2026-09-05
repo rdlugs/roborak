@@ -50,6 +50,8 @@ from roborak.core.models import (
     Finding,
     ImpactMap,
     ImpactStatus,
+    InvestigationReport,
+    InvestigationStatus,
     ReviewResult,
     SupplyChainReport,
     SupplyChainStatus,
@@ -165,6 +167,9 @@ def render(
 
     if supply := _supply_chain_section(result.supply_chain, form=form):
         sections.append(supply)
+
+    if investigation := _investigation_section(result.investigation, form=form):
+        sections.append(investigation)
 
     if not grouped:
         sections.append(_nothing_to_report(result))
@@ -349,6 +354,21 @@ rendering, because a report is published into a comment box and the reader who
 needs the forty-first line needs their own terminal."""
 
 
+INVESTIGATION_LABEL: dict[InvestigationStatus, str] = {
+    InvestigationStatus.COMPLETED: "settled",
+    InvestigationStatus.PARTIAL: "partly settled",
+    InvestigationStatus.SKIPPED: "nothing to settle",
+    InvestigationStatus.UNAVAILABLE: "no matching checkout",
+    InvestigationStatus.ERRORED: "could not run",
+}
+
+DISPOSITION_LABEL: dict[str, str] = {
+    "confirm": "confirmed",
+    "revise": "revised",
+    "drop": "dropped",
+    "unresolved": "left unverified",
+}
+
 SUPPLY_CHAIN_LABEL: dict[SupplyChainStatus, str] = {
     SupplyChainStatus.ANALYSED: "analysed",
     SupplyChainStatus.NOTHING_RELEVANT: "nothing relevant changed",
@@ -366,6 +386,50 @@ CHANGE_LABEL: dict[DependencyChangeKind, str] = {
     DependencyChangeKind.UPGRADED: f"{icons.UPGRADED} Upgraded",
     DependencyChangeKind.DOWNGRADED: f"{icons.DOWNGRADED} Downgraded",
 }
+
+
+def _investigation_section(report: InvestigationReport | None, *, form: Form) -> str:
+    """What roborak went and read before standing behind these findings.
+
+    Silent when there was nothing to settle, and only then. Every other status
+    renders, including the ones that found nothing: a stage that wanted to check a
+    blocker and could not is exactly the case where an absent section would be
+    read as "it checked out".
+    """
+    if report is None or report.status is InvestigationStatus.SKIPPED:
+        return ""
+
+    parts: list[str] = []
+    if report.decisions:
+        rows = ["| Candidate | Outcome | Why |", "| --- | --- | --- |"]
+        for decision in report.decisions:
+            title = _escape_cell(decision.title or decision.location)
+            outcome = DISPOSITION_LABEL.get(decision.disposition, decision.disposition)
+            rows.append(f"| {title} | {outcome} | {_escape_cell(decision.rationale)} |")
+        parts.append("\n".join(rows))
+
+    if report.operations:
+        parts.append(
+            "\n".join(
+                f"* `{_escape_cell(operation.display_request)}` — {operation.outcome.value}"
+                + (" (truncated)" if operation.truncated else "")
+                + (f" — {_escape_cell(operation.note)}" if operation.note else "")
+                for operation in report.operations
+            )
+        )
+
+    # Notes carry what was refused and what ran out, which is the half a reader
+    # needs in order to know what a settled candidate is actually worth.
+    parts += [_wrap(f"_{note}_") for note in report.notes]
+    if not parts:
+        # The status line is the whole point of a stage that recorded nothing else:
+        # an absent section reads as an all-clear, which is the one thing it is not.
+        parts.append(_wrap("_The stage recorded no further detail._"))
+
+    summary = f"{icons.INVESTIGATION} Investigation — {INVESTIGATION_LABEL[report.status]}"
+    if report.candidates:
+        summary += f" ({report.candidates} candidate(s))"
+    return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
 
 
 def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> str:
@@ -406,7 +470,9 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
     # reader needs in order to know what a clean section is worth.
     parts += [_wrap(f"_{note}_") for note in report.notes]
     if not parts:
-        return ""
+        # The status line is the whole point of a stage that recorded nothing else:
+        # an absent section reads as an all-clear, which is the one thing it is not.
+        parts.append(_wrap("_The stage recorded no further detail._"))
 
     summary = f"{icons.SUPPLY} Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
     if report.changes:

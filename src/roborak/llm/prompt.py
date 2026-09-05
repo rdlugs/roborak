@@ -202,6 +202,86 @@ Either list may be empty. Never infer absence from one partial chunk.
     return RenderedPrompt(system=system, user=user)
 
 
+def build_investigation_prompt(
+    *,
+    candidates: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
+    limits: dict[str, int],
+    can_search: bool,
+    availability_notes: list[str],
+    final_round: bool,
+) -> RenderedPrompt:
+    """Ask the model to gather evidence for candidates, or to decide on what it has.
+
+    One prompt serves both halves of the loop. Splitting them would mean two
+    descriptions of the same schema, and the round where they disagreed would be
+    the round the model answered in the wrong shape.
+    """
+    tools = [
+        "read_file(path, start, end) - a bounded line range, numbered as the file reads",
+        "show_diff(path) - the reviewed diff for one changed file",
+    ]
+    if can_search:
+        tools.insert(1, "search(pattern, regex, path) - git grep within the repository")
+        tools.append(
+            "find_symbol(symbol, path) - where a symbol is defined, when a parser can tell"
+        )
+
+    closing = (
+        "This is the final round: answer with `decisions` only."
+        if final_round
+        else "Answer with `requests` to gather more, or `decisions` when you are ready."
+    )
+
+    system = f"""You settle candidate code-review findings by reading the repository.
+
+Each candidate below was raised by an earlier pass and has not yet been proven. Your
+job is to decide which are real, using only the operations listed. You cannot run
+commands, write files, or reach the network.
+
+Available operations:
+{chr(10).join(f"- {tool}" for tool in tools)}
+
+Ask only for what changes a verdict. A candidate you cannot settle stays unsettled;
+say nothing about it rather than guessing, and it will be preserved as unverified.
+
+Reply with YAML, one of these two shapes and never both:
+
+requests:
+  - tool: read_file
+    path: src/thing.py
+    start: 40
+    end: 90
+
+decisions:
+  - candidate: c1
+    disposition: confirm | revise | drop
+    rationale: what you read and what it showed
+    evidence: execution_path | reproduction | contract | unverified
+    evidence_note: the trigger and the path to the failure, in one or two sentences
+    evidence_files: [other/file.py]
+    # `revise` may additionally set title, body, severity, confidence,
+    # start_line and end_line.
+
+Use `confirm` when what you read proves the candidate, and name the evidence that
+proves it. Use `revise` when it is real but mis-stated, mis-located, or the wrong
+severity. Use `drop` only when what you read disproves it -- not when you merely
+found nothing. `evidence: unverified` is the honest answer for a candidate you
+believe but could not prove; it is never grounds to block a merge.
+
+{closing}
+
+{UNTRUSTED_DATA_RULE}
+"""
+    payload = {
+        "limits": limits,
+        "availability": [_escape_untrusted(note) for note in availability_notes],
+        "candidates": candidates,
+        "operations": operations,
+    }
+    return RenderedPrompt(system=system, user=yaml.safe_dump(payload, sort_keys=False))
+
+
 def build_reconciliation_prompt(
     *,
     issue: Issue | None,

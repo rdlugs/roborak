@@ -69,6 +69,30 @@ review:
   check_requirements: true
   # Include unresolved human MR/PR discussion as bounded, untrusted model context.
   include_discussions: true
+  # Bounded, read-only repository lookups that settle a candidate finding before
+  # require_evidence judges it: the model asks for a line range, a search or the
+  # diff, and then confirms, revises or drops the candidate. It cannot run
+  # commands, write files or reach the network, and a candidate it cannot settle
+  # is left exactly as it was. Costs one model call on a review that has a
+  # critical, major or would-be-demoted finding, and nothing on one that does not.
+  # --no-investigate switches it off.
+  investigate:
+    enabled: true
+    # Findings put to the stage, worst first.
+    max_candidates: 5
+    # Request/result exchanges before the model must decide.
+    max_rounds: 2
+    max_requests_per_round: 4
+    # Distinct files the whole investigation may open.
+    max_files: 10
+    max_lines_per_read: 200
+    max_search_results: 20
+    # Ceiling on one operation's result. What does not fit is marked truncated.
+    max_output_chars: 4000
+    # Prompt tokens the gathered evidence may occupy before the stage must decide.
+    token_budget: 20000
+    # Wall clock for the repository operations, not for the model calls.
+    timeout_seconds: 30
 
 static:
   enabled: true

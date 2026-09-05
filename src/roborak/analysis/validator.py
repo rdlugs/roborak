@@ -36,6 +36,22 @@ evidence it has to derive.
 """
 
 
+def is_unproven_blocker(finding: Finding) -> bool:
+    """Whether ``enforce_evidence`` would demote this finding.
+
+    Extracted so the investigation stage can select exactly the candidates the
+    policy is about to act on. Two copies of this test would drift, and the review
+    would then investigate one set of findings and demote another.
+    """
+    if finding.source != "llm":
+        return False
+    if finding.evidence.proven and finding.evidence_note.strip():
+        return False
+    if finding.kind not in UNPROVEN_KINDS:
+        return False
+    return finding.severity.at_least(Severity.MAJOR)
+
+
 def enforce_evidence(findings: list[Finding], *, require: bool = True) -> list[Finding]:
     """Stop an unproven model claim from reaching blocker level.
 
@@ -55,13 +71,7 @@ def enforce_evidence(findings: list[Finding], *, require: bool = True) -> list[F
         return findings
 
     for finding in findings:
-        if finding.source != "llm":
-            continue
-        if finding.evidence.proven and finding.evidence_note.strip():
-            continue
-        if finding.kind not in UNPROVEN_KINDS:
-            continue
-        if not finding.severity.at_least(Severity.MAJOR):
+        if not is_unproven_blocker(finding):
             continue
         log.debug(
             "demoting unproven %s finding to verification_needed: %s",

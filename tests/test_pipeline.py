@@ -47,6 +47,18 @@ DIFF = textwrap.dedent(
 )
 
 
+def uninvestigated() -> Config:
+    """A config with the evidence-gathering stage switched off.
+
+    Tests that count model calls or read back the last prompt are about chunking,
+    overviews or anchoring. Investigation adds a call and a prompt of its own, so
+    leaving it on would have them assert on it by accident.
+    """
+    config = Config()
+    config.review.investigate.enabled = False
+    return config
+
+
 @dataclass
 class StubLLM:
     """Stands in for ``LLMClient``; records the prompt it was handed."""
@@ -109,7 +121,9 @@ GOOD_REPLY = textwrap.dedent(
 
 def review_with(reply: str, config: Config | None = None, tmp: Path | None = None):
     llm = StubLLM(reply=reply)
-    reviewer = Reviewer(config=config or Config(), repo=tmp or Path("/nonexistent"), llm=llm)
+    reviewer = Reviewer(
+        config=config or uninvestigated(), repo=tmp or Path("/nonexistent"), llm=llm
+    )
     return reviewer.review(make_changeset()), llm
 
 
@@ -780,7 +794,7 @@ class FailingWalkthroughLLM(ScriptedLLM):
 
 
 def review_and_describe(llm, tmp: Path):
-    reviewer = Reviewer(config=Config(), repo=tmp, llm=llm)
+    reviewer = Reviewer(config=uninvestigated(), repo=tmp, llm=llm)
     changeset = make_changeset()
     result = reviewer.review(changeset)
     result.walkthrough = reviewer.walkthrough(changeset)

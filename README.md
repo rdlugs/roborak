@@ -158,6 +158,7 @@ uv run roborak review -m openai/gpt-5       # any LiteLLM model string
 uv run roborak review -s major              # only major and critical
 uv run roborak review --fail-on critical    # non-zero exit for CI
 uv run roborak review --mr 298 --post --no-check   # comments, but no commit status
+uv run roborak review --no-investigate      # skip the evidence-gathering stage
 ```
 
 | Exit code | Meaning |
@@ -457,6 +458,17 @@ review:
   require_evidence: true     # a critical/major model finding must show its evidence
   check_requirements: true   # with --issue, report requirements the change misses
   include_discussions: true  # use relevant unresolved MR/PR comments as context
+  investigate:               # bounded repository reads that settle a candidate
+    enabled: true
+    max_candidates: 5        # findings put to the stage, worst first
+    max_rounds: 2            # request/result exchanges before it must decide
+    max_requests_per_round: 4
+    max_files: 10
+    max_lines_per_read: 200
+    max_search_results: 20
+    max_output_chars: 4000
+    token_budget: 20000
+    timeout_seconds: 30
 
 static:
   enabled: true
@@ -616,6 +628,41 @@ applied to the change and was not available is named in the report, so a clean
 section cannot be mistaken for a checked one.
 
 `--no-supply-chain` (or `supply_chain.enabled: false`) switches the stage off.
+
+### Investigation
+
+`require_evidence` demotes a critical or major model finding that cannot say what
+makes it true, which is right — a self-assigned confidence score is not grounds to
+fail a build — but until now the model had no way to go and find out. A real
+blocker whose proof sat one function away was demoted anyway, and a false positive
+that one read would have disproved survived to the report.
+
+So before findings are validated, roborak puts its unproven blockers back to the
+model with a small set of read-only operations: a bounded line range, a `git grep`
+within the repository, the reviewed diff for a file, and where a parser is
+available, a symbol's declaration. The model asks for what it needs, reads the
+results, and then **confirms**, **revises** or **drops** each candidate. A
+confirmed one carries the evidence it found into the report, and keeps its
+severity; a dropped one never reaches a reader.
+
+The boundary is narrow on purpose. Paths are resolved and proved to be inside the
+repository before any I/O, so `..` and a symlink out of the tree are the same
+refusal. Searches run as argv with a scrubbed environment, never through a shell.
+Every result is bounded and says when it was cut, and everything read is fed back
+as untrusted input. Nothing writes, applies a patch, runs a repository-chosen
+command, or reaches the network.
+
+Two rules make a failure safe. A candidate the stage cannot settle — a tool error,
+an exhausted budget, an unreadable reply, a provider outage — is returned exactly
+as it arrived, so "we could not tell" is never recorded as "we checked". And for a
+PR or MR, the checkout must be clean *and* at the reviewed head commit before
+anything is read from it; otherwise roborak falls back to the file content the
+forge supplied, or reports the stage as unavailable rather than confirming a
+finding against an unrelated branch.
+
+It costs one model call on a review that has a critical, major or would-be-demoted
+finding, and nothing at all on one that does not. `--no-investigate` (or
+`review.investigate.enabled: false`) switches the stage off.
 
 ### Static-analysis trust
 

@@ -8,6 +8,40 @@ flags, config schema and JSON output may change in a minor release.
 The release workflow reads the section for the tag being published and uses it as
 the GitHub Release body, so the `## [x.y.z] - date` heading format is load-bearing.
 
+## [Unreleased]
+
+### Added
+
+- **Candidate findings are confirmed by a bounded investigation before they are
+  judged.** The evidence policy already demoted a critical or major model finding
+  that could not say what makes it true, but the model had no way to go and find
+  out: a real blocker whose proof sat one function away was demoted anyway, and a
+  false positive that one targeted read would have disproved survived into the
+  report. A new stage between candidate generation and validation hands the model
+  its own unproven blockers and a small set of read-only operations — a bounded
+  line range, a `git grep`, the reviewed diff for a file, a symbol's declaration —
+  and it then confirms, revises or drops each candidate. What it gathers is what
+  the blocking policy reads. roborak validates and executes every request itself;
+  the model never gets a shell. Paths are proved to be inside the repository
+  before any I/O, so `..` and a symlink out of the tree are the same refusal;
+  searches run as argv with a credential-scrubbed environment; results are
+  bounded, say when they were cut, and return as untrusted input. A candidate the
+  stage cannot settle — a tool error, an exhausted budget, an unreadable reply, a
+  provider outage — is returned exactly as it arrived, so "we could not tell" is
+  never recorded as "we checked", and a forge review reads the working tree only
+  when it is clean and at the reviewed head commit, otherwise falling back to
+  forge-supplied file content or reporting the stage unavailable rather than
+  confirming a finding against an unrelated branch. Costs one model call on a
+  review that has a candidate and nothing on one that does not. `--no-investigate`
+  switches it off, and `investigate.*` bounds rounds, requests, files, lines,
+  search results, output characters and tokens.
+
+### Changed
+
+- **JSON output gains an `investigation` block and moves to schema version 5.**
+  It records what was investigated and how each candidate was settled, and is
+  absent when the stage never ran.
+
 ## [0.7.0] - 2026-09-01
 
 ### Added
