@@ -339,7 +339,7 @@ class FileSummary(BaseModel):
 
 
 class Walkthrough(BaseModel):
-    """The ``describe`` output — a walkthrough of the change as a whole."""
+    """The ``describe`` output - a walkthrough of the change as a whole."""
 
     title: str | None = None
     overview: str = ""

@@ -38,9 +38,9 @@ export default function Quickstart() {
       <P>
         A directory that is not a git repository has no baseline to diff against, so roborak
         reviews every eligible file whole instead of refusing. The walk never descends into
-        dependency, build-output, cache or VCS directories — <Code>node_modules</Code>,{" "}
+        dependency, build-output, cache or VCS directories - <Code>node_modules</Code>,{" "}
         <Code>vendor</Code>, <Code>dist</Code>, <Code>build</Code>, <Code>target</Code>,{" "}
-        <Code>__pycache__</Code>, <Code>.venv</Code>, <Code>.git</Code> and friends — and it
+        <Code>__pycache__</Code>, <Code>.venv</Code>, <Code>.git</Code> and friends - and it
         honours the configured <Code>ignore_paths</Code>. Binary files and anything over 512 KiB
         are reported as omissions rather than reviewed, and static analysis still runs. The flags
         that name a diff (<Code>--base</Code>, <Code>--committed</Code>, <Code>--uncommitted</Code>,{" "}

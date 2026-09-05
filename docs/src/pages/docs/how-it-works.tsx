@@ -77,7 +77,7 @@ export default function HowItWorks() {
       </P>
       <P>
         So between the model pass and the validator, roborak hands the model its own unproven
-        blockers along with a small set of read-only operations — a bounded line range, a{" "}
+        blockers along with a small set of read-only operations - a bounded line range, a{" "}
         <Code>git grep</Code> inside the repository, the reviewed diff for a file, and where a
         parser is available, a symbol&rsquo;s declaration. It asks for what it needs, reads the
         results, and then confirms, revises or drops each candidate. The evidence it gathers is
@@ -88,7 +88,7 @@ export default function HowItWorks() {
         are proved to be inside the repository before any I/O, searches run as argv with a
         credential-scrubbed environment, results are bounded and labelled when truncated, and
         everything read returns as untrusted input. A candidate the stage cannot settle is left
-        exactly as it arrived — the one thing it must never do is record &ldquo;we could not
+        exactly as it arrived - the one thing it must never do is record &ldquo;we could not
         tell&rdquo; as &ldquo;we checked&rdquo;. And for a pull or merge request, dynamic reads
         happen only against a clean checkout at the reviewed head commit; anything else falls back
         to forge-supplied content or reports the stage unavailable.

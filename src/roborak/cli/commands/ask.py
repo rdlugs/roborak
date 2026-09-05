@@ -1,4 +1,4 @@
-"""``roborak ask`` — free-text questions about a change."""
+"""``roborak ask`` - free-text questions about a change."""
 
 from __future__ import annotations
 

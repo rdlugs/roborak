@@ -1,8 +1,8 @@
-"""``roborak setup`` — a guided first run.
+"""``roborak setup`` - a guided first run.
 
 ``config init`` writes the whole commented template with every option at its
 default, which is the right reference file but leaves the two things that
-actually block a first review — a model and a credential for it — for the user to
+actually block a first review - a model and a credential for it - for the user to
 hand-edit in. This asks for those, and writes only what was answered, so every
 other default stays live and follows roborak's releases.
 """
@@ -212,7 +212,7 @@ def _ask_forge(console: Console, data: dict[str, Any]) -> None:
         if get_token(name, ForgeConfig()):
             console.print(f"[dim]a {provider} token is already available; skipping.[/]")
             continue
-        console.print(f"[dim]optional — {TOKEN_HELP[provider]}[/]", highlight=False)
+        console.print(f"[dim]optional - {TOKEN_HELP[provider]}[/]", highlight=False)
         token = _prompt(console, f"{provider} token? (blank to skip)", secret=True)
         if not token:
             continue

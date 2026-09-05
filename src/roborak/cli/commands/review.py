@@ -1,4 +1,4 @@
-"""``roborak review`` — the main command."""
+"""``roborak review`` - the main command."""
 
 from __future__ import annotations
 

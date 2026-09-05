@@ -1,4 +1,4 @@
-"""``roborak improve`` — suggestions only, every one committable."""
+"""``roborak improve`` - suggestions only, every one committable."""
 
 from __future__ import annotations
 

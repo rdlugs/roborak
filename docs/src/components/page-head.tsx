@@ -1,7 +1,7 @@
 const SITE = "roborak";
 
 export function PageHead({ title, description }: { title: string; description: string }) {
-  const full = title === SITE ? SITE : `${title} — ${SITE}`;
+  const full = title === SITE ? SITE : `${title} - ${SITE}`;
   return (
     <>
       <title>{full}</title>

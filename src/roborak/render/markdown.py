@@ -317,7 +317,7 @@ def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
         notes.append("Nothing was traced, and no reason was recorded.")
 
     named = IMPACT_LABEL[impact.status].split(" ", 1)[1].lower()
-    summary = f"{icons.IMPACT} Blast radius — {named}"
+    summary = f"{icons.IMPACT} Blast radius - {named}"
     rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
     inner = "\n\n".join(part for part in (body, rendered) if part)
     return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
@@ -332,7 +332,7 @@ def _impact_rows(impact: ImpactMap) -> str:
         rows.append(
             f"| `{node.name}` <sub>`{node.file}`:{node.line}</sub> "
             f"| {node.kind.value.replace('_', ' ')} "
-            f"| {consumers or '—'} "
+            f"| {consumers or '-'} "
             f"| {IMPACT_LABEL[node.status]} |"
         )
     return "\n".join(rows)
@@ -411,9 +411,9 @@ def _investigation_section(report: InvestigationReport | None, *, form: Form) ->
     if report.operations:
         parts.append(
             "\n".join(
-                f"* `{_escape_cell(operation.display_request)}` — {operation.outcome.value}"
+                f"* `{_escape_cell(operation.display_request)}` - {operation.outcome.value}"
                 + (" (truncated)" if operation.truncated else "")
-                + (f" — {_escape_cell(operation.note)}" if operation.note else "")
+                + (f" - {_escape_cell(operation.note)}" if operation.note else "")
                 for operation in report.operations
             )
         )
@@ -426,7 +426,7 @@ def _investigation_section(report: InvestigationReport | None, *, form: Form) ->
         # an absent section reads as an all-clear, which is the one thing it is not.
         parts.append(_wrap("_The stage recorded no further detail._"))
 
-    summary = f"{icons.INVESTIGATION} Investigation — {INVESTIGATION_LABEL[report.status]}"
+    summary = f"{icons.INVESTIGATION} Investigation - {INVESTIGATION_LABEL[report.status]}"
     if report.candidates:
         summary += f" ({report.candidates} candidate(s))"
     return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
@@ -459,7 +459,7 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
     if report.assets:
         parts.append(
             "\n".join(
-                f"* `{_escape_cell(asset.path)}` — {asset.kind.value.replace('_', ' ')}"
+                f"* `{_escape_cell(asset.path)}` - {asset.kind.value.replace('_', ' ')}"
                 for asset in report.assets
             )
         )
@@ -474,7 +474,7 @@ def _supply_chain_section(report: SupplyChainReport | None, *, form: Form) -> st
         # an absent section reads as an all-clear, which is the one thing it is not.
         parts.append(_wrap("_The stage recorded no further detail._"))
 
-    summary = f"{icons.SUPPLY} Supply chain — {SUPPLY_CHAIN_LABEL[report.status]}"
+    summary = f"{icons.SUPPLY} Supply chain - {SUPPLY_CHAIN_LABEL[report.status]}"
     if report.changes:
         summary += f" ({len(report.changes)} dependency change(s))"
     return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
@@ -489,8 +489,8 @@ def _supply_chain_rows(report: SupplyChainReport) -> str:
         rows.append(
             f"| {CHANGE_LABEL[change.kind]} "
             f"| `{_escape_cell(change.name)}` <sub>{change.ecosystem}, {scope}</sub> "
-            f"| {_escape_cell(change.display_version) or '—'} "
-            f"| {_escape_cell(detail) or '—'} |"
+            f"| {_escape_cell(change.display_version) or '-'} "
+            f"| {_escape_cell(detail) or '-'} |"
         )
     return "\n".join(rows)
 
@@ -501,7 +501,7 @@ def _supply_scanner_rows(report: SupplyChainReport) -> str:
     for finding in report.scanner_findings:
         identifier = f" `{_escape_cell(finding.rule_id)}`" if finding.rule_id else ""
         rows.append(
-            f"| {SEVERITY_LABEL[finding.severity]} — {_escape_cell(finding.title)}{identifier} "
+            f"| {SEVERITY_LABEL[finding.severity]} - {_escape_cell(finding.title)}{identifier} "
             f"| `{_escape_cell(finding.file)}` | {_escape_cell(finding.body)} |"
         )
     return "\n".join(rows)
@@ -539,7 +539,7 @@ def _verification_section(report: VerificationReport | None, *, form: Form) -> s
     rendered = "\n\n".join(_wrap(f"_{note}_") for note in notes)
     inner = "\n\n".join(part for part in (body, failures, rendered) if part)
     named = VERIFICATION_LABEL[report.status].split(" ", 1)[1].lower()
-    summary = f"{icons.VERIFICATION} Verification — {named}"
+    summary = f"{icons.VERIFICATION} Verification - {named}"
     return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
 
 
@@ -548,7 +548,7 @@ def _verification_rows(report: VerificationReport) -> str:
     rows = ["| Check | Scope | Result | Time |", "| --- | --- | --- | --- |"]
     for run in report.runs:
         exit_code = "" if run.exit_code is None else f" <sub>exit {run.exit_code}</sub>"
-        duration = f"{run.duration_ms / 1000:.1f}s" if run.executed else "—"
+        duration = f"{run.duration_ms / 1000:.1f}s" if run.executed else "-"
         rows.append(
             f"| `{_escape_cell(run.display_command)}` "
             f"| {run.scope.value} "
@@ -891,7 +891,7 @@ def _evidence_detail(finding: Finding) -> str:
     if finding.evidence_note:
         return finding.evidence_note
     if not finding.evidence.proven:
-        return "Unverified — from reasoning about the diff alone."
+        return "Unverified - from reasoning about the diff alone."
     return f"{EVIDENCE_LABEL[finding.evidence]}, with no note given."
 
 
@@ -983,7 +983,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         report = result.verification
         listed = (
             "\n".join(
-                f"* `{run.display_command}` — {run.status.value.replace('_', ' ')}"
+                f"* `{run.display_command}` - {run.status.value.replace('_', ' ')}"
                 + (f": {run.note}" if run.note else "")
                 for run in report.runs
             )
@@ -1004,7 +1004,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
         supply = result.supply_chain
         listed = (
             "\n".join(
-                f"* `{asset.path}` — {asset.kind.value.replace('_', ' ')}"
+                f"* `{asset.path}` - {asset.kind.value.replace('_', ' ')}"
                 for asset in supply.assets
             )
             or "* no dependency or infrastructure file changed"
@@ -1043,7 +1043,7 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
 
     if result.coverage:
         listed = "\n".join(
-            f"* `{item.path}` — {item.reason.value.replace('_', ' ')}"
+            f"* `{item.path}` - {item.reason.value.replace('_', ' ')}"
             + (f": {item.detail}" if item.detail else "")
             for item in result.coverage
         )

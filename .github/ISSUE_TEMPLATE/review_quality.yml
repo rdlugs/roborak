@@ -10,7 +10,7 @@ body:
         These become eval cases, so a small reproducible diff is worth more than a long
         description.
 
-        Please do not paste proprietary code or credentials — reduce it to a minimal
+        Please do not paste proprietary code or credentials - reduce it to a minimal
         snippet you are comfortable publishing.
 
   - type: dropdown
@@ -18,12 +18,12 @@ body:
     attributes:
       label: What went wrong
       options:
-        - False positive — reported something that is not a defect
-        - Miss — did not report a real defect
-        - Anchoring — right finding, wrong line or file
-        - Routing — inline vs. summary placement was wrong
-        - Severity — graded too high or too low
-        - Fix suggestion — the suggested patch was wrong or would not apply
+        - False positive - reported something that is not a defect
+        - Miss - did not report a real defect
+        - Anchoring - right finding, wrong line or file
+        - Routing - inline vs. summary placement was wrong
+        - Severity - graded too high or too low
+        - Fix suggestion - the suggested patch was wrong or would not apply
         - Something else
     validations:
       required: true
@@ -50,7 +50,7 @@ body:
     id: expected
     attributes:
       label: What it should have said
-      description: Nothing at all, a different line, a different severity — be specific.
+      description: Nothing at all, a different line, a different severity - be specific.
     validations:
       required: true
 

@@ -1,4 +1,4 @@
-"""roborak — AI code review from the terminal."""
+"""roborak - AI code review from the terminal."""
 
 from importlib.metadata import PackageNotFoundError, version
 

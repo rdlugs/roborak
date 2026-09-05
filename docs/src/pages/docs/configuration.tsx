@@ -120,7 +120,7 @@ export default function Configuration() {
       <Callout kind="note" title="What require_evidence buys you">
         <P>
           A <Code>critical</Code> or <Code>major</Code> model finding has to say what makes it true
-          — the trigger and the failure path, a violated contract, or a reproduction. One that
+          - the trigger and the failure path, a violated contract, or a reproduction. One that
           cannot is demoted to a <Code>minor</Code> <Code>verification_needed</Code>: still
           reported, still anchored, no longer counted by the pre-merge verdict. A self-assigned{" "}
           <Code>confidence</Code> is the model grading its own homework, and it is not grounds to
@@ -196,7 +196,7 @@ export default function Configuration() {
         Verification runs the project&apos;s own tests so a review about changed behaviour has an
         execution record behind it. Selection is proportional: the commands whose{" "}
         <Code>paths</Code> match the changed files, deduplicated and capped. A change touching a{" "}
-        <Code>broaden_paths</Code> entry — a shared contract, a schema, the build configuration —
+        <Code>broaden_paths</Code> entry - a shared contract, a schema, the build configuration -
         runs <Code>fallback</Code> <em>instead of</em> the targeted set, because a full suite
         already contains every subset of itself. A change matching nothing falls back to the broad
         check, and with no <Code>fallback</Code> configured it is simply not verified, which the
@@ -206,7 +206,7 @@ export default function Configuration() {
         <P>
           Verification runs argv the repository authored, so the section is read from the revision
           being merged into and never from the working tree: reviewing a branch somebody else wrote
-          must not run what that branch says to run. The consequence is worth knowing — a change
+          must not run what that branch says to run. The consequence is worth knowing - a change
           that <em>adds</em> a verification command is not verified by it until it lands.{" "}
           <Code>--config</Code> is the deliberate override, and your own user config and{" "}
           <Code>ROBORAK_*</Code> environment are always yours.
@@ -248,7 +248,7 @@ export default function Configuration() {
       </P>
       <P>
         Every number is a ceiling, and a search that hits one says so rather than reporting an
-        empty result. That distinction is the point — <Code>contained</Code> is only ever claimed
+        empty result. That distinction is the point - <Code>contained</Code> is only ever claimed
         for a symbol a parser identified and a search that completed, while{" "}
         <Code>no references found</Code> means the name did not match anywhere, which an alias, a
         re-export or a runtime lookup would also produce. A review of a directory with no git
@@ -259,10 +259,10 @@ export default function Configuration() {
         A merge or pull request arrives as a diff, and finding its unchanged consumers needs the
         surrounding tree. When the reviewed head commit is not in the local repository,{" "}
         <Code>forge_checkout: auto</Code> fetches it into a temporary directory, searches that and
-        deletes it — nothing is written to your repository, and a checkout that does not turn out
+        deletes it - nothing is written to your repository, and a checkout that does not turn out
         to be the reviewed commit is discarded rather than searched. It is the only part of a
         review that reaches the network for repository content, so set{" "}
-        <Code>forge_checkout: off</Code> where that is not acceptable — or{" "}
+        <Code>forge_checkout: off</Code> where that is not acceptable - or{" "}
         <Code>ROBORAK_IMPACT_FORGE_CHECKOUT=off</Code> from the environment, for CI that cannot
         edit the file. The blast radius then reports <Code>unavailable</Code> for those reviews,
         as it did before. A fetch that fails for any reason degrades to a note and never fails
@@ -290,9 +290,9 @@ export default function Configuration() {
       <P>
         <Code>require_evidence</Code> demotes a critical or major model finding that cannot say
         what makes it true. This stage is how it gets the chance to: before findings are validated,
-        the model is handed its own unproven blockers and a small set of read-only operations — a
+        the model is handed its own unproven blockers and a small set of read-only operations - a
         bounded line range, a <Code>git grep</Code>, the reviewed diff for a file, a symbol&rsquo;s
-        declaration — and then <Code>confirm</Code>s, <Code>revise</Code>s or <Code>drop</Code>s
+        declaration - and then <Code>confirm</Code>s, <Code>revise</Code>s or <Code>drop</Code>s
         each one.
       </P>
       <P>
@@ -303,8 +303,8 @@ export default function Configuration() {
         patch, runs a repository-chosen command, or reaches the network.
       </P>
       <P>
-        A candidate the stage cannot settle — a tool error, an exhausted budget, an unreadable
-        reply, a provider outage — is left exactly as it arrived, so &ldquo;we could not
+        A candidate the stage cannot settle - a tool error, an exhausted budget, an unreadable
+        reply, a provider outage - is left exactly as it arrived, so &ldquo;we could not
         tell&rdquo; is never recorded as &ldquo;we checked&rdquo;. For a pull or merge request the
         checkout must be clean and at the reviewed head commit before anything is read from it;
         otherwise roborak uses the file content the forge supplied, or reports the stage

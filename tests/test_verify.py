@@ -414,8 +414,8 @@ def test_the_report_distinguishes_a_pass_from_a_skip():
     """A reader who cannot tell these apart reads every clean review as a verified one."""
     passed = markdown.render(ReviewResult(verification=report_with(VerificationStatus.PASSED)))
     skipped = markdown.render(ReviewResult(verification=report_with(VerificationStatus.SKIPPED)))
-    assert "Verification — passed" in passed
-    assert "Verification — not executed" in skipped
+    assert "Verification - passed" in passed
+    assert "Verification - not executed" in skipped
 
 
 def test_a_static_only_review_makes_no_verification_claim():
@@ -502,7 +502,7 @@ def test_a_run_that_could_not_start_explains_itself_in_the_report():
     )
     document = markdown.render(ReviewResult(verification=report))
     assert "Could not run the command" in document
-    assert "Verification — could not run" in document
+    assert "Verification - could not run" in document
 
 
 def test_the_footer_states_verification_even_in_the_terminal_form():

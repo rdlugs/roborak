@@ -1,4 +1,4 @@
-"""``roborak rules`` — manage the team's own review standards."""
+"""``roborak rules`` - manage the team's own review standards."""
 
 from __future__ import annotations
 

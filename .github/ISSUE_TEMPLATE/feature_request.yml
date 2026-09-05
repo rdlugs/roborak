@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         roborak is feature complete for what it set out to do, so the bar for new surface
-        area is deliberately high — the strongest requests describe the workflow that is
+        area is deliberately high - the strongest requests describe the workflow that is
         currently awkward rather than the flag you have in mind.
 
   - type: textarea
@@ -21,7 +21,7 @@ body:
     id: proposal
     attributes:
       label: What you would like instead
-      description: A flag, a config key, a source, an output mode — sketch the interface if you have one in mind.
+      description: A flag, a config key, a source, an output mode - sketch the interface if you have one in mind.
     validations:
       required: true
 
@@ -29,7 +29,7 @@ body:
     id: alternatives
     attributes:
       label: What you tried instead
-      description: Existing flags, config, or a wrapper script — and why they fall short.
+      description: Existing flags, config, or a wrapper script - and why they fall short.
 
   - type: dropdown
     id: area

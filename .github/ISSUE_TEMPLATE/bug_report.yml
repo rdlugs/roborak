@@ -8,7 +8,7 @@ body:
         Please do not paste tokens or API keys. `roborak config show` redacts them;
         raw config files, logs and terminal captures do not.
 
-        Found a security problem? Do not file it here — see
+        Found a security problem? Do not file it here - see
         [SECURITY.md](https://github.com/rdlugs/roborak/blob/main/SECURITY.md).
 
   - type: textarea

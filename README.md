@@ -4,7 +4,7 @@
 
 # roborak
 
-**AI code review from the terminal** — local diffs, GitLab MRs, and GitHub PRs.
+**AI code review from the terminal** - local diffs, GitLab MRs, and GitHub PRs.
 
 Severity-graded, line-anchored findings with committable fix suggestions.
 
@@ -27,12 +27,12 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 
 |  | |
 |---|---|
-| 🎯 **Anchored, not approximate** | Every finding points at a line the change actually touched — verified against the files on disk, not the model's word for it. |
+| 🎯 **Anchored, not approximate** | Every finding points at a line the change actually touched - verified against the files on disk, not the model's word for it. |
 | 🧹 **Refuses more than it says** | Low-confidence findings filtered, duplicates collapsed, pre-existing lint debt suppressed, already-posted comments skipped. |
 | 🔌 **Four sources, one pipeline** | Local git, GitLab MRs, GitHub PRs and raw paths all normalise into one IR, so output modes can never disagree. |
-| 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan — plus actionlint, hadolint and checkov for workflows, containers and IaC — with *your* config, and feeds the results to the model to confirm or explain. |
+| 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan - plus actionlint, hadolint and checkov for workflows, containers and IaC - with *your* config, and feeds the results to the model to confirm or explain. |
 | 💬 **Publishes where you're looking** | Inline threads for what's worth interrupting for, a summary comment for the rest, incremental so re-runs don't repeat themselves. |
-| 📦 **Reads the lockfile you don't** | Lockfiles stay out of the model's context — they're generated data — so a parser reads them instead and reports what actually moved: a swapped registry, a lost checksum, a mutable git ref, manifest/lock drift. Changes to CI workflows, Dockerfiles and Terraform get their own review checklists. |
+| 📦 **Reads the lockfile you don't** | Lockfiles stay out of the model's context - they're generated data - so a parser reads them instead and reports what actually moved: a swapped registry, a lost checksum, a mutable git ref, manifest/lock drift. Changes to CI workflows, Dockerfiles and Terraform get their own review checklists. |
 | 🧭 **Maps the blast radius** | Traces changed symbols, routes, events, config keys and env vars out to the unchanged code that depends on them, and says plainly when it could not look. |
 | 📋 **Issue-aware** | `--issue 42` judges the diff against what was actually asked, and reports the requirements it misses. |
 
@@ -84,7 +84,7 @@ llm:
 
 A configured key wins over the provider's environment variable. These are real
 secrets on disk, so keep them in `~/.config/roborak/config.yaml` or in a
-`.roborak.yaml` your repo ignores — `roborak config show` redacts them, git does
+`.roborak.yaml` your repo ignores - `roborak config show` redacts them, git does
 not. `roborak config init --global` scaffolds that user-wide file and creates it
 mode 600. Setting `api_base` alone is enough for endpoints that need no key.
 
@@ -110,7 +110,7 @@ uv run roborak review > review.md           # piped: the raw markdown, chrome on
 **Directories without git**
 
 Point `-C` at a directory that is not a git repository and roborak reviews every
-file in it whole, rather than refusing for want of a baseline — useful for
+file in it whole, rather than refusing for want of a baseline - useful for
 extracted archives, generated trees, vendor handoffs and other version-control
 systems.
 
@@ -165,14 +165,14 @@ uv run roborak review --no-investigate      # skip the evidence-gathering stage
 |---|---|
 | `0` | Review completed |
 | `1` | Findings at or above `--fail-on` |
-| `2` | Operational error or partial review — failed chunks, unavailable forge patches, or a requested publish that did not complete |
+| `2` | Operational error or partial review - failed chunks, unavailable forge patches, or a requested publish that did not complete |
 
 ### The pre-merge check
 
 Every review ends with a pre-merge check: the verdict, the severity floor it was judged
 against, and the finding counts that drove it. It is the last section of the report, so it
-shows in the terminal, in `--markdown` output, and — because the summary comment *is* the
-report — on the merge request too, on every re-run.
+shows in the terminal, in `--markdown` output, and - because the summary comment *is* the
+report - on the merge request too, on every re-run.
 
 The floor is `--fail-on` when you pass it, and `review.block_on` (default `critical`)
 otherwise. Only `--fail-on` moves the exit code; without it the block says so rather than
@@ -189,7 +189,7 @@ output:
 all, `block_on` decides what *blocks*.
 
 **Blocking takes evidence.** A `critical` or `major` model finding has to say what makes it
-true — the trigger and the failure path, a violated contract, or a reproduction — not just how
+true - the trigger and the failure path, a violated contract, or a reproduction - not just how
 confident it feels. One that cannot is demoted to a `minor` `verification_needed`: still
 reported, still anchored, no longer counted by the verdict. A self-assigned `confidence: 0.95`
 is the model grading its own homework, and it is not grounds to fail a build. Static-analyser
@@ -201,7 +201,7 @@ locally correct and still fail on rollout: a field required before the version t
 ships, a migration that locks a hot table or cannot be rolled back, a retry wrapped around a
 call that is not idempotent, a feature flag defaulting on where it is unset, a connection pool
 raised past what the database serves, a cache key that stops separating one tenant from the
-next. The checklist is gated on what the change actually touches — migrations, deploy
+next. The checklist is gated on what the change actually touches - migrations, deploy
 configuration, public contracts, jobs and queues, retries and timeouts, flags, caches, limits,
 and logging or metrics that a change removes. A diff crossing none of those surfaces is never
 asked about rollout, and "add monitoring" is not a finding: an
@@ -264,7 +264,7 @@ file. They are secrets on disk, so the same advice applies: keep them in
 
 A bare `--mr 705` has to work out which server it means, which it normally reads
 off the repository's git remote. Name the instance in the config for the cases
-where that does not answer it — no remote, or a remote pointing at a mirror:
+where that does not answer it - no remote, or a remote pointing at a mirror:
 
 ```yaml
 forge:
@@ -301,21 +301,21 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   near misses onto the nearest one, then filters by confidence and severity and
   collapses duplicates. Most of roborak's usefulness is in what it refuses to say.
 - **The verification pass** runs the project's own tests, proportionally: the
-  narrowest matching command set that covers the changed files — every configured
-  command whose globs match, deduplicated by argv and capped by `max_commands` —
+  narrowest matching command set that covers the changed files - every configured
+  command whose globs match, deduplicated by argv and capped by `max_commands` -
   escalating to the broad check only when the change crosses a shared boundary. It
   is off until a project configures a command, its commands are read from the base
-  revision so a change cannot define what verifies it, and every result — passed,
-  failed, timed out, could not run, not executed — is recorded on the review rather
+  revision so a change cannot define what verifies it, and every result - passed,
+  failed, timed out, could not run, not executed - is recorded on the review rather
   than left for the reader to run themselves.
 - **The static pass** runs whichever of ruff, mypy, semgrep, eslint, phpstan,
   actionlint, hadolint and checkov the repo actually has, using *the project's own
-  config* — the rules a team
+  config* - the rules a team
   already agreed to. Findings on lines the change did not touch are dropped, so a
   linted file's pre-existing debt never lands on the author. What survives is fed
   to the model as evidence to confirm or explain, rather than reported raw.
 - **The supply-chain pass** reads the manifest and lockfile pairs a change
-  touched — npm/yarn/pnpm, Python, Go, Cargo, Composer — straight out of git, and
+  touched - npm/yarn/pnpm, Python, Go, Cargo, Composer - straight out of git, and
   reduces them to a small delta: what was added, removed, upgraded, re-sourced, or
   is no longer covered by a checksum. The lockfiles themselves never enter the
   prompt, which is the point: they are excluded by `ignore_paths` for good reason,
@@ -328,7 +328,7 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   changed line and is worth interrupting for goes inline on the diff, where the
   author is already looking. A nitpick is folded into the summary instead, so the
   small stuff cannot drown the review. And one that cannot be anchored is
-  *reported* in the summary under a warning banner rather than discarded — roborak
+  *reported* in the summary under a warning banner rather than discarded - roborak
   used to count those as failures and show them only in the terminal, which meant
   nobody reading the merge request learned they existed. `roborak.core.buckets` is
   the one place that decides, so the terminal, the markdown report, the summary
@@ -336,7 +336,7 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
 - **Publishing** translates new-file coordinates into each forge's position
   payload, and only there. GitLab needs all three of `base_sha`/`start_sha`/
   `head_sha` from the MR's own `diff_refs`; GitHub takes one review containing every
-  comment, always as `COMMENT` — roborak never approves or requests changes on your
+  comment, always as `COMMENT` - roborak never approves or requests changes on your
   behalf. A rejected comment never costs you the rest of the review.
 - **Incremental review** fingerprints each finding independently of its line
   number, so re-running on a new push posts only what is genuinely new instead of
@@ -346,7 +346,7 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   stale positions and roborak's own output. `--no-discussions` disables it.
 - **Deciding to publish comes after reading the review.** `--post` has to be
   chosen before the model has said anything, so an interactive run ends by asking
-  instead — post it, save it as markdown, or neither — showing first how many
+  instead - post it, save it as markdown, or neither - showing first how many
   inline comments are new and how many an earlier run already sent. A local diff
   has nowhere to post, so only saving is offered. The question is asked only on a
   terminal: a pipe, a script and a CI job are never prompted, and `--no-post` or
@@ -371,27 +371,27 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
 - **The report is built for skimming.** Findings are grouped into
   collapsible sections by where they belong, badged with category, severity and
   the effort a fix will cost, and each one carries a 🤖 prompt a coding agent can
-  act on — plus one collated block for the whole review. A `<!-- roborak:v1:… -->`
+  act on - plus one collated block for the whole review. A `<!-- roborak:v1:… -->`
   marker records each finding's identity in the comment itself, so a published
   review carries a record of itself that does not depend on local state.
 - **There is one document, and you read it before you publish it.** One renderer
   builds it, so what `--markdown` writes, what a pipe gives back and what `--post`
-  publishes are byte for byte the same thing — asserted by a test, because it is
+  publishes are byte for byte the same thing - asserted by a test, because it is
   the invariant a refactor would quietly break. It means the comment repeats the
   findings that also went out as inline threads, which is the deliberate half of
   the trade: a comment that omitted them would be a fourth document nobody had
   read before it was published.
 - **How it reaches you depends on who is reading.** Redirected or piped it is the
   raw markdown, so `roborak review > review.md` gives back exactly the publishable
-  file. At a terminal it is rendered — headings, tables, severity in colour, the
+  file. At a terminal it is rendered - headings, tables, severity in colour, the
   flagged lines shown in context from your working tree, syntax-highlighted fixes.
-  Everything roborak says *about* a run — spinners, errors, the closing question —
+  Everything roborak says *about* a run - spinners, errors, the closing question -
   goes to stderr either way.
 - **A terminal cannot fold a section, so it leaves them out instead.** A report is
   built to be skimmed by opening what you want, and every `<details>` opened at
   once is the opposite of that: on a twenty-finding review the per-finding agent
   prompts alone outweigh the findings. The rendered form drops the sections
-  written for a machine — the agent prompts, the review-info tree — and puts what
+  written for a machine - the agent prompts, the review-info tree - and puts what
   a reader must not lose (an omitted file, a skipped file, an error) in a one-line
   footer instead. `--full` restores them. What it never drops is the review: every
   finding, every badge, every body and every fix is in both forms, which is what
@@ -409,7 +409,7 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
   it skipped.
 - **Issue context** turns "is this code good?" into "does this code do what was
   asked?". `--issue 42` fetches the issue's title, body, labels and discussion and
-  puts them in the prompt, and — when no other target was named — reviews the merge
+  puts them in the prompt, and - when no other target was named - reviews the merge
   or pull request linked to it, so `--issue 42` alone is enough. Findings of kind
   `requirement_gap` name what the issue asked for that the diff does not do. A gap
   is the one finding with no honest line to point at, so it is exempt from line
@@ -427,17 +427,17 @@ the first, `config init --global` the second; both get the same commented templa
 which ships inside the package rather than being read out of a source checkout.
 
 `roborak setup` is the guided path to the same files: it asks for a model, a
-credential for it, and optional forge tokens, then writes *only* those keys — a
+credential for it, and optional forge tokens, then writes *only* those keys - a
 sparse file, so every other default stays live across upgrades. It chmods 600
 whatever it writes that holds secrets, wherever it wrote it. `config init` remains
 the manual path, and the full annotated file to edit.
 
-In a terminal the closed questions — where the file goes, which model — are
+In a terminal the closed questions - where the file goes, which model - are
 arrow-key lists rather than strings to type. Every list ends with
 `Other (type it in)…`, because the model list can only ever be a starting point:
 roborak takes any LiteLLM model string. Keys, tokens and a self-hosted domain
-stay free text, and keys are never echoed. Run it without a terminal — piped, or
-in CI — and the same questions come back as plain line prompts reading stdin, so
+stay free text, and keys are never echoed. Run it without a terminal - piped, or
+in CI - and the same questions come back as plain line prompts reading stdin, so
 `printf '1\n\nsk-ant-…\n\n\n' | rk setup` works; with nothing on stdin it
 writes nothing and exits 0 rather than waiting.
 
@@ -540,7 +540,7 @@ Never build SQL by string concatenation. Use the query builder or bound paramete
 ```
 
 Only rules matching the changed files enter the prompt, so token cost stays flat
-as the rule set grows. Frontmatter is optional — a file containing one sentence is
+as the rule set grows. Frontmatter is optional - a file containing one sentence is
 a valid rule, named after the file.
 
 roborak also reads `AGENTS.md`, `CLAUDE.md`, `.roborak/context.md`, or
@@ -554,12 +554,12 @@ Roborak can run the project's own tests as part of a review, so a finding about
 changed behaviour has an execution record behind it instead of an invitation to go
 and check. Selection is proportional: the commands whose `paths` match the changed
 files, deduplicated, capped by `max_commands`. A change touching a `broaden_paths`
-entry — a shared contract, a schema, the build configuration — runs `fallback`
+entry - a shared contract, a schema, the build configuration - runs `fallback`
 *instead of* the targeted set, since a full suite already contains every subset of
 itself. A change matching nothing falls back to the broad check, and with no
 `fallback` configured it is simply not verified, which the report says in words.
 
-Results reach every surface. The report carries a Verification section — including
+Results reach every surface. The report carries a Verification section - including
 when nothing ran, because a section that appeared only on green would teach readers
 that its absence means the tests passed. `--json` carries `summary.verified` and a
 per-command record, and the model is handed failures as evidence with the output
@@ -567,7 +567,7 @@ framed as data rather than instructions.
 
 > [!IMPORTANT]
 > Verification runs argv the repository authored, so the commands are read from the
-> **base revision** — never from the working tree. Reviewing a branch someone else
+> **base revision** - never from the working tree. Reviewing a branch someone else
 > wrote must not run what that branch says to run.
 
 The practical consequence: a change that *adds* a verification command is not
@@ -577,7 +577,7 @@ choosing that path is itself the trust decision, and your own user config and
 execution model as static analysis below: direct locally, sandboxed in CI, skipped
 in CI when Bubblewrap is unavailable, and `--trust-verify` (or
 `verification.execution: trusted`) as the explicit opt-in. Nothing is installed and
-nothing is fetched — the suite runs against the checkout as it stands, in a
+nothing is fetched - the suite runs against the checkout as it stands, in a
 credential-scrubbed environment. Inside the CI sandbox the repository is read-only,
 so a suite that must write is reported as *could not run* rather than as a failure.
 
@@ -593,8 +593,8 @@ unexpected transitive package, a swapped registry, a checksum that quietly
 disappeared, or a manifest edit that never reached the lock.
 
 So the lockfile stays out of the prompt and a deterministic parser reads it
-instead. What the model gets is a bounded delta — what was added, removed,
-upgraded, downgraded, re-sourced, or is no longer covered by a hash — plus
+instead. What the model gets is a bounded delta - what was added, removed,
+upgraded, downgraded, re-sourced, or is no longer covered by a hash - plus
 manifest/lock drift.
 
 | Ecosystem | Manifests | Lockfiles |
@@ -605,7 +605,7 @@ manifest/lock drift.
 | Rust | `Cargo.toml` | `Cargo.lock` |
 | PHP | `composer.json` | `composer.lock` |
 
-Anything else — `Gemfile.lock`, `Pipfile.lock`, `gradle.lockfile`, `mix.lock` — is
+Anything else - `Gemfile.lock`, `Pipfile.lock`, `gradle.lockfile`, `mix.lock` - is
 named in the report as unanalysed rather than passed over in silence.
 
 Both sides are read from git, not from the diff: whole-file parses compared
@@ -616,9 +616,9 @@ that is not checked out has no readable sides, and the report says so instead of
 guessing.
 
 Changes to CI workflows, Dockerfiles, compose files and Terraform additionally
-turn on review checklists written for those trust boundaries — workflow
+turn on review checklists written for those trust boundaries - workflow
 permissions and secret exposure, container privilege and mutable base images,
-IAM and public access — gated so that a Terraform-only change never pays for the
+IAM and public access - gated so that a Terraform-only change never pays for the
 npm checklist.
 
 Three optional scanners run when the repository already has them:
@@ -634,8 +634,8 @@ section cannot be mistaken for a checked one.
 ### Investigation
 
 `require_evidence` demotes a critical or major model finding that cannot say what
-makes it true, which is right — a self-assigned confidence score is not grounds to
-fail a build — but until now the model had no way to go and find out. A real
+makes it true, which is right - a self-assigned confidence score is not grounds to
+fail a build - but until now the model had no way to go and find out. A real
 blocker whose proof sat one function away was demoted anyway, and a false positive
 that one read would have disproved survived to the report.
 
@@ -654,8 +654,8 @@ Every result is bounded and says when it was cut, and everything read is fed bac
 as untrusted input. Nothing writes, applies a patch, runs a repository-chosen
 command, or reaches the network.
 
-Two rules make a failure safe. A candidate the stage cannot settle — a tool error,
-an exhausted budget, an unreadable reply, a provider outage — is returned exactly
+Two rules make a failure safe. A candidate the stage cannot settle - a tool error,
+an exhausted budget, an unreadable reply, a provider outage - is returned exactly
 as it arrived, so "we could not tell" is never recorded as "we checked". And for a
 PR or MR, the checkout must be clean *and* at the reviewed head commit before
 anything is read from it; otherwise roborak falls back to the file content the
@@ -716,13 +716,13 @@ Conventions, invariants and the PR checklist are in
 
 ## Documentation
 
-Full documentation lives at **[roborak.pages.dev](https://roborak.pages.dev)** —
+Full documentation lives at **[roborak.pages.dev](https://roborak.pages.dev)** -
 install, every command and flag, configuration reference, custom rules and CI
 recipes.
 
 ## License
 
-MIT — see [LICENSE.md](https://github.com/rdlugs/roborak/blob/main/LICENSE.md).
+MIT - see [LICENSE.md](https://github.com/rdlugs/roborak/blob/main/LICENSE.md).
 
 <div align="center">
 <br>

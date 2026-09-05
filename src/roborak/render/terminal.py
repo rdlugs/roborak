@@ -112,7 +112,7 @@ def _render_impact(impact: ImpactMap | None, console: Console) -> None:
     if impact.nodes:
         console.print(
             f"[{style}]blast radius: {label}[/] "
-            f"[dim]— {len(impact.nodes)} boundary(s), "
+            f"[dim]- {len(impact.nodes)} boundary(s), "
             f"{impact.consumer_count} consumer(s)"
             f"{', truncated' if impact.truncated else ''}[/]",
             highlight=False,
@@ -147,7 +147,7 @@ def _render_investigation(report: InvestigationReport | None, console: Console) 
         detail += f", {report.unresolved} left unverified"
     console.print(
         f"[{_INVESTIGATION_STYLE[report.status]}]investigation: "
-        f"{report.status.value.replace('_', ' ')}[/] [dim]— {detail}[/]",
+        f"{report.status.value.replace('_', ' ')}[/] [dim]- {detail}[/]",
         highlight=False,
     )
     for decision in report.settled[:MAX_INVESTIGATION_LINES]:
@@ -194,7 +194,7 @@ def _render_supply_chain(report: SupplyChainReport | None, console: Console) -> 
     if report.truncated:
         detail += ", truncated"
     console.print(
-        f"[{_SUPPLY_CHAIN_STYLE[report.status]}]supply chain: {label}[/] [dim]— {detail}[/]",
+        f"[{_SUPPLY_CHAIN_STYLE[report.status]}]supply chain: {label}[/] [dim]- {detail}[/]",
         highlight=False,
     )
     for change in report.changes[:MAX_SUPPLY_CHAIN_LINES]:
@@ -238,13 +238,13 @@ def _render_verification(report: VerificationReport | None, console: Console) ->
     console.print()
     console.print(
         f"[{_VERIFICATION_STYLE[report.status]}]verification: {label}[/]"
-        + (f" [dim]— {len(report.runs)} check(s)[/]" if report.runs else ""),
+        + (f" [dim]- {len(report.runs)} check(s)[/]" if report.runs else ""),
         highlight=False,
     )
     for run in report.runs:
         if run.status is not VerificationStatus.PASSED:
             console.print(
-                f"  [dim]{run.display_command} — {run.status.value.replace('_', ' ')}"
+                f"  [dim]{run.display_command} - {run.status.value.replace('_', ' ')}"
                 f"{f': {run.note}' if run.note else ''}[/]",
                 highlight=False,
             )
@@ -487,7 +487,7 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
     _render_verdict(result, console)
     if result.issue is not None:
         issue = result.issue
-        label = f"{issue.reference} — {issue.title}" if issue.title else issue.reference
+        label = f"{issue.reference} - {issue.title}" if issue.title else issue.reference
         console.print(f"[dim]reviewed against issue {label}[/]")
     if result.skipped_files:
         console.print(
