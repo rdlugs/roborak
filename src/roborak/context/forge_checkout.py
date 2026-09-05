@@ -31,9 +31,10 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,9 +106,29 @@ def acquire(
     try:
         yield _fetch(changeset, repo, config, Path(scratch), token=token)
     finally:
-        # ignore_errors because a review must not fail over a directory it was
-        # only borrowing; the worst case is a stale directory the OS reaps.
-        shutil.rmtree(scratch, ignore_errors=True)
+        _remove(Path(scratch))
+
+
+def _remove(scratch: Path) -> None:
+    """Delete the temporary checkout, including the parts git made read-only.
+
+    Windows marks everything under ``.git/objects`` read-only, and deleting a
+    read-only file there raises ``PermissionError``. ``ignore_errors`` would hide
+    that rather than solve it, leaving a full clone in the user's temp directory
+    after every review -- the failure this exists to prevent, made invisible. So
+    the bit is cleared and the delete retried, and only a directory that resists
+    even that is given up on, because a review must not fail over a directory it
+    was merely borrowing.
+    """
+
+    def clear_readonly(func: Callable[[str], None], path: str, _exc: BaseException) -> None:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+    try:
+        shutil.rmtree(scratch, onexc=clear_readonly)
+    except OSError as exc:
+        log.debug("could not remove temporary checkout %s: %s", scratch, exc)
 
 
 def _wanted(changeset: ChangeSet, config: ImpactConfig) -> bool:

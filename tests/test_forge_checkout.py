@@ -14,6 +14,7 @@ needs the https and ssh remotes a local fixture cannot also be reachable at.
 
 from __future__ import annotations
 
+import stat
 import subprocess
 import tempfile
 import textwrap
@@ -356,6 +357,42 @@ def test_a_change_with_no_forge_reference_has_nowhere_to_fetch_from(local: Path)
     changeset.forge_ref = None
 
     assert forge_checkout._source(changeset, local) is None
+
+
+# --- cleanup -----------------------------------------------------------------
+
+
+def test_a_checkout_git_marked_read_only_is_still_removed(tmp_path: Path) -> None:
+    """Windows makes everything under ``.git/objects`` read-only.
+
+    Deleting one raises ``PermissionError`` there, and swallowing that would leave
+    a full clone in the user's temp directory after every review -- the failure
+    cleanup exists to prevent, made invisible.
+    """
+    scratch = tmp_path / "scratch"
+    (scratch / ".git" / "objects").mkdir(parents=True)
+    obj = scratch / ".git" / "objects" / "cafe"
+    obj.write_text("packed", encoding="utf-8")
+    obj.chmod(stat.S_IREAD)
+
+    forge_checkout._remove(scratch)
+
+    assert not scratch.exists()
+
+
+def test_a_checkout_that_cannot_be_removed_does_not_fail_the_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory roborak was merely borrowing must not take a review down."""
+    scratch = tmp_path / "stuck"
+    scratch.mkdir()
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError("in use")
+
+    monkeypatch.setattr(forge_checkout.shutil, "rmtree", refuse)
+
+    forge_checkout._remove(scratch)  # must not raise
 
 
 # --- credentials -------------------------------------------------------------
