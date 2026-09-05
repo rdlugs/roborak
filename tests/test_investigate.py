@@ -211,10 +211,17 @@ def test_search_rejects_a_broken_regular_expression(repo: Path):
 
 
 def test_a_pattern_git_rejects_reports_what_git_said(repo: Path):
-    """`(?P<x>a)` compiles in Python and not in POSIX, and the difference is the answer."""
+    """`(?P<x>a)` compiles in Python and not in POSIX, and the difference is the answer.
+
+    Asserted on the pattern rather than on the wording: GNU and BSD explain the
+    same rejection in different words, and what matters is that git's own reason
+    reaches the model instead of "this may not be a git repository".
+    """
     result = tools.search(repo, "(?P<x>a)", regex=True, path_prefix="", config=cfg())
     assert not result.ok
-    assert "Invalid preceding regular expression" in result.error
+    assert result.error.startswith("search failed: ")
+    assert "(?P<x>a)" in result.error
+    assert "git repository" not in result.error
 
 
 def test_search_rejects_an_oversized_pattern(repo: Path):
