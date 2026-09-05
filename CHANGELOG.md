@@ -61,11 +61,21 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- **Project config filenames are documented consistently.** Help, the generated
+  template, and documentation identify `.roborak.yaml` as the canonical generated
+  default and `.roborak.yml` as a supported alternate. If both exist, only
+  `.roborak.yaml` is loaded; the files are not merged.
+
 - **JSON output gains an `investigation` block and moves to schema version 5.**
   It records what was investigated and how each candidate was settled, and is
   absent when the stage never ran.
 
 ### Fixed
+
+- **`config show` reports only the selected project config file.** It no longer
+  lists both accepted filenames as loaded when only `.roborak.yaml` was read,
+  or lists working-tree project files that CI ignores. An explicit `--config`
+  path is still loaded and reported in CI.
 
 - **Forge reviews seed the blast radius again.** The pass skips any file it has no
   full text for, and only the local-git and path sources ever populated it - so a

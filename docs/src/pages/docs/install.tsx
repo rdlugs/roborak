@@ -88,7 +88,7 @@ export default function Install() {
       <Callout kind="warn" title="These are real secrets on disk">
         <P>
           Keep them in <Code>~/.config/roborak/config.yaml</Code>, or in a{" "}
-          <Code>.roborak.yaml</Code> your repository ignores.{" "}
+          <Code>.roborak.yaml</Code> / <Code>.roborak.yml</Code> your repository ignores.{" "}
           <Code>roborak config show</Code> redacts them; git does not.
         </P>
       </Callout>

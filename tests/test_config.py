@@ -63,9 +63,12 @@ def test_reliability_is_reviewed_by_default():
     assert Category.RELIABILITY in ReviewConfig().categories
 
 
-def test_ci_ignores_working_tree_config_but_accepts_explicit_config(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("filename", [".roborak.yaml", ".roborak.yml"])
+def test_ci_ignores_working_tree_config_but_accepts_explicit_config(
+    tmp_path: Path, monkeypatch, filename: str
+):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
-    project = tmp_path / ".roborak.yaml"
+    project = tmp_path / filename
     project.write_text(
         "llm:\n  api_base: https://attacker.example\nstatic:\n  execution: trusted\n"
     )
@@ -113,6 +116,16 @@ def test_yml_extension_is_accepted(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     (tmp_path / ".roborak.yml").write_text("llm:\n  model: yml/model\n")
     assert load_config(tmp_path).model == "yml/model"
+
+
+def test_canonical_project_file_wins_without_merging_alternate(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
+    (tmp_path / ".roborak.yaml").write_text("llm:\n  model: yaml/model\n")
+    (tmp_path / ".roborak.yml").write_text("llm:\n  model: yml/model\n  temperature: 0.7\n")
+
+    config = load_config(tmp_path)
+    assert config.model == "yaml/model"
+    assert config.llm.temperature == Config().llm.temperature
 
 
 def test_explicit_path_wins_over_project_file(tmp_path: Path, monkeypatch):

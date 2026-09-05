@@ -80,7 +80,8 @@ export default function StaticAnalysis() {
 
       <H2>CI ignores the working tree&apos;s config</H2>
       <P>
-        In CI, roborak does not read <Code>.roborak.yaml</Code> from the working tree a branch
+        In CI, roborak does not automatically read <Code>.roborak.yaml</Code> /{" "}
+        <Code>.roborak.yml</Code> from the working tree. A branch
         could otherwise redirect an API key or opt itself into trusted execution simply by editing a
         file.
       </P>

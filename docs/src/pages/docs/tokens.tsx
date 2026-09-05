@@ -59,7 +59,8 @@ export default function Tokens() {
         <P>
           <Code>forge.tokens</Code> is convenient for a checkout whose shell does not carry
           credentials, but it is a plaintext secret. Keep it in{" "}
-          <Code>~/.config/roborak/config.yaml</Code>, or in a <Code>.roborak.yaml</Code> your
+          <Code>~/.config/roborak/config.yaml</Code>, or in a <Code>.roborak.yaml</Code> /{" "}
+          <Code>.roborak.yml</Code> your
           repository ignores. <Code>roborak config show</Code> redacts them; git does not.
         </P>
       </Callout>

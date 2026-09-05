@@ -1,6 +1,9 @@
 # roborak configuration. Every key is optional; the values shown are the defaults.
-# Precedence: CLI flags > ROBORAK_* env vars > this file (when it is the project's
-# .roborak.yaml) > ~/.config/roborak/config.yaml > built-in defaults.
+# Project files: .roborak.yaml (canonical generated default) / .roborak.yml.
+# If both exist, only .roborak.yaml is loaded; they are not merged.
+# Precedence: CLI flags > ROBORAK_* env vars > project config >
+# ~/.config/roborak/config.yaml > built-in defaults.
+# In CI, project files are ignored unless explicitly selected with --config.
 version: 1
 
 llm:

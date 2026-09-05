@@ -8,7 +8,7 @@ import { A } from "@/components/ui";
 const PRECEDENCE = [
   ["1", "CLI flags", "--model, --severity, --config, and the rest."],
   ["2", "ROBORAK_* environment variables", "Set per shell or per CI job."],
-  ["3", "Project .roborak.yaml", "The repository root. Ignored in CI see the warning below."],
+  ["3", "Project .roborak.yaml / .roborak.yml", "The repository root. Ignored in CI see the warning below."],
   ["4", "~/.config/roborak/config.yaml", "User-wide. Where secrets belong."],
   ["5", "Built-in defaults", "Everything you did not set."],
 ];
@@ -19,10 +19,14 @@ export default function Configuration() {
       <PageHead title="Configuration" description="Every key in .roborak.yaml, the precedence chain that resolves them, and where secrets belong." />
       <H1>Configuration</H1>
       <Lead>
-        Every key is optional. <Code>.roborak.yaml</Code> in the repository root holds project
+        Every key is optional. <Code>.roborak.yaml</Code> / <Code>.roborak.yml</Code> in the repository root holds project
         settings; <Code>~/.config/roborak/config.yaml</Code> holds the ones that follow you between
         checkouts.
       </Lead>
+      <P>
+        <Code>.roborak.yaml</Code> is the canonical generated default. If both files exist,
+        only <Code>.roborak.yaml</Code> is loaded; they are not merged.
+      </P>
 
       <H2>Precedence</H2>
       <P>Highest wins. A layer only supplies the keys it actually names.</P>
