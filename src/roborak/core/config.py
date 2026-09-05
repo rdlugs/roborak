@@ -288,9 +288,10 @@ class ImpactConfig(ConfigModel):
     the one to turn off where that is not acceptable."""
 
     forge_checkout_timeout_seconds: int = Field(default=60, ge=1)
-    """Wall clock for that fetch. Separate from ``timeout_seconds`` because a
-    network clone and a local search fail on completely different scales, and one
-    number would have to be wrong for one of them."""
+    """Wall clock for that fetch -- the whole attempt, including the fallback ref
+    and the checkout, not each git command. Separate from ``timeout_seconds``
+    because a network clone and a local search fail on completely different
+    scales, and one number would have to be wrong for one of them."""
 
 
 class SupplyChainConfig(ConfigModel):

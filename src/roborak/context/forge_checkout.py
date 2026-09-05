@@ -34,10 +34,12 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from roborak.core.config import ForgeCheckout, ImpactConfig
 from roborak.core.models import ChangeSet, ForgeRef
@@ -157,29 +159,35 @@ def _fetch(
     url, from_remote = source
 
     env = _environment(url, token=None if from_remote else token)
-    timeout = float(config.forge_checkout_timeout_seconds)
-    if _run(scratch, "init", "-q", env=env, timeout=timeout) is None or (
-        _run(scratch, "remote", "add", "origin", url, env=env, timeout=timeout) is None
+    # One clock for the whole attempt. Six git invocations each allowed the full
+    # timeout would let a stage documented as a 60 second wall clock cost minutes,
+    # and the retry below would double the fetches again.
+    deadline = time.monotonic() + float(config.forge_checkout_timeout_seconds)
+    if _run(scratch, "init", "-q", env=env, deadline=deadline) is None or (
+        _run(scratch, "remote", "add", "origin", url, env=env, deadline=deadline) is None
     ):
         return Checkout(notes=[_unavailable("a temporary repository could not be created")])
 
     refs = [head]
     if forge_ref is not None and (pattern := _HEAD_REF.get(forge_ref.provider)):
         refs.append(pattern.format(number=forge_ref.number))
-    if not any(
-        _run(scratch, "fetch", "--depth=1", "--no-tags", "origin", ref, env=env, timeout=timeout)
-        is not None
-        for ref in refs
-    ):
-        return Checkout(notes=[_unavailable("the commit could not be fetched from the forge")])
+    if not _fetch_refs(scratch, refs, env, deadline=deadline):
+        # The local remote is tried with whatever the user already authenticates
+        # with, which is usually right and puts no token on the wire. When that
+        # gets nothing there is no reason to sit on the token the change came with
+        # -- but it goes only to the forge's own host, matched exactly.
+        retry = _authenticated(url, forge_ref, token) if from_remote else None
+        if retry is None or not _fetch_refs(scratch, refs, retry, deadline=deadline):
+            return Checkout(notes=[_unavailable("the commit could not be fetched from the forge")])
+        env = retry
 
-    if _run(scratch, "checkout", "-q", "FETCH_HEAD", env=env, timeout=timeout) is None:
+    if _run(scratch, "checkout", "-q", "FETCH_HEAD", env=env, deadline=deadline) is None:
         return Checkout(notes=[_unavailable("the fetched commit could not be checked out")])
 
     # `refs/pull/N/head` moves when the author pushes. Fetching it and assuming it
     # is still the sha the diff was cut from would quietly search a different
     # change, which is worse than searching nothing.
-    got = (_run(scratch, "rev-parse", "HEAD", env=env, timeout=timeout) or "").strip()
+    got = (_run(scratch, "rev-parse", "HEAD", env=env, deadline=deadline) or "").strip()
     if got != head:
         log.debug("temporary checkout is at %s, not the reviewed %s", got[:12], head[:12])
         return Checkout(
@@ -196,14 +204,44 @@ def _fetch(
     )
 
 
+def _fetch_refs(scratch: Path, refs: list[str], env: dict[str, str], *, deadline: float) -> bool:
+    """Whether any of ``refs`` could be fetched, trying them in order."""
+    return any(
+        _run(scratch, "fetch", "--depth=1", "--no-tags", "origin", ref, env=env, deadline=deadline)
+        is not None
+        for ref in refs
+    )
+
+
+def _authenticated(
+    url: str, forge_ref: ForgeRef | None, token: str | None
+) -> dict[str, str] | None:
+    """The same fetch carrying the review's token, or ``None`` if it must not.
+
+    The host is compared exactly, not through ``_matches``: that one asks whether
+    ``host`` appears anywhere in the URL, which is enough to choose where to fetch
+    from and nowhere near enough to hand over a credential -- it would accept
+    ``https://example.com.somewhere-else.net/team/project.git``. ``_source`` has
+    already established the project path, so this is the other half.
+    """
+    if not token or forge_ref is None or not url.startswith("https://"):
+        return None
+    _, host = split_host(forge_ref.host)
+    if urlparse(url).netloc.casefold() != host.casefold():
+        return None
+    return _environment(url, token=token)
+
+
 def _source(changeset: ChangeSet, repo: Path) -> tuple[str, bool] | None:
     """Where to fetch from, and whether it came from the local remote.
 
     The local ``origin`` is preferred by a distance: it is already whatever this
     user authenticates with, so a credential helper or an SSH agent keeps working
-    and no token has to be handled at all. It is used only once it agrees with the
-    change about which project this is, so a repository whose remote points
-    somewhere else entirely cannot redirect the fetch.
+    and the token is never put on the wire -- it is only the fallback, tried by
+    ``_fetch`` when those credentials turn out not to reach. The remote is used
+    only once it agrees with the change about which project this is, so a
+    repository whose remote points somewhere else entirely cannot redirect the
+    fetch.
     """
     forge_ref = changeset.forge_ref
     if forge_ref is None:
@@ -239,12 +277,19 @@ def _environment(url: str, *, token: str | None) -> dict[str, str]:
     remote depends on. What is removed here is narrower and specific -- the
     prompts. A review runs behind a spinner, and a git process waiting on a
     password nobody can see is indistinguishable from a hang.
+
+    ``GIT_TERMINAL_PROMPT`` covers git itself and nothing ssh does, so ssh is put
+    in batch mode explicitly -- including when the environment already carries a
+    ``GIT_SSH_COMMAND``, whose options are kept. An inherited command that names
+    ``BatchMode`` itself is left alone: ssh honours the first occurrence of an
+    option, so appending would not win anyway, and it is the user's choice.
     """
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_ASKPASS"] = ""
     env["SSH_ASKPASS"] = ""
-    env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+    ssh = env.get("GIT_SSH_COMMAND", "").strip() or "ssh"
+    env["GIT_SSH_COMMAND"] = ssh if "batchmode" in ssh.casefold() else f"{ssh} -oBatchMode=yes"
 
     if token and url.startswith("https://"):
         # Through git's config *environment*, never ``-c``: argv is readable by
@@ -256,8 +301,17 @@ def _environment(url: str, *, token: str | None) -> dict[str, str]:
     return env
 
 
-def _run(scratch: Path, *args: str, env: dict[str, str], timeout: float) -> str | None:
-    """Run a git command in the scratch directory, or ``None`` if it did not work."""
+def _run(scratch: Path, *args: str, env: dict[str, str], deadline: float) -> str | None:
+    """Run a git command in the scratch directory, or ``None`` if it did not work.
+
+    ``deadline`` is the monotonic instant the whole stage runs out at; each command
+    gets what is left of it. A spent budget is a failure like any other here, so
+    the caller stops at the same place it would have on a fetch that timed out.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        log.debug("no time left for git %s", args[0])
+        return None
     try:
         done = subprocess.run(
             ("git", *args),
@@ -267,7 +321,7 @@ def _run(scratch: Path, *args: str, env: dict[str, str], timeout: float) -> str 
             encoding="utf-8",
             errors="replace",
             env=env,
-            timeout=timeout,
+            timeout=remaining,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:

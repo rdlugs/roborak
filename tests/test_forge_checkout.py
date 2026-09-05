@@ -14,10 +14,12 @@ needs the https and ssh remotes a local fixture cannot also be reachable at.
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 import tempfile
 import textwrap
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -419,3 +421,139 @@ def test_a_token_is_not_attached_to_a_remote_that_is_not_https() -> None:
     env = forge_checkout._environment("git@example.com:a/b.git", token="secret")
 
     assert "GIT_CONFIG_VALUE_0" not in env
+
+
+def test_an_inherited_ssh_command_keeps_its_options_and_gains_batch_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``GIT_TERMINAL_PROMPT`` says nothing to ssh, and a CI runner sets this."""
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/key")
+
+    env = forge_checkout._environment("git@example.com:a/b.git", token=None)
+
+    assert "-i /tmp/key" in env["GIT_SSH_COMMAND"]
+    assert "BatchMode=yes" in env["GIT_SSH_COMMAND"]
+
+
+def test_an_explicit_batch_mode_choice_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ssh honours the first occurrence of an option: appending would not win."""
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -oBatchMode=no")
+
+    env = forge_checkout._environment("git@example.com:a/b.git", token=None)
+
+    assert env["GIT_SSH_COMMAND"] == "ssh -oBatchMode=no"
+
+
+# --- the wall clock ----------------------------------------------------------
+
+
+class FakeClock:
+    """``time`` as ``forge_checkout`` sees it, jumping once the setup is done.
+
+    The module's own reference is replaced rather than ``time.monotonic`` itself,
+    which ``subprocess`` uses to enforce the timeouts this is measuring.
+    """
+
+    def __init__(self, hold: int, then: float) -> None:
+        self.hold = hold
+        self.then = then
+        self.calls = 0
+
+    def monotonic(self) -> float:
+        self.calls += 1
+        return 0.0 if self.calls <= self.hold else self.then
+
+
+@pytest.fixture
+def record_git(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """Every git command the module actually spawns, in order."""
+    seen: list[tuple[str, ...]] = []
+    real = subprocess.run
+
+    def run(args, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(tuple(args))
+        return real(args, *rest, **kwargs)
+
+    monkeypatch.setattr(forge_checkout.subprocess, "run", run)
+    return seen
+
+
+def test_the_timeout_is_one_wall_clock_for_the_whole_attempt(
+    local: Path,
+    forge: Path,
+    fetch_from: Callable[[Path | str], None],
+    record_git: list[tuple[str, ...]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Six commands each allowed the full timeout would cost minutes, not seconds."""
+    fetch_from(forge)
+    # Held for the deadline itself, `init` and `remote add`; spent by the fetch.
+    monkeypatch.setattr(forge_checkout, "time", FakeClock(hold=3, then=100.0))
+
+    result = impact.analyse(
+        forge_change(head_of(forge)), local, ImpactConfig(forge_checkout_timeout_seconds=1)
+    )
+
+    assert not any("fetch" in args for args in record_git)
+    assert any("could not be fetched from the forge" in note for note in result.notes)
+
+
+def test_a_command_with_no_time_left_is_not_spawned(
+    tmp_path: Path, record_git: list[tuple[str, ...]]
+) -> None:
+    assert forge_checkout._run(tmp_path, "init", env={}, deadline=time.monotonic() - 1) is None
+    assert record_git == []
+
+
+# --- falling back to the token -----------------------------------------------
+
+
+def test_a_local_remote_that_cannot_authenticate_is_retried_with_the_token(
+    tmp_path: Path,
+    local: Path,
+    forge: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_git: list[tuple[str, ...]],
+) -> None:
+    """A private repo with no credential helper: the token roborak holds is the answer."""
+    monkeypatch.setattr(
+        forge_checkout, "_source", lambda *a, **k: (f"file://{tmp_path / 'nowhere'}", True)
+    )
+    retry = dict(os.environ) | {"ROBORAK_RETRY": "1"}
+    monkeypatch.setattr(forge_checkout, "_authenticated", lambda *a, **k: retry)
+    envs: list[str] = []
+    real = forge_checkout._run
+
+    def spy(scratch, *args, env, deadline):  # type: ignore[no-untyped-def]
+        if args[0] == "fetch":
+            envs.append(env.get("ROBORAK_RETRY", ""))
+        return real(scratch, *args, env=env, deadline=deadline)
+
+    monkeypatch.setattr(forge_checkout, "_run", spy)
+
+    result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
+
+    # Both refs unauthenticated, then both again carrying the token.
+    assert envs == ["", "", "1", "1"]
+    assert any("could not be fetched from the forge" in note for note in result.notes)
+
+
+def test_the_token_goes_to_the_forge_host_and_no_lookalike(local: Path) -> None:
+    """``_matches`` asks whether the host appears in the URL, which is no bar for a secret."""
+    ref = forge_change("a" * 40).forge_ref
+    assert ref is not None
+
+    good = forge_checkout._authenticated("https://example.com/team/project.git", ref, "secret")
+    assert good is not None
+    assert good["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer secret"
+
+    lookalike = "https://example.com.somewhere-else.net/team/project.git"
+    assert forge_checkout._authenticated(lookalike, ref, "secret") is None
+
+
+def test_no_token_and_no_https_means_no_authenticated_retry(local: Path) -> None:
+    ref = forge_change("a" * 40).forge_ref
+    assert ref is not None
+
+    assert forge_checkout._authenticated("https://example.com/team/project.git", ref, None) is None
+    assert forge_checkout._authenticated("git@example.com:team/project.git", ref, "secret") is None
