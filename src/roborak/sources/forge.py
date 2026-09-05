@@ -126,7 +126,7 @@ def parse_target(
     return Target(provider, resolved_host, resolved_project, int(reference), scheme=scheme)
 
 
-def _remote_url(remote: str, repo: Path | None) -> str | None:
+def remote_url(remote: str, repo: Path | None) -> str | None:
     """The configured URL of ``remote``, read inside ``repo``.
 
     ``repo`` matters: ``-C other/repo`` must resolve that repository's remote, not
@@ -152,7 +152,7 @@ def detect_project(
     provider: Provider, remote: str = "origin", *, repo: Path | None = None
 ) -> str | None:
     """Read the project path out of the repository's git remote."""
-    url = _remote_url(remote, repo)
+    url = remote_url(remote, repo)
     return project_from_remote(url) if url else None
 
 
@@ -185,7 +185,7 @@ def detect_host(
     The scheme is carried only when the remote is plain ``http``, which is a real
     shape for an internal instance and would otherwise be silently upgraded.
     """
-    url = _remote_url(remote, repo)
+    url = remote_url(remote, repo)
     if url is None:
         return None
     url = url.removesuffix(".git")

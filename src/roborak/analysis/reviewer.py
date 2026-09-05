@@ -98,6 +98,13 @@ class Reviewer:
     issue: Issue | None = None
     """What the change is supposed to achieve, when ``--issue`` supplied one."""
 
+    forge_token: str | None = None
+    """Credentials for the forge the change came from, when the CLI had any.
+
+    Used by one stage only: the blast-radius pass, to fetch a temporary checkout
+    of a private merge or pull request whose head this machine has never seen. It
+    is never needed when the local remote already authenticates."""
+
     _rules: list[object] | None = field(default=None, repr=False)
     _rules_key: str | None = field(default=None, repr=False)
     _usage: list[LLMCallUsage] = field(default_factory=list, repr=False)
@@ -300,7 +307,9 @@ class Reviewer:
         if not self.config.impact.enabled or self.llm is None:
             return None
         try:
-            return impact.analyse(changeset, self.repo, self.config.impact)
+            return impact.analyse(
+                changeset, self.repo, self.config.impact, forge_token=self.forge_token
+            )
         except Exception as exc:  # noqa: BLE001 - context is optional; a review is not
             log.warning("blast-radius analysis failed; reviewing without it: %s", exc)
             return ImpactMap(

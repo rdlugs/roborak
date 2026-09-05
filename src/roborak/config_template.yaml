@@ -142,6 +142,15 @@ impact:
   # budget up front so the map can never squeeze out a changed file.
   token_budget: 1500
   timeout_seconds: 10
+  # A merge or pull request is a diff; finding its unchanged consumers needs a
+  # tree. When the reviewed head commit is not in this repository, auto fetches
+  # it into a temporary checkout, searches that and deletes it. This is the only
+  # part of a review that reaches the network for repository content; off leaves
+  # the blast radius unavailable instead, as it was before. ROBORAK_IMPACT_FORGE_CHECKOUT
+  # sets the same thing from the environment, for CI that cannot edit this file.
+  forge_checkout: auto
+  # Wall clock for that fetch, separate from the local search above.
+  forge_checkout_timeout_seconds: 60
 
 output:
   # Spend a second model call on an overview of the change. It is what fills the

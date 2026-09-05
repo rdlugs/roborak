@@ -234,6 +234,8 @@ export default function Configuration() {
           "  max_snippet_lines: 6",
           "  token_budget: 1500        # prompt tokens the consumer snippets may occupy",
           "  timeout_seconds: 10",
+          "  forge_checkout: auto      # fetch a temporary checkout of a PR/MR this repo lacks",
+          "  forge_checkout_timeout_seconds: 60",
         ].join("\n")}
       />
       <P>
@@ -252,6 +254,19 @@ export default function Configuration() {
         re-export or a runtime lookup would also produce. A review of a directory with no git
         repository reports <Code>not applicable</Code>: every file is already under review, so
         there is no unchanged consumer to find.
+      </P>
+      <P>
+        A merge or pull request arrives as a diff, and finding its unchanged consumers needs the
+        surrounding tree. When the reviewed head commit is not in the local repository,{" "}
+        <Code>forge_checkout: auto</Code> fetches it into a temporary directory, searches that and
+        deletes it — nothing is written to your repository, and a checkout that does not turn out
+        to be the reviewed commit is discarded rather than searched. It is the only part of a
+        review that reaches the network for repository content, so set{" "}
+        <Code>forge_checkout: off</Code> where that is not acceptable — or{" "}
+        <Code>ROBORAK_IMPACT_FORGE_CHECKOUT=off</Code> from the environment, for CI that cannot
+        edit the file. The blast radius then reports <Code>unavailable</Code> for those reviews,
+        as it did before. A fetch that fails for any reason degrades to a note and never fails
+        the review.
       </P>
 
       <H3>review.investigate</H3>

@@ -51,7 +51,8 @@ Renderer → Publisher
   if it needs a matching renderer change, the IR lost something it should have carried.
 - `context/` — `compressor.py` (diff budget), `chunker.py` (contract-first multi-pass splitting
   of large diffs), `ast_context.py` (tree-sitter, inward from a hunk to its enclosing symbol),
-  `impact.py` (outward to dependents — the blast radius).
+  `impact.py` (outward to dependents — the blast radius), `forge_checkout.py` (a throwaway
+  clone of a PR/MR head this machine does not have, so the blast radius has a tree to search).
 - `static/` — adapters for ruff, mypy, semgrep, eslint, phpstan, actionlint, hadolint, checkov,
   osv-scanner, run with *the project's own* config; findings off changed lines are dropped, and
   what survives is fed to the model as evidence rather than reported raw.
@@ -100,7 +101,10 @@ Renderer → Publisher
   predicate deciding both what gets investigated and what gets demoted; two copies would drift.
 - **A forge review never reads a checkout that is not the reviewed change.** Dynamic reads require
   a clean tree at the reviewed head SHA; otherwise roborak uses forge-supplied file content or
-  reports the stage unavailable.
+  reports the stage unavailable. `context/forge_checkout.py` may fetch its own tree when the local
+  one lacks the head, and is held to the same bar: the fetch is verified against `head_sha`
+  afterwards — a published head ref moves — and an unverified checkout is discarded, never
+  searched and downgraded. It writes nothing to the user's repository and deletes itself either way.
 
 ## Config
 

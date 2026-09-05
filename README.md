@@ -507,6 +507,8 @@ impact:
   max_snippet_lines: 6
   token_budget: 1500      # prompt tokens the consumer snippets may occupy
   timeout_seconds: 10
+  forge_checkout: auto    # fetch a temporary checkout of a PR/MR this repo lacks; off disables
+  forge_checkout_timeout_seconds: 60
 
 output:
   walkthrough: true    # spend a second model call on the overview

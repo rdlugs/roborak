@@ -77,6 +77,18 @@ StaticExecution = Execution
 existing configuration keep meaning what they meant."""
 
 
+class ForgeCheckout(StrEnum):
+    """Whether a forge review may fetch a throwaway checkout of what it reviews.
+
+    Deliberately not an ``Execution``: nothing here runs repository-controlled
+    code, so ``trusted`` would have nothing to mean. The question is narrower --
+    may the blast-radius pass reach the network for a tree it can search.
+    """
+
+    AUTO = "auto"
+    OFF = "off"
+
+
 class InvestigateConfig(ConfigModel):
     """Bounds on the evidence-gathering stage that runs before findings are validated.
 
@@ -267,6 +279,18 @@ class ImpactConfig(ConfigModel):
     """Wall clock for the reference search, whether it runs as ``git grep`` or as the
     fallback walk. A file count bounds how many files are opened, not how long
     reading them takes."""
+
+    forge_checkout: ForgeCheckout = ForgeCheckout.AUTO
+    """Whether a merge or pull request whose head commit is not in the local
+    repository may be fetched into a temporary checkout to search. ``auto`` fetches
+    one; ``off`` leaves the stage unavailable, as it was before. This is the only
+    part of a review that reaches the network for repository *content*, so it is
+    the one to turn off where that is not acceptable."""
+
+    forge_checkout_timeout_seconds: int = Field(default=60, ge=1)
+    """Wall clock for that fetch. Separate from ``timeout_seconds`` because a
+    network clone and a local search fail on completely different scales, and one
+    number would have to be wrong for one of them."""
 
 
 class SupplyChainConfig(ConfigModel):
@@ -641,6 +665,8 @@ def _env_layer() -> dict[str, Any]:
         layer.setdefault("verification", {})["execution"] = execution
     if (impact_off := os.getenv("ROBORAK_NO_IMPACT")) and impact_off not in {"0", "false", ""}:
         layer.setdefault("impact", {})["enabled"] = False
+    if checkout := os.getenv("ROBORAK_IMPACT_FORGE_CHECKOUT"):
+        layer.setdefault("impact", {})["forge_checkout"] = checkout
     supply_off = os.getenv("ROBORAK_NO_SUPPLY_CHAIN")
     if supply_off and supply_off not in {"0", "false", ""}:
         layer.setdefault("supply_chain", {})["enabled"] = False
