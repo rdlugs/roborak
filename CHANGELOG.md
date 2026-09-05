@@ -8,7 +8,7 @@ flags, config schema and JSON output may change in a minor release.
 The release workflow reads the section for the tag being published and uses it as
 the GitHub Release body, so the `## [x.y.z] - date` heading format is load-bearing.
 
-## [Unreleased]
+## [0.8.0] - 2026-09-06
 
 ### Added
 
@@ -460,7 +460,8 @@ works without a checkout.
 - **Any LiteLLM model**, with keys from the environment or the config file.
 - `--version` / `-V` on the CLI.
 
-[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/rdlugs/roborak/releases/tag/v0.8.0
 [0.7.0]: https://github.com/rdlugs/roborak/releases/tag/v0.7.0
 [0.6.0]: https://github.com/rdlugs/roborak/releases/tag/v0.6.0
 [0.5.0]: https://github.com/rdlugs/roborak/releases/tag/v0.5.0
