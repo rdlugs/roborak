@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from roborak.core.buckets import SUMMARY_BUCKETS, Bucket, group
-from roborak.core.models import Finding, ReviewResult, Walkthrough
+from roborak.core.models import Finding, FixVerdict, ReviewResult, Walkthrough
 from roborak.core.severity import Kind
+from roborak.publish import threads as thread_api
+from roborak.publish.threads import OpenThread, open_threads
 from roborak.render import markdown
 from roborak.sources.base import SourceError
 from roborak.sources.discussion import is_bot
@@ -43,6 +46,14 @@ class PublishReport:
         self.summary_updated = False
         """An overview roborak had already published was edited in place rather
         than a second one appended beside it."""
+
+        self.resolved: list[str] = []
+        """Threads closed because later commits were shown to have fixed them."""
+
+        self.resolution_failed: list[tuple[str, str]] = []
+        """Threads whose evidence reply or resolve call did not land, and why. A
+        thread is listed here rather than in ``resolved`` however far the attempt
+        got: nothing may record a closure the forge did not actually make."""
 
         self.status_posted = False
         self.status_skipped: str | None = None
@@ -140,6 +151,81 @@ def publish_summary(
     return comment_url(answer, client.target.provider, result)
 
 
+Resolution = tuple[OpenThread, FixVerdict]
+"""One open thread and the verdict roborak reached about it."""
+
+
+def resolve_fixed(
+    client: ForgeClient,
+    target: Target,
+    resolutions: Sequence[Resolution],
+    report: PublishReport,
+    result: ReviewResult,
+) -> None:
+    """Say what fixed each thread, then close it. Never the second without the first.
+
+    The ordering is the whole guarantee. A thread closed without the reply that
+    explains why is a finding that vanished, and no amount of local bookkeeping
+    would tell a reader where it went -- so a failed reply skips the resolve, and
+    the thread stays open with its evidence still owed.
+
+    The two calls fail independently and are recovered independently. The reply
+    leaves a marker on the thread, so a run that replied and then failed to
+    resolve retries only the resolve; a thread that was resolved never comes back
+    at all. Both make a repeated run a no-op rather than a second copy.
+    """
+    for thread, verdict in resolutions:
+        if not verdict.attributable:
+            continue
+        if not thread.replied:
+            body = markdown.resolution_markdown(
+                verdict,
+                sorted(thread.fingerprints)[0],
+                commit_url=_commit_url_builder(target, result),
+            )
+            try:
+                thread_api.reply(client, target, thread, body)
+            except SourceError as exc:
+                log.warning("could not reply to %s: %s", thread.location, exc)
+                report.resolution_failed.append((thread.location, str(exc)))
+                continue
+
+        try:
+            thread_api.resolve(client, target, thread)
+        except SourceError as exc:
+            log.warning("could not resolve %s: %s", thread.location, exc)
+            report.resolution_failed.append((thread.location, str(exc)))
+            continue
+        report.resolved.append(thread.location)
+
+
+_CHANGE_PATH = re.compile(r"/(?:-/merge_requests|pull)/\d+/?$")
+
+
+def _commit_url_builder(target: Target, result: ReviewResult) -> Callable[[str], str | None]:
+    """How to link one commit on whichever forge this change came from.
+
+    Derived from the merge request's own web URL where the forge gave one: it is
+    the only string that is certainly right, since a GitLab target may address its
+    project by numeric id and a link built from that would 404. Falling back to
+    the target's project path covers the forge that named no URL.
+    """
+    changeset = result.changeset
+    ref = changeset.forge_ref if changeset else None
+    web_url = (ref.web_url if ref else "") or ""
+    project_url = (
+        _CHANGE_PATH.sub("", web_url)
+        if web_url
+        else (f"{target.scheme}://{target.host}/{target.project}")
+    )
+    infix = "/-/commit/" if target.provider == "gitlab" else "/commit/"
+
+    def build(sha: str) -> str | None:
+        return f"{project_url}{infix}{sha}" if project_url else None
+
+    return build
+
+
 def comment_url(answer: Any, provider: str, result: ReviewResult) -> str | None:
     """Where the comment the forge just wrote can be read.
 
@@ -202,14 +288,18 @@ class RemoteState:
 
     fingerprints: frozenset[str] = frozenset()
     summary: SummaryRef | None = None
+    open_threads: tuple[OpenThread, ...] = ()
+    """Actionable threads an earlier run opened and nobody has closed."""
 
 
 def remote_state(target: Target, token: str) -> RemoteState:
     """Read what an earlier run published: inline identities and the overview.
 
-    One pass for both. The payloads that carry the fingerprints are the same ones
-    that carry the summary's id, and fetching them twice would double the cost of
-    every ``--post`` run.
+    One pass for all three. The payloads that carry the fingerprints are the same
+    ones that carry the summary's id, and fetching them twice would double the cost
+    of every ``--post`` run. The open threads ride along for the same reason: on
+    GitLab they are the discussions this sweep already walks, and on GitHub they
+    cost the one GraphQL call REST has no answer for.
 
     When more than one overview survives the ownership test, the newest one wins.
     Traversal order is not recency: GitLab hands back notes newest-first, and the
@@ -221,6 +311,7 @@ def remote_state(target: Target, token: str) -> RemoteState:
 
     with ForgeClient(target, token) as client:
         viewer = _viewer(client)
+        threads = open_threads(client, target, viewer)
         if target.provider == "github":
             root = f"/repos/{target.project}"
             surfaces = [
@@ -251,6 +342,7 @@ def remote_state(target: Target, token: str) -> RemoteState:
     return RemoteState(
         fingerprints=frozenset(identity for body in bodies for identity in fingerprints_in(body)),
         summary=max(candidates, key=lambda found: found[:2])[2] if candidates else None,
+        open_threads=tuple(threads),
     )
 
 

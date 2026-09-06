@@ -164,6 +164,23 @@ export default function HowItWorks() {
         on local state.
       </P>
 
+      <H2>A thread is resolved only after the evidence that closes it has landed</H2>
+      <P>
+        A later <Code>--post</Code> revisits the actionable threads roborak opened and has not
+        closed, reads the commits between each thread&apos;s own anchor and the current head, and
+        asks whether they actually fix what was reported. Where they do, it replies naming those
+        commits and summarising what changed, and only then resolves the thread &mdash; a comment
+        closed without the reasoning that closed it is a finding that vanished.
+      </P>
+      <P>
+        Everything short of a verified, attributable fix leaves the thread open: an untrusted
+        checkout, a revision a shallow clone never fetched, a range no commit touched the file in,
+        a model that could not tell. Human comments, the summary, nitpicks and already-resolved
+        threads are never touched, and the markers roborak leaves make a repeated run a no-op
+        rather than a second copy. On GitHub this uses the GraphQL API, which is the only one that
+        can resolve a review thread at all. <Code>--repost</Code> skips the pass.
+      </P>
+
       <H2>Existing discussion is context, not instruction</H2>
       <P>
         Forge reviews include bounded unresolved human comments by default, while dropping system

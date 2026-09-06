@@ -20,11 +20,13 @@ from roborak.core.models import ChangeSet, Finding, ReviewResult
 from roborak.core.verdict import gate_for
 from roborak.publish.base import (
     PublishReport,
+    Resolution,
     SummaryRef,
     comment_url,
     finding_markdown,
     inline_findings,
     publish_summary,
+    resolve_fixed,
     summarised_findings,
     summary_markdown,
 )
@@ -51,6 +53,9 @@ class GitHubPublisher:
 
     post_check: bool = True
     """Post the pre-merge verdict as a commit status the PR can be gated on."""
+
+    resolutions: tuple[Resolution, ...] = ()
+    """Threads an earlier run opened that later commits were shown to have fixed."""
 
     def publish(self, result: ReviewResult) -> PublishReport:
         report = PublishReport()
@@ -87,8 +92,15 @@ class GitHubPublisher:
         if changeset.forge_ref.head_sha:
             payload["commit_id"] = changeset.forge_ref.head_sha
 
-        # Nothing to say and no check to post: the client is never opened.
-        if not comments and inline_only and not self.post_summary and not self.post_check:
+        # Nothing to say, nothing to close and no check to post: the client is
+        # never opened.
+        if (
+            not comments
+            and inline_only
+            and not self.post_summary
+            and not self.post_check
+            and not self.resolutions
+        ):
             return report
 
         issue_comments = f"/repos/{self.target.project}/issues/{self.target.number}/comments"
@@ -108,6 +120,10 @@ class GitHubPublisher:
                     report.summary_posted = self.post_summary and not inline_only
                     if report.summary_posted:
                         summary_url = comment_url(answer, self.target.provider, result)
+
+            # Before the summary, so the overview a reader opens next is the one
+            # written after the threads it describes were closed.
+            resolve_fixed(client, self.target, self.resolutions, report, result)
 
             if self.post_summary and (self.summary_ref is not None or rejected is not None):
                 summary_url = publish_summary(

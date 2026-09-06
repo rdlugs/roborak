@@ -18,10 +18,12 @@ from roborak.core.models import ChangeSet, Finding, ForgeRef, ReviewResult
 from roborak.core.verdict import gate_for
 from roborak.publish.base import (
     PublishReport,
+    Resolution,
     SummaryRef,
     finding_markdown,
     inline_findings,
     publish_summary,
+    resolve_fixed,
     summarised_findings,
 )
 from roborak.publish.status import post_status
@@ -48,6 +50,9 @@ class GitLabPublisher:
     post_check: bool = True
     """Post the pre-merge verdict as a commit status the MR can be gated on."""
 
+    resolutions: tuple[Resolution, ...] = ()
+    """Threads an earlier run opened that later commits were shown to have fixed."""
+
     def publish(self, result: ReviewResult) -> PublishReport:
         report = PublishReport()
         changeset = result.changeset
@@ -61,6 +66,10 @@ class GitLabPublisher:
                     self._post_one(client, base, finding, changeset, changeset.forge_ref, report)
 
             report.summarised.extend(summarised_findings(result))
+
+            # Before the summary, so the overview a reader opens next is the one
+            # written after the threads it describes were closed.
+            resolve_fixed(client, self.target, self.resolutions, report, result)
 
             summary_url: str | None = None
             if self.post_summary:

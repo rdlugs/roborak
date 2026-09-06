@@ -282,6 +282,81 @@ believe but could not prove; it is never grounds to block a merge.
     return RenderedPrompt(system=system, user=yaml.safe_dump(payload, sort_keys=False))
 
 
+def build_resolution_prompt(
+    *,
+    threads: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
+    limits: dict[str, int],
+    can_search: bool,
+    final_round: bool,
+) -> RenderedPrompt:
+    """Ask whether later commits actually fixed findings roborak already published.
+
+    Shaped like the investigation prompt, and pointed the other way. That one asks
+    "is this real?" about a candidate nobody has seen; this asks "is this still
+    real?" about one a reader has already been shown and may have acted on.
+
+    The asymmetry between the answers is the whole prompt. Leaving a fixed thread
+    open wastes a click. Closing one that is not fixed buries a finding a reviewer
+    was relying on being visible, under a claim that it was checked. So the
+    instructions push every doubt onto ``inconclusive``, and say plainly that
+    silence about a thread is the safe answer rather than a failure.
+    """
+    tools = ["read_file(path, start, end) - a bounded line range, numbered as the file reads"]
+    if can_search:
+        tools.append("search(pattern, regex, path) - git grep within the repository")
+
+    closing = (
+        "This is the final round: answer with `verdicts` only."
+        if final_round
+        else "Answer with `requests` to look further, or `verdicts` when you are ready."
+    )
+
+    system = f"""You decide whether code-review findings have since been fixed.
+
+Each thread below is a comment roborak published on this change at an earlier
+revision, together with every commit that has touched that file since, and the
+combined diff of those commits. The author may have fixed the problem, worked
+around it, made it worse, or changed something unrelated in the same file.
+
+Available operations, against the current state of the repository:
+{chr(10).join(f"- {tool}" for tool in tools)}
+
+You cannot run commands, write files, or reach the network.
+
+Reply with YAML, one of these two shapes and never both:
+
+requests:
+  - tool: read_file
+    path: src/thing.py
+    start: 40
+    end: 90
+
+verdicts:
+  - thread: t1
+    state: fixed | not_fixed | inconclusive
+    commits: [<sha from that thread's own commit list>]
+    summary: what the commits changed, and why that addresses the finding
+
+Use `fixed` only when you can point at what changed and say why it addresses the
+specific problem the comment described. Code that merely moved, was reformatted,
+or was edited nearby is not a fix. Neither is a finding you can no longer locate:
+a defect you cannot find is one you have not checked.
+
+Use `not_fixed` when the problem is demonstrably still there, and `inconclusive`
+whenever you cannot tell. Saying nothing about a thread is equivalent to
+`inconclusive` and is always an acceptable answer -- an open comment costs a
+reviewer one click, while a comment closed in error is a finding nobody sees
+again. `commits` may name only shas from that thread's own list.
+
+{closing}
+
+{UNTRUSTED_DATA_RULE}
+"""
+    payload = {"limits": limits, "threads": threads, "operations": operations}
+    return RenderedPrompt(system=system, user=yaml.safe_dump(payload, sort_keys=False))
+
+
 def build_reconciliation_prompt(
     *,
     issue: Issue | None,

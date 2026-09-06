@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from roborak.analysis import validator
+from roborak.analysis.resolution import verify_fixes as _verify_fixes
 from roborak.context import impact
 from roborak.context.chunker import (
     ChunkStrategy,
@@ -26,6 +27,7 @@ from roborak.core.models import (
     ChangedFile,
     ChangeSet,
     Finding,
+    FixVerdict,
     ImpactMap,
     ImpactStatus,
     InvestigationReport,
@@ -58,6 +60,7 @@ from roborak.llm.prompt import (
     build_review_prompt,
     render_file_diff,
 )
+from roborak.publish.threads import OpenThread
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
 from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
@@ -230,6 +233,39 @@ class Reviewer:
         except (LLMError, ParseError) as exc:
             log.warning("overview pass failed; reporting findings without one: %s", exc)
             return None
+
+    def verify_fixes(
+        self,
+        threads: list[OpenThread],
+        changeset: ChangeSet,
+        *,
+        fallback_base: str = "",
+    ) -> list[FixVerdict]:
+        """Which of roborak's own open threads later commits have since fixed.
+
+        Non-fatal like the overview pass, and for a sharper reason: this one is
+        about comments a reviewer is already reading. A failure here leaves every
+        thread exactly as it was, which is the outcome a reader loses nothing by.
+
+        Bounded by the investigation section rather than one of its own. It is the
+        same kind of pass with the same appetite -- a couple of rounds against a
+        read-only boundary -- and a second set of near-identical numbers would only
+        be one more thing to keep in step.
+        """
+        if self.llm is None or not threads:
+            return []
+        try:
+            return _verify_fixes(
+                threads,
+                changeset,
+                repo=self.repo,
+                config=self.config.review.investigate,
+                complete=lambda system, user: self._complete("resolution", system, user).text,
+                fallback_base=fallback_base,
+            )
+        except Exception as exc:  # noqa: BLE001 - a thread left open costs nothing
+            log.warning("resolution pass failed; leaving every thread open: %s", exc)
+            return []
 
     def _walkthrough_on(self, changeset: ChangeSet) -> Walkthrough | None:
         """One describe call over ``changeset``, which this *will* compress."""

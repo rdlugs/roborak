@@ -210,13 +210,22 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
 
 
 INVESTIGATION_TOOLS = frozenset({"read_file", "search", "show_diff", "find_symbol"})
+
+RESOLUTION_TOOLS = frozenset({"read_file", "search"})
+"""The resolution pass asks a narrower question than the investigation does -- is
+the reported defect still in the tree? -- and the two operations that answer it
+are reading the file and looking for what used to be there. The history it needs
+is handed to it up front rather than fetched on request, because the revisions
+bounding that history are roborak's to choose and never the model's."""
 """The operations a model may ask for. An unknown name is refused rather than
 guessed at, so a hallucinated tool cannot become a differently-shaped read."""
 
 DISPOSITIONS = frozenset({"confirm", "revise", "drop"})
 
 
-def parse_investigation_requests(text: str, *, limit: int) -> list[dict[str, str]]:
+def parse_investigation_requests(
+    text: str, *, limit: int, tools: frozenset[str] = INVESTIGATION_TOOLS
+) -> list[dict[str, str]]:
     """The operations a model asked for this round, validated into flat argument maps.
 
     Shape only -- whether a path is inside the repository is the execution
@@ -234,7 +243,7 @@ def parse_investigation_requests(text: str, *, limit: int) -> list[dict[str, str
         if not isinstance(entry, dict):
             continue
         tool = _as_str(entry.get("tool"))
-        if tool not in INVESTIGATION_TOOLS:
+        if tool not in tools:
             log.debug("skipping unknown investigation tool: %r", tool)
             continue
         arguments = {
@@ -298,6 +307,83 @@ def parse_investigation_decisions(text: str, *, valid_ids: set[str]) -> list[dic
             decision["revision"] = _coerce_revision(entry, evidence_only=True)
         decisions.append(decision)
     return decisions
+
+
+FIX_STATES = frozenset({"fixed", "not_fixed", "inconclusive"})
+
+MAX_RESOLUTION_COMMITS = 10
+"""Commits one reply may attribute a fix to. A model naming more than this is
+describing the branch rather than the fix."""
+
+
+def parse_resolution_verdicts(
+    text: str, *, valid_ids: set[str], known_commits: dict[str, set[str]]
+) -> dict[str, dict[str, Any]]:
+    """What the model concluded about each open thread, keyed by roborak's own ids.
+
+    Two things are refused rather than coerced, because both would turn "we could
+    not tell" into "we checked". A verdict naming an id we did not issue is
+    discarded, so a model cannot rename one thread's evidence onto another. And a
+    commit roborak did not put in front of it is discarded too: attribution is the
+    part a reader will click, and a plausible-looking sha that never touched the
+    file is worse than no sha at all.
+
+    Anything absent, malformed or unrecognised simply does not appear in the
+    result, and the caller reads a missing thread as ``inconclusive``.
+    """
+    data = load_yaml_mapping(text)
+    raw = data.get("verdicts")
+    if not isinstance(raw, list):
+        return {}
+
+    verdicts: dict[str, dict[str, Any]] = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        thread = _as_str(entry.get("thread"))
+        state = _as_str(entry.get("state")).lower()
+        if thread not in valid_ids or thread in verdicts or state not in FIX_STATES:
+            log.debug("discarding resolution verdict: thread=%r state=%r", thread, state)
+            continue
+        commits = _known_only(_as_commits(entry.get("commits")), known_commits.get(thread, set()))
+        verdicts[thread] = {
+            "state": state,
+            "commits": commits,
+            "summary": _as_str(entry.get("summary"))[:MAX_SUMMARY_CHARS],
+        }
+    return verdicts
+
+
+MAX_SUMMARY_CHARS = 600
+"""A resolution reply says what changed, not what the change was for."""
+
+
+def _known_only(named: list[str], allowed: set[str]) -> list[str]:
+    """Each named revision as the full sha roborak knows, dropping the rest.
+
+    The prompt shows abbreviated shas because a full one is unreadable in a list,
+    so a model quoting what it was shown is quoting a prefix. Expanding it here
+    keeps the reply's links pointing at real commits, and an ambiguous prefix is
+    dropped rather than guessed at.
+    """
+    resolved: list[str] = []
+    for name in named:
+        matches = [full for full in sorted(allowed) if full.startswith(name)]
+        if len(matches) == 1 and matches[0] not in resolved:
+            resolved.append(matches[0])
+    return resolved[:MAX_RESOLUTION_COMMITS]
+
+
+def _as_commits(value: Any) -> list[str]:
+    """Revision names out of a YAML list, shape-checked before anything else."""
+    if not isinstance(value, list):
+        return []
+    return [
+        text for item in value if (text := _as_str(item).strip().lower()) and _SHA_RE.match(text)
+    ]
+
+
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 def _coerce_revision(entry: dict[str, Any], *, evidence_only: bool = False) -> dict[str, Any]:

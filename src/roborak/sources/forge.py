@@ -69,9 +69,32 @@ class Target:
         return f"{self.scheme}://{self.host}/api/v3"
 
     @property
+    def graphql_url(self) -> str:
+        """Where GitHub's GraphQL API lives, which is not under ``api_base``.
+
+        github.com hangs it off the API host; an Enterprise instance puts it
+        *beside* ``/api/v3`` rather than under it, so appending to ``api_base``
+        would reach ``/api/v3/graphql``, which does not exist. GitLab has one
+        too, but roborak has no use for it: everything it needs is REST there.
+        """
+        if self.host in {"github.com", "www.github.com"}:
+            return "https://api.github.com/graphql"
+        return f"{self.scheme}://{self.host}/api/graphql"
+
+    @property
     def encoded_project(self) -> str:
         """GitLab addresses projects by URL-encoded path."""
         return quote(self.project, safe="")
+
+    @property
+    def owner(self) -> str:
+        """The ``owner`` half of a GitHub ``owner/name`` project path."""
+        return self.project.split("/", 1)[0]
+
+    @property
+    def name(self) -> str:
+        """The ``name`` half of a GitHub ``owner/name`` project path."""
+        return self.project.split("/", 1)[-1]
 
 
 _GITLAB_URL = re.compile(r"^(https?)://([^/]+)/(.+?)/-/merge_requests/(\d+)")
@@ -324,6 +347,35 @@ class ForgeClient:
 
     def patch(self, path: str, payload: dict[str, Any]) -> Any:
         return self._request("PATCH", path, json=payload)
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        """One GraphQL call against GitHub, returning the ``data`` half.
+
+        REST cannot group a pull request's review comments into threads, cannot
+        say whether a thread is resolved, and has no way at all to resolve one.
+        All three are GraphQL-only, so the thread work has no REST path to take.
+
+        A GraphQL failure answers ``200`` with an ``errors`` array, which the
+        status-code handling in ``_send`` cannot see. Reading that as success is
+        the dangerous shape here -- a token refused permission to resolve would
+        report the thread closed -- so a non-empty ``errors`` raises instead.
+        """
+        answer = self._request(
+            "POST",
+            self.target.graphql_url,
+            json={
+                "query": query,
+                "variables": variables,
+            },
+        )
+        if not isinstance(answer, dict):
+            raise SourceError(f"{self.target.host} returned a non-object GraphQL response.")
+        if errors := answer.get("errors"):
+            detail = "; ".join(
+                str(error.get("message") or "") for error in errors if isinstance(error, dict)
+            )
+            raise SourceError(f"{self.target.host} rejected a GraphQL request: {detail[:300]}")
+        return answer.get("data")
 
     def get_raw(self, path: str, **params: Any) -> bytes:
         """Fetch a raw repository blob while retaining the normal error handling."""

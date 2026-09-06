@@ -30,7 +30,7 @@ import base64
 import re
 import textwrap
 import zlib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from enum import StrEnum
 from pathlib import Path
 
@@ -48,6 +48,7 @@ from roborak.core.icons import CATEGORY_LABEL, EFFORT_LABEL, SEVERITY_ICON, SEVE
 from roborak.core.models import (
     DependencyChangeKind,
     Finding,
+    FixVerdict,
     ImpactMap,
     ImpactStatus,
     InvestigationReport,
@@ -76,6 +77,13 @@ FINGERPRINT_V2_PREFIX = "roborak:v2"
 means a published review carries a record of itself that does not depend on
 local state."""
 REVIEW_MARKER = "roborak:review"
+RESOLUTION_MARKER_PREFIX = "roborak:fixed"
+"""Marks the evidence reply that precedes resolving a thread.
+
+It is the only record that the reply was ever posted. Local state would not do:
+the machine that publishes the review is routinely not the one that published the
+finding, and in CI it is never the same machine twice. Reading it back off the
+thread is what stops a second run appending a second copy of the same evidence."""
 FLOW_MARKER_PREFIX = "roborak:flow"
 WALKTHROUGH_MARKER_PREFIX = "roborak:walkthrough"
 """Carries the structured overview along with the comment that renders it.
@@ -775,6 +783,46 @@ def finding_markdown(
         lines += ["", confidence]
 
     return "\n".join(lines)
+
+
+def resolution_markdown(
+    verdict: FixVerdict,
+    fingerprint: str,
+    *,
+    commit_url: Callable[[str], str | None] | None = None,
+) -> str:
+    """The evidence reply roborak leaves before it resolves one of its threads.
+
+    Rendered here rather than assembled in ``publish`` for the same reason every
+    other published body is: there is one renderer, and a reply built beside the
+    API call would be the one document nobody had read before it was posted.
+
+    The reply is written to be useful even to a reader who disagrees with it. It
+    names the commits it is attributing the fix to, so the claim can be checked
+    against the history rather than taken on trust, and the marker at the end is
+    what stops a later run saying all of it again.
+    """
+    links = [_commit_link(sha, commit_url) for sha in verdict.commits]
+    attribution = "Fixed in " + ", ".join(links) + "." if links else "Fixed by a later commit."
+
+    return "\n".join(
+        [
+            f"{icons.PASSED} **{attribution}**",
+            "",
+            verdict.summary.strip(),
+            "",
+            "_Resolving this thread. Reopen it if the finding still stands._",
+            "",
+            f"<!-- {RESOLUTION_MARKER_PREFIX}:{fingerprint} -->",
+        ]
+    )
+
+
+def _commit_link(sha: str, commit_url: Callable[[str], str | None] | None) -> str:
+    """One commit as a short, linked sha, or a bare one when there is no URL."""
+    short = f"`{sha[:8]}`"
+    url = commit_url(sha) if commit_url else None
+    return f"[{short}]({url})" if url else short
 
 
 def _lead(finding: Finding, *, form: Form) -> str:
