@@ -189,6 +189,10 @@ output:
 `review.block_on` is not `review.severity_floor`: the floor decides what is *reported* at
 all, `block_on` decides what *blocks*.
 
+Configurable [pre-merge checks](#pre-merge-checks) reach the same verdict and the same forge
+status: one set to `error` blocks a change on its own, with no finding anywhere near the floor.
+None of them move the exit code, which stays `--fail-on`'s alone.
+
 **Blocking takes evidence.** A `critical` or `major` model finding has to say what makes it
 true - the trigger and the failure path, a violated contract, or a reproduction - not just how
 confident it feels. One that cannot is demoted to a `minor` `verification_needed`: still
@@ -220,6 +224,48 @@ gate on it. Re-running a review replaces that status rather than stacking anothe
 
 A token that may comment but not set a status is not an error: the review still publishes
 and roborak reports the skipped check.
+
+### Pre-merge checks
+
+Four checks about the change rather than about the code - the questions a reviewer asks before
+reading a diff at all. Each takes a level:
+
+| Level | What it does |
+| --- | --- |
+| `off` | Does not run, render, or reach the verdict. |
+| `warning` | Reported in the report and the summary comment; never blocks. |
+| `error` | Also blocks the pre-merge verdict and the forge commit status. |
+
+```yaml
+pre_merge:
+  docstring_coverage:
+    level: warning
+    threshold: 0.8    # fraction of touched symbols that must be documented
+  title:
+    level: warning
+  description:
+    level: warning
+  linked_issue:
+    level: warning
+```
+
+**Docstring coverage** measures the symbols the diff *touched*, not whole files, so a one-line
+fix in a legacy module is not judged by that module. It works for every language a tree-sitter
+grammar is available for: a leading string in the body, or a comment on the line directly above.
+A file with no grammar is left out of the count rather than counted as undocumented.
+
+**Title**, **description** and **linked issue** are deterministic gates - present, long enough,
+not a placeholder, not an untouched template, naming an issue through `Closes #123`, an issue
+URL or `--issue`. They run under `--no-llm` too, so a policy you gate merges on does not depend
+on a provider being reachable. On a local diff, which has no request body, the description and
+linked-issue checks report *not applicable* rather than failing.
+
+Raise one of the three text checks to `error` and roborak also asks the model whether the title
+and description actually describe the change. That opinion is reported but never blocks on its
+own: an opinion is not evidence, which is the same bar findings are held to above.
+
+Every check is off with `ROBORAK_NO_PRE_MERGE=1`, or one at a time with
+`ROBORAK_TITLE_CHECK=error` and its siblings.
 
 ### Other commands
 
@@ -519,6 +565,17 @@ verification:
   max_commands: 4      # ceiling on how many commands one review runs
   max_output_lines: 40 # per command; a citation, not a build log
   feed_to_llm: true
+
+pre_merge:            # off | warning | error; only `error` blocks the verdict
+  docstring_coverage:
+    level: warning
+    threshold: 0.8    # fraction of diff-touched symbols that must be documented
+  title:
+    level: warning
+  description:
+    level: warning
+  linked_issue:
+    level: warning
 
 impact:
   enabled: true           # trace changed symbols out to their consumers

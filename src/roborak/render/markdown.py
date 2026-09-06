@@ -46,6 +46,10 @@ from roborak.core.buckets import (
 )
 from roborak.core.icons import CATEGORY_LABEL, EFFORT_LABEL, SEVERITY_ICON, SEVERITY_LABEL
 from roborak.core.models import (
+    CheckId,
+    CheckOutcome,
+    CheckResult,
+    ChecksReport,
     DependencyChangeKind,
     Finding,
     FixVerdict,
@@ -62,7 +66,7 @@ from roborak.core.models import (
     Walkthrough,
 )
 from roborak.core.severity import EVIDENCE_LABEL, Kind, Severity
-from roborak.core.verdict import Verdict, gate_for, verdict_requested
+from roborak.core.verdict import Gate, Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.prompt_only import (
@@ -178,6 +182,9 @@ def render(
 
     if investigation := _investigation_section(result.investigation, form=form):
         sections.append(investigation)
+
+    if checks := _checks_section(result.checks, form=form):
+        sections.append(checks)
 
     if not grouped:
         sections.append(_nothing_to_report(result))
@@ -300,6 +307,54 @@ MAX_IMPACT_CONSUMERS_SHOWN = 4
 
 The row is a pointer, not the evidence; a reader who needs all fifteen callers
 wants their editor, not a table cell."""
+
+
+_OUTCOME_LABEL: dict[CheckOutcome, str] = {
+    CheckOutcome.PASSED: "Passed",
+    CheckOutcome.FAILED: "Failed",
+    CheckOutcome.NOT_APPLICABLE: "Not applicable",
+    CheckOutcome.INCONCLUSIVE: "Inconclusive",
+}
+
+_CHECK_LABEL: dict[CheckId, str] = {
+    CheckId.DOCSTRING_COVERAGE: "Docstring coverage",
+    CheckId.TITLE: "Title",
+    CheckId.DESCRIPTION: "Description",
+    CheckId.LINKED_ISSUE: "Linked issue",
+}
+
+
+def _checks_section(report: ChecksReport | None, *, form: Form) -> str:
+    """What the configurable pre-merge checks concluded.
+
+    Renders every check that ran, passing ones included. A section listing only
+    failures would leave a reader unable to tell a check that passed from one this
+    project switched off, which is the difference between "we looked" and "nobody
+    asked" -- the same distinction every other stage section here preserves.
+    """
+    if report is None or (not report.results and not report.notes):
+        return ""
+
+    body = _check_rows(report.results) if report.results else ""
+    notes = "\n\n".join(_wrap(f"_{note}_") for note in report.notes)
+    inner = "\n\n".join(part for part in (body, notes) if part)
+    blocking = len(report.blocking)
+    named = f" - {blocking} blocking" if blocking else ""
+    summary = f"{icons.INFO} Pre-merge checks{named}"
+    return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
+
+
+def _check_rows(results: list[CheckResult]) -> str:
+    rows = ["| Check | Level | Result | Detail |", "| --- | --- | --- | --- |"]
+    for result in results:
+        detail = result.summary
+        if result.advisory:
+            detail = f"{detail} (advisory)"
+        rows.append(
+            f"| {_CHECK_LABEL[result.check]} | {result.level} "
+            f"| {_OUTCOME_LABEL[result.outcome]} | {_escape_cell(detail)} |"
+        )
+    return "\n".join(rows)
 
 
 def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
@@ -1168,6 +1223,8 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     lines.append(f"Findings: {gate.counts_line()}.")
     if note := _verification_verdict_note(result.verification):
         lines.append(note)
+    if note := _checks_verdict_note(gate, result.checks):
+        lines.append(note)
     if not gate.explicit:
         lines.append(f"_Not gated: pass `--fail-on {gate.floor}` for the exit code too._")
     body = "\n\n".join(lines)
@@ -1179,6 +1236,31 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     if form is Form.PUBLISHED:
         body = _callout(_VERDICT_CALLOUT[gate.verdict], body)
     return _details(_VERDICT_TITLE[gate.verdict], body, level=2, collapsible=form is Form.PUBLISHED)
+
+
+def _checks_verdict_note(gate: Gate, report: ChecksReport | None) -> str:
+    """Which pre-merge checks the verdict is and is not counting.
+
+    A failed check that does not block has to say so where the verdict is stated,
+    not only in its own section: "blocked" or "pass" printed above a table with a
+    red row in it is a sentence a reader will take as covering both.
+    """
+    if report is None:
+        return ""
+    if gate.failed_checks:
+        named = ", ".join(_CHECK_LABEL[check.check] for check in gate.failed_checks)
+        return f"Blocked by pre-merge checks configured as `error`: {named}."
+    notes: list[str] = []
+    if warnings := report.warnings:
+        named = ", ".join(_CHECK_LABEL[check.check] for check in warnings)
+        notes.append(f"_Not counted: {named} failed at `warning`, which does not block._")
+    if advisories := report.advisories:
+        named = ", ".join(f"{_CHECK_LABEL[c.check]} (`{c.level}`)" for c in advisories)
+        notes.append(
+            f"_Not counted: {named} failed on the model's opinion alone, "
+            f"which never blocks whatever the configured level._"
+        )
+    return "\n\n".join(notes)
 
 
 def _verification_verdict_note(report: VerificationReport | None) -> str:

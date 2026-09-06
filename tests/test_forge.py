@@ -15,8 +15,18 @@ import httpx
 import pytest
 
 from roborak.core.config import ForgeConfig, load_config
-from roborak.core.models import ChangeSet, Finding, ForgeRef, Issue, ReviewResult
-from roborak.core.severity import Category, Kind, Severity
+from roborak.core.models import (
+    ChangeSet,
+    CheckId,
+    CheckOutcome,
+    CheckResult,
+    ChecksReport,
+    Finding,
+    ForgeRef,
+    Issue,
+    ReviewResult,
+)
+from roborak.core.severity import Category, Enforcement, Kind, Severity
 from roborak.publish.base import finding_markdown, summary_markdown
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
@@ -1535,6 +1545,57 @@ def test_a_clean_review_posts_a_passing_status(monkeypatch):
     )
     result = make_result()
     result.findings = []
+
+    GitHubPublisher(target=target, token="tok").publish(result)
+
+    assert status_calls(posted)[0][1]["state"] == "success"
+
+
+def _checks(level: Enforcement, *, advisory: bool = False) -> ChecksReport:
+    return ChecksReport(
+        results=[
+            CheckResult(
+                check=CheckId.DESCRIPTION,
+                level=level,
+                outcome=CheckOutcome.FAILED,
+                summary="The change has no description.",
+                advisory=advisory,
+            )
+        ]
+    )
+
+
+def test_an_error_level_check_fails_the_commit_status_on_its_own(monkeypatch):
+    """The commit status is roborak's blocking mechanism, so a check has to reach it."""
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = _checks(Enforcement.ERROR)
+
+    GitHubPublisher(target=target, token="tok").publish(result)
+
+    (_, body) = status_calls(posted)[0]
+    assert body["state"] == "failure"
+    assert body["description"] == "1 pre-merge check failed."
+
+
+def test_a_warning_level_check_leaves_the_commit_status_passing(monkeypatch):
+    posted: list[tuple[str, dict]] = []
+    target = Target("github", "github.com", "acme/web", 42)
+    monkeypatch.setattr(
+        "roborak.publish.github.ForgeClient",
+        lambda t, tok: client_with(recording_handler(posted), t),
+    )
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = _checks(Enforcement.WARNING)
 
     GitHubPublisher(target=target, token="tok").publish(result)
 

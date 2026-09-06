@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from roborak.core.models import (
+    ChecksReport,
     Finding,
     ImpactMap,
     InvestigationReport,
@@ -21,7 +22,7 @@ from roborak.core.models import (
 )
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -84,6 +85,12 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     # second as "the findings were checked and stand".
     if result.investigation is not None:
         payload["investigation"] = _investigation_dict(result.investigation, agent=agent)
+
+    # Same contract, last time. An absent key means the checks never ran; a present
+    # one listing nothing means this project switched every check off. Something
+    # gating a merge on this must not read "nobody asked" as "everything passed".
+    if result.checks is not None:
+        payload["checks"] = _checks_dict(result.checks)
     payload["summary"]["verified"] = (
         result.verification is not None and result.verification.executed
     )
@@ -94,6 +101,7 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
         gate = gate_for(result)
         payload["summary"]["verdict"] = gate.verdict.value
         payload["summary"]["block_on"] = gate.floor.value
+        payload["summary"]["blocking_checks"] = [check.check.value for check in gate.failed_checks]
 
     if not agent:
         payload["model"] = result.model
@@ -146,6 +154,32 @@ def _impact_dict(impact: ImpactMap, *, agent: bool) -> dict[str, Any]:
             }
             for node in impact.nodes
         ],
+    }
+
+
+def _checks_dict(report: ChecksReport) -> dict[str, Any]:
+    """The pre-merge checks as data, including the ones that passed.
+
+    ``blocks`` is stated per result rather than left to be re-derived from level
+    and outcome: an advisory failure looks blocking by those two fields alone, and
+    a consumer that recomputed it would gate a merge on a model's opinion.
+    """
+    return {
+        "results": [
+            {
+                "check": result.check.value,
+                "level": result.level.value,
+                "outcome": result.outcome.value,
+                "summary": result.summary,
+                "detail": result.detail,
+                "measured": result.measured,
+                "threshold": result.threshold,
+                "advisory": result.advisory,
+                "blocks": result.blocks,
+            }
+            for result in report.results
+        ],
+        "notes": list(report.notes),
     }
 
 

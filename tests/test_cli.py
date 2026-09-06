@@ -294,7 +294,7 @@ def test_json_mode_emits_only_json(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     assert "findings" in payload
 
 
@@ -312,6 +312,9 @@ def test_agent_mode_emits_only_json(repo: Path):
         # Present even on a change that touches no dependency: an absent key has
         # to keep meaning "the stage never ran".
         "supply_chain",
+        # Same contract: present even when every check passed, so an absent key
+        # keeps meaning the checks never ran.
+        "checks",
     }
 
 
@@ -2044,3 +2047,83 @@ def test_a_dependency_change_reaches_the_json_output(repo: Path):
     payload = json.loads(result.stdout)["supply_chain"]
     assert payload["status"] == "analysed"
     assert [asset["kind"] for asset in payload["assets"]] == ["dependency_manifest"]
+
+
+@pytest.mark.parametrize("overview_mode", ["generated", "cached", "disabled", "failed", "no_llm"])
+def test_premerge_opinion_waits_for_the_walkthrough(repo: Path, monkeypatch, overview_mode):
+    from roborak.cli.commands.review import _Overview
+    from roborak.cli.shared import Session
+    from roborak.context.diff import parse_diff
+    from roborak.core.config import Config
+    from roborak.core.models import ChangeSet, Walkthrough
+    from roborak.core.severity import Enforcement
+    from roborak.llm.client import LLMError, LLMResponse
+
+    config = Config()
+    config.static.enabled = False
+    config.impact.enabled = False
+    config.supply_chain.enabled = False
+    config.review.investigate.enabled = False
+    config.pre_merge.title.level = Enforcement.ERROR
+    config.output.walkthrough = overview_mode != "disabled"
+    summary = "Adds a database session lookup and compares the stored token."
+    changeset = ChangeSet(
+        files=parse_diff(MR_DIFF), origin="gitlab", title="Add a session lookup cache"
+    )
+    prompts = []
+    responses = ["findings: []"]
+    if overview_mode in {"generated", "failed"}:
+        responses.append(f'overview: "{summary}"')
+    if overview_mode in {"generated", "cached"}:
+        responses.append('title_ok: false\ntitle_note: "No cache was added."')
+
+    class StubLLM:
+        context_budget = 100_000
+
+        def count_tokens(self, text):
+            return len(text) // 4
+
+        def complete(self, system, user):
+            prompts.append(user)
+            if overview_mode == "failed" and len(prompts) == 2:
+                raise LLMError("overview unavailable")
+            return LLMResponse(text=responses.pop(0), model="stub", prompt_tokens=10)
+
+    def start(console, **kwargs):
+        return Session(
+            console=console,
+            repo=repo,
+            config=config,
+            changeset=changeset,
+            llm=None if overview_mode == "no_llm" else StubLLM(),
+            target=None,
+            token=None,
+        )
+
+    monkeypatch.setattr("roborak.cli.shared.start", start)
+    monkeypatch.setattr(
+        "roborak.cli.commands.review._overview_plan",
+        lambda *args, **kwargs: _Overview(
+            generate=overview_mode != "cached",
+            cached=Walkthrough(overview=summary) if overview_mode == "cached" else None,
+        ),
+    )
+    result = runner.invoke(app, ["review", "--json", "--no-post", "--no-verify", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK, result.output
+    payload = json.loads(result.stdout)
+    title = next(check for check in payload["checks"]["results"] if check["check"] == "title")
+    purposes = [call["purpose"] for call in payload["usage"]]
+    if overview_mode in {"generated", "cached"}:
+        assert summary in prompts[-1]
+        assert purposes == (
+            ["review", "walkthrough", "premerge"]
+            if overview_mode == "generated"
+            else ["review", "premerge"]
+        )
+        assert title["advisory"] is True
+        assert title["outcome"] == "failed"
+    else:
+        assert "premerge" not in purposes
+        assert title["outcome"] == "passed"
+        assert title["advisory"] is False
+    assert payload["tokens_used"] == 10 * len(purposes)

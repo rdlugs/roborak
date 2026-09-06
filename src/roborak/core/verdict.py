@@ -9,11 +9,11 @@ this module is that function and nothing here imports ``render`` or ``publish``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from roborak.core.icons import SEVERITY_LABEL
-from roborak.core.models import Finding, ReviewResult, ReviewStatus
+from roborak.core.models import CheckResult, Finding, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
 
 
@@ -24,7 +24,8 @@ class Verdict(StrEnum):
     """Nothing reached the floor. ``EXIT_OK``; ``success`` on the forge."""
 
     BLOCKED = "blocked"
-    """At least one finding reached the floor. ``EXIT_FINDINGS``; ``failure``."""
+    """At least one finding reached the floor, or a pre-merge check configured as
+    ``error`` failed. ``EXIT_FINDINGS``; ``failure``."""
 
     ERROR = "error"
     """The review did not complete, so its silence means nothing. ``EXIT_ERROR``."""
@@ -60,6 +61,11 @@ class Gate:
     blocking: list[Finding]
     counts: dict[Severity, int]
 
+    failed_checks: list[CheckResult] = field(default_factory=list)
+    """Pre-merge checks configured as ``error`` that failed. A second, independent
+    reason to block: enforcement is not a severity, so these never pass through
+    ``blocking_findings`` and never appear in ``counts``."""
+
     @property
     def blocked(self) -> bool:
         return self.verdict is not Verdict.PASS
@@ -69,9 +75,14 @@ class Gate:
         if self.verdict is Verdict.ERROR:
             return "Review did not complete; no verdict."
         if self.verdict is Verdict.BLOCKED:
-            n = len(self.blocking)
-            plural = "" if n == 1 else "s"
-            return f"{n} finding{plural} at or above {self.floor}."
+            parts = []
+            if self.blocking:
+                n = len(self.blocking)
+                parts.append(f"{n} finding{'' if n == 1 else 's'} at or above {self.floor}")
+            if self.failed_checks:
+                n = len(self.failed_checks)
+                parts.append(f"{n} pre-merge check{'' if n == 1 else 's'} failed")
+            return f"{'; '.join(parts)}."
         return f"No findings at or above {self.floor}."
 
     def counts_line(self) -> str:
@@ -108,9 +119,10 @@ def gate_for(result: ReviewResult) -> Gate:
     """The verdict as rendered and published, from the floor the CLI recorded."""
     floor = result.block_on or DEFAULT_FLOOR
     blocking = blocking_findings(result, floor)
+    failed_checks = result.checks.blocking if result.checks is not None else []
     if result.errors or result.status is not ReviewStatus.COMPLETE:
         verdict = Verdict.ERROR
-    elif blocking:
+    elif blocking or failed_checks:
         verdict = Verdict.BLOCKED
     else:
         verdict = Verdict.PASS
@@ -120,4 +132,5 @@ def gate_for(result: ReviewResult) -> Gate:
         explicit=result.block_on_explicit,
         blocking=blocking,
         counts=result.counts_by_severity,
+        failed_checks=failed_checks,
     )

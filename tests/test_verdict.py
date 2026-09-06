@@ -12,9 +12,20 @@ import typer
 
 from roborak.analysis import validator
 from roborak.cli.shared import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, finish
-from roborak.core.models import Finding, ReviewResult, ReviewStatus
-from roborak.core.severity import Category, Kind, Severity
+from roborak.core.models import (
+    CheckId,
+    CheckOutcome,
+    CheckResult,
+    ChecksReport,
+    Finding,
+    ReviewResult,
+    ReviewStatus,
+)
+from roborak.core.severity import Category, Enforcement, Kind, Severity
 from roborak.core.verdict import Verdict, blocking_findings, gate_for
+
+BAD_ERROR = (Enforcement.ERROR, CheckOutcome.FAILED)
+BAD_WARNING = (Enforcement.WARNING, CheckOutcome.FAILED)
 
 
 def finding(severity: Severity, file: str = "app/auth.py") -> Finding:
@@ -141,3 +152,79 @@ def test_an_unproven_critical_does_not_reach_the_verdict():
     assert gate.verdict is Verdict.PASS
     assert gate.blocking == []
     assert "No findings at or above critical" in gate.summary_line()
+
+
+def checks(*entries: tuple[Enforcement, CheckOutcome], advisory: bool = False) -> ChecksReport:
+    return ChecksReport(
+        results=[
+            CheckResult(
+                check=CheckId.TITLE if index == 0 else CheckId.DESCRIPTION,
+                level=level,
+                outcome=outcome,
+                summary="Because.",
+                advisory=advisory,
+            )
+            for index, (level, outcome) in enumerate(entries)
+        ]
+    )
+
+
+def test_an_error_check_blocks_with_no_finding_anywhere_near_the_floor():
+    """Enforcement is a second, independent reason to block. It is not a severity."""
+    gate = gate_for(result(Severity.MINOR, block_on=Severity.CRITICAL, checks=checks(BAD_ERROR)))
+    assert gate.verdict is Verdict.BLOCKED
+    assert gate.blocking == []
+    assert [check.check for check in gate.failed_checks] == [CheckId.TITLE]
+
+
+def test_a_warning_check_is_reported_and_leaves_the_verdict_alone():
+    gate = gate_for(result(block_on=Severity.CRITICAL, checks=checks(BAD_WARNING)))
+    assert gate.verdict is Verdict.PASS
+    assert gate.failed_checks == []
+
+
+def test_an_advisory_failure_never_blocks_however_it_is_configured():
+    """A model's opinion is not evidence, and evidence is what blocking takes."""
+    gate = gate_for(result(block_on=Severity.CRITICAL, checks=checks(BAD_ERROR, advisory=True)))
+    assert gate.verdict is Verdict.PASS
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [CheckOutcome.PASSED, CheckOutcome.NOT_APPLICABLE, CheckOutcome.INCONCLUSIVE],
+)
+def test_only_a_failure_reaches_the_verdict(outcome):
+    gate = gate_for(result(block_on=Severity.CRITICAL, checks=checks((Enforcement.ERROR, outcome))))
+    assert gate.verdict is Verdict.PASS
+
+
+def test_a_failed_error_check_does_not_move_the_exit_code():
+    """The verdict, the report and the forge status move. The exit code is
+    ``--fail-on``'s alone, and widening it would collapse a distinction roborak
+    keeps on purpose."""
+    blocked = result(block_on=Severity.CRITICAL, checks=checks(BAD_ERROR))
+    with pytest.raises(typer.Exit) as exit_without_gate:
+        finish(blocked, None)
+    assert exit_without_gate.value.exit_code == EXIT_OK
+
+    with pytest.raises(typer.Exit) as exit_with_gate:
+        finish(blocked, Severity.CRITICAL)
+    assert exit_with_gate.value.exit_code == EXIT_OK
+
+
+def test_the_summary_line_names_both_reasons_and_stays_short_enough_to_post():
+    """Forge status descriptions are capped at 140 characters."""
+    both = result(
+        Severity.CRITICAL,
+        block_on=Severity.CRITICAL,
+        checks=checks(BAD_ERROR, (Enforcement.ERROR, CheckOutcome.FAILED)),
+    )
+    line = gate_for(both).summary_line()
+    assert "1 finding at or above critical" in line
+    assert "2 pre-merge checks failed" in line
+    assert len(line) <= 140
+
+
+def test_a_check_only_block_does_not_claim_zero_findings():
+    line = gate_for(result(block_on=Severity.CRITICAL, checks=checks(BAD_ERROR))).summary_line()
+    assert line == "1 pre-merge check failed."
