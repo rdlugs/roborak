@@ -210,6 +210,8 @@ def _coerce_finding(entry: dict[str, Any], valid_files: set[str] | None) -> Find
 
 
 INVESTIGATION_TOOLS = frozenset({"read_file", "search", "show_diff", "find_symbol"})
+"""The operations a model may ask for. An unknown name is refused rather than
+guessed at, so a hallucinated tool cannot become a differently-shaped read."""
 
 RESOLUTION_TOOLS = frozenset({"read_file", "search"})
 """The resolution pass asks a narrower question than the investigation does -- is
@@ -217,8 +219,6 @@ the reported defect still in the tree? -- and the two operations that answer it
 are reading the file and looking for what used to be there. The history it needs
 is handed to it up front rather than fetched on request, because the revisions
 bounding that history are roborak's to choose and never the model's."""
-"""The operations a model may ask for. An unknown name is refused rather than
-guessed at, so a hallucinated tool cannot become a differently-shaped read."""
 
 DISPOSITIONS = frozenset({"confirm", "revise", "drop"})
 
