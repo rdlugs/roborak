@@ -5,10 +5,12 @@ fix inside a legacy module did not make that module undocumented, and a check
 that says otherwise trains its reader to ignore it -- the same reason the static
 pass drops findings off changed lines.
 
-Every language ``tree_sitter_language_pack`` parses is measured, through one
-detector rather than a per-language table. Only Python links a docstring to its
-symbol structurally; godoc, JSDoc and Javadoc are comments attached by proximity,
-which tree-sitter does not connect to the node they describe. So the second arm
+Every language ``tree_sitter_language_pack`` parses is measured, through two
+arms rather than a per-language table. Only Python links a docstring to its
+symbol structurally, so the leading-string arm answers for Python alone -- a
+string opening a body anywhere else is a plain expression, ``"use strict"``
+included. godoc, JSDoc and Javadoc are comments attached by proximity, which
+tree-sitter does not connect to the node they describe, so the second arm
 below is a heuristic and will miscount for languages with weak conventions. That
 is the deliberate trade: the check defaults to ``warning``, and reporting a whole
 language as unmeasurable would tell a reader less than measuring it and saying so.
@@ -80,19 +82,28 @@ def measure(changeset: ChangeSet) -> CoverageMeasurement:
 
 
 def _symbols_for(file: ChangedFile, tree: Any) -> list[SymbolCoverage]:
-    """The smallest named symbol containing each hunk, deduplicated by position."""
+    """The smallest named symbol containing each added line, deduplicated by position.
+
+    Line by line rather than hunk by hunk: a hunk carries unchanged context and can
+    span the tail of one function and the head of the next, so its full range is
+    contained by neither, and resolving it at once would credit the file with no
+    touched symbol at all -- or with an enclosing one the change never wrote.
+    Deletion-only hunks contribute nothing: they add no new-file line, and the
+    symbol that survives around a deletion is not a symbol this change documented.
+    """
     found: dict[tuple[int, int], Any] = {}
     for hunk in file.hunks:
-        node = _smallest_containing(tree.root_node, hunk.new_start - 1, hunk.new_end - 1)
-        if node is not None:
-            found[(node.start_point[0], node.end_point[0])] = node
+        for lineno in sorted(hunk.added_lines):
+            node = _smallest_containing(tree.root_node, lineno - 1, lineno - 1)
+            if node is not None:
+                found[(node.start_point[0], node.end_point[0])] = node
     return [
         SymbolCoverage(
             path=file.path,
             name=node_name(node),
             kind=node.type,
             line=node.start_point[0] + 1,
-            documented=_is_documented(node),
+            documented=_is_documented(node, file.language),
         )
         for node in found.values()
     ]
@@ -114,9 +125,19 @@ def _span(node: Any) -> int:
     return node.end_point[0] - node.start_point[0]
 
 
-def _is_documented(node: Any) -> bool:
+_DOCSTRING_LANGUAGES = frozenset({"python"})
+"""Languages where a string opening a body *is* the symbol's documentation.
+
+Everywhere else a leading string is an ordinary expression -- JavaScript's
+``"use strict"`` is a directive, not an API description -- and reading it as a
+docstring credits coverage that was never written."""
+
+
+def _is_documented(node: Any, language: str | None) -> bool:
     """A leading string in the body, or a comment on the line just above."""
-    return _has_leading_string(node) or _has_preceding_comment(node)
+    if language in _DOCSTRING_LANGUAGES and _has_leading_string(node):
+        return True
+    return _has_preceding_comment(node)
 
 
 _BODY_TYPES = frozenset({"block", "statement_block", "class_body", "declaration_list"})

@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field, StrictBool
 
 from roborak.core.models import Finding, Walkthrough
 from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
@@ -140,12 +141,22 @@ def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
     return evidence
 
 
-def parse_premerge_opinion(text: str) -> dict[str, Any]:
+class PreMergeOpinion(BaseModel):
+    """Validated quality judgements; ``None`` means the model gave no verdict."""
+
+    title: StrictBool | None = None
+    title_note: str = Field(default="", max_length=300)
+    description: StrictBool | None = None
+    description_note: str = Field(default="", max_length=300)
+    linked_issue: StrictBool | None = None
+    linked_issue_note: str = Field(default="", max_length=300)
+
+
+def parse_premerge_opinion(text: str) -> PreMergeOpinion:
     """Read the pre-merge quality opinion, keeping only what the model was sure of.
 
-    A missing or unreadable key is left out rather than defaulted, because the
-    caller treats absence as "no opinion" and a default would turn a reply the
-    model never gave into one it did.
+    A missing or unreadable verdict stays ``None``, because the caller treats it
+    as "no opinion". Defaulting to a boolean would invent a model judgement.
     """
     data = load_yaml_mapping(text)
     opinion: dict[str, Any] = {}
@@ -156,7 +167,7 @@ def parse_premerge_opinion(text: str) -> dict[str, Any]:
             note = data.get(f"{check}_note")
             if isinstance(note, str) and note.strip():
                 opinion[f"{check}_note"] = note.strip()[:300]
-    return opinion
+    return PreMergeOpinion.model_validate(opinion)
 
 
 def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:

@@ -1250,10 +1250,17 @@ def _checks_verdict_note(gate: Gate, report: ChecksReport | None) -> str:
     if gate.failed_checks:
         named = ", ".join(_CHECK_LABEL[check.check] for check in gate.failed_checks)
         return f"Blocked by pre-merge checks configured as `error`: {named}."
+    notes: list[str] = []
     if warnings := report.warnings:
         named = ", ".join(_CHECK_LABEL[check.check] for check in warnings)
-        return f"_Not counted: {named} failed at `warning`, which does not block._"
-    return ""
+        notes.append(f"_Not counted: {named} failed at `warning`, which does not block._")
+    if advisories := report.advisories:
+        named = ", ".join(f"{_CHECK_LABEL[c.check]} (`{c.level}`)" for c in advisories)
+        notes.append(
+            f"_Not counted: {named} failed on the model's opinion alone, "
+            f"which never blocks whatever the configured level._"
+        )
+    return "\n\n".join(notes)
 
 
 def _verification_verdict_note(report: VerificationReport | None) -> str:

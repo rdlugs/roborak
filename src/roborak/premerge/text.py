@@ -44,13 +44,24 @@ _TEMPLATE_LINE = re.compile(r"^\s*(?:#{1,6}\s.*|[-*+]\s*\[[ xX]\].*)$", re.MULTI
 words, not the author's, so keeping the label while dropping the marker would let
 an untouched checklist satisfy a floor on how much the author actually wrote."""
 
-_QUOTE_MARKER = re.compile(r"^\s*>\s?", re.MULTILINE)
+_QUOTE_LINE = re.compile(r"^[ \t]*>.*$", re.MULTILINE)
+"""Quoted lines, removed whole for the same reason as headings: a template
+that states its instructions in a blockquote is still the template speaking,
+and stripping only the ``>`` would leave its words counting as the author's."""
 
 _LOCAL_ORIGINS = frozenset({"local", "paths"})
 
 
 def check_title(changeset: ChangeSet, level: Enforcement) -> CheckResult:
     """Whether the change is named well enough to be found again."""
+    # Local titles are commit subjects or display labels, not request titles.
+    if changeset.origin in _LOCAL_ORIGINS:
+        return CheckResult(
+            check=CheckId.TITLE,
+            level=level,
+            outcome=CheckOutcome.NOT_APPLICABLE,
+            summary="This local source has no title for the reviewed change to check.",
+        )
     title = (changeset.title or "").strip()
     reason = _title_problem(title)
     if reason is None:
@@ -115,7 +126,8 @@ def check_description(changeset: ChangeSet, level: Enforcement) -> CheckResult:
             level=level,
             outcome=CheckOutcome.FAILED,
             summary=f"The description carries under {MIN_DESCRIPTION_LENGTH} characters of prose.",
-            detail=f"{len(prose)} characters once headings, checklists and comments are removed.",
+            detail=f"{len(prose)} characters once headings, checklists, quotes and comments "
+            "are removed.",
         )
     return CheckResult(
         check=CheckId.DESCRIPTION,
@@ -135,7 +147,7 @@ def _prose(description: str) -> str:
     text = _HTML_COMMENT.sub("", description)
     text = _FENCE.sub("", text)
     text = _TEMPLATE_LINE.sub("", text)
-    text = _QUOTE_MARKER.sub("", text)
+    text = _QUOTE_LINE.sub("", text)
     return " ".join(text.split())
 
 
@@ -143,7 +155,6 @@ def check_linked_issue(
     changeset: ChangeSet, issue: Issue | None, level: Enforcement
 ) -> CheckResult:
     """Whether this change says which tracked work it belongs to."""
-    references = _issue_references(changeset)
     if issue is not None:
         detail = (
             f"Reviewed against {issue.reference}. Whether the change actually does what the "
@@ -156,6 +167,14 @@ def check_linked_issue(
             summary=f"Linked to {issue.reference}.",
             detail=detail,
         )
+    if changeset.origin in _LOCAL_ORIGINS:
+        return CheckResult(
+            check=CheckId.LINKED_ISSUE,
+            level=level,
+            outcome=CheckOutcome.NOT_APPLICABLE,
+            summary="A local diff has no request body to carry an issue link.",
+        )
+    references = _issue_references(changeset)
     if references:
         listed = ", ".join(f"#{number}" for number in references)
         return CheckResult(
@@ -163,13 +182,6 @@ def check_linked_issue(
             level=level,
             outcome=CheckOutcome.PASSED,
             summary=f"Linked to {listed}.",
-        )
-    if changeset.origin in _LOCAL_ORIGINS:
-        return CheckResult(
-            check=CheckId.LINKED_ISSUE,
-            level=level,
-            outcome=CheckOutcome.NOT_APPLICABLE,
-            summary="A local diff has no request body to carry an issue link.",
         )
     return CheckResult(
         check=CheckId.LINKED_ISSUE,

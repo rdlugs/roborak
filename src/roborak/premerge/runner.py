@@ -66,11 +66,28 @@ def run_checks(
             CheckId.LINKED_ISSUE,
         )
 
+    run_opinion(report, changeset, config, issue=issue, walkthrough=walkthrough, complete=complete)
+    return report
+
+
+def run_opinion(
+    report: ChecksReport,
+    changeset: ChangeSet,
+    config: PreMergeConfig,
+    *,
+    issue: Issue | None = None,
+    walkthrough: Walkthrough | None = None,
+    complete: Complete | None = None,
+) -> None:
+    """Enrich existing gates without rerunning them when an overview arrives."""
     if complete is not None and _wants_opinion(config) and report.results:
-        note = apply_opinion(report.results, changeset, issue, walkthrough, complete)
+        try:
+            note = apply_opinion(report.results, changeset, issue, walkthrough, complete)
+        except Exception as exc:  # noqa: BLE001 - an advisory cannot end a review
+            log.warning("pre-merge quality opinion did not run: %s", exc)
+            note = f"The pre-merge quality opinion was unavailable: {exc}"
         if note:
             report.notes.append(note)
-    return report
 
 
 def _wants_opinion(config: PreMergeConfig) -> bool:

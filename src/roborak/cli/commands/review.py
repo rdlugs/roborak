@@ -330,6 +330,8 @@ def review(
         else:
             result.walkthrough = overview.cached
 
+    reviewer.premerge_opinion(result)
+
     resolutions: tuple[Resolution, ...] = ()
     if publishing and not repost:
         assert session.target is not None and remote is not None

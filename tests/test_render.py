@@ -1720,6 +1720,45 @@ def test_an_advisory_failure_says_it_is_the_model_talking():
     assert "Pre-merge check: blocked" not in body
 
 
+def test_an_advisory_failure_is_not_reported_as_a_warning_level_one():
+    """It was configured at ``error``; only the model's own bar kept it out."""
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(Enforcement.ERROR, advisory=True)
+    body = markdown.render(result)
+    panels = render_terminal(result)
+
+    assert "Not counted: Description (`error`) failed on the model's opinion alone" in body
+    assert "failed at `warning`" not in body
+    assert "checks failed but not counted (advisory): description (error)" in panels
+    assert "not counted (warning)" not in panels
+
+
+def test_a_warning_failure_and_an_advisory_one_are_named_apart():
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    report = checks_report(Enforcement.WARNING)
+    report.results.append(
+        CheckResult(
+            check=CheckId.TITLE,
+            level=Enforcement.ERROR,
+            outcome=CheckOutcome.FAILED,
+            summary="The title says nothing.",
+            advisory=True,
+        )
+    )
+    result.checks = report
+    body = markdown.render(result)
+
+    assert report.warnings == [report.results[0]]
+    assert report.advisories == [report.results[1]]
+    assert "Not counted: Description failed at `warning`" in body
+    assert "Not counted: Title (`error`) failed on the model's opinion alone" in body
+    assert "Pre-merge check: pass" in body
+
+
 @pytest.mark.parametrize(
     ("level", "expected"),
     [(Enforcement.ERROR, "blocked"), (Enforcement.WARNING, "pass")],

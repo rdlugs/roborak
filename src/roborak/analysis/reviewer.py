@@ -61,8 +61,7 @@ from roborak.llm.prompt import (
     build_review_prompt,
     render_file_diff,
 )
-from roborak.premerge.opinion import Complete
-from roborak.premerge.runner import run_checks
+from roborak.premerge.runner import run_checks, run_opinion
 from roborak.publish.threads import OpenThread
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
@@ -156,7 +155,7 @@ class Reviewer:
         if not self._prepare(changeset, result):
             # Every file filtered out, so there is nothing for an opinion to weigh.
             # The deterministic gates still have a title and a description to judge.
-            result.checks = self._premerge_checks(changeset, complete=None)
+            result.checks = self._premerge_checks(changeset)
             return result
 
         result.impact = self._impact = self._blast_radius(changeset)
@@ -172,27 +171,37 @@ class Reviewer:
 
         result.investigation = self._investigate(findings, changeset)
 
-        # Last, so the review's own calls keep their place in the usage record and
-        # an extra call for an opinion can never delay the findings themselves.
-        result.checks = self._premerge_checks(
-            changeset, complete=self._premerge_complete if self.llm is not None else None
-        )
+        result.checks = self._premerge_checks(changeset)
 
         result.findings = validator.validate(findings, changeset, self.config)
         self.apply_usage(result)
         return result
 
-    def _premerge_checks(self, changeset: ChangeSet, *, complete: Complete | None) -> ChecksReport:
+    def _premerge_checks(self, changeset: ChangeSet) -> ChecksReport:
         """The configurable merge-readiness checks, which never end a review.
 
         Degrades the way the blast radius does: a stage that cannot run reports
         what it could not do, because an absent report reads as "never asked".
         """
         try:
-            return run_checks(changeset, self.config.pre_merge, issue=self.issue, complete=complete)
+            return run_checks(changeset, self.config.pre_merge, issue=self.issue)
         except Exception as exc:  # noqa: BLE001 - no check is worth failing a review over
             log.warning("pre-merge checks did not run: %s", exc)
             return ChecksReport(notes=[f"The pre-merge checks did not run: {exc}"])
+
+    def premerge_opinion(self, result: ReviewResult) -> None:
+        """Add the advisory layer after the CLI has obtained the walkthrough."""
+        if self.llm is None or result.checks is None or result.changeset is None:
+            return
+        run_opinion(
+            result.checks,
+            result.changeset,
+            self.config.pre_merge,
+            issue=self.issue,
+            walkthrough=result.walkthrough,
+            complete=self._premerge_complete,
+        )
+        self.apply_usage(result)
 
     def _premerge_complete(self, system: str, user: str) -> str:
         return self._complete("premerge", system, user).text

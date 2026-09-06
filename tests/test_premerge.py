@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from roborak.context.diff import whole_file_hunk
 from roborak.core.config import CheckConfig, DocstringCoverageConfig, PreMergeConfig
 from roborak.core.models import (
     ChangedFile,
@@ -18,6 +19,7 @@ from roborak.core.models import (
     CheckOutcome,
     Hunk,
     Issue,
+    Walkthrough,
 )
 from roborak.core.severity import Enforcement
 from roborak.llm.client import LLMError
@@ -58,6 +60,7 @@ def changed(path: str, language: str | None, content: str | None, start: int, en
                 new_start=start,
                 new_lines=end - start + 1,
                 content="",
+                added_lines=set(range(start, end + 1)),
             )
         ],
     )
@@ -111,6 +114,67 @@ def test_an_undocumented_symbol_the_diff_touched_fails_the_threshold():
     assert "bare" in result.detail
 
 
+def test_a_hunk_spanning_two_symbols_measures_both():
+    """The hunk range contains neither function; each changed line contains one."""
+    file = ChangedFile(
+        path="a.py",
+        language="python",
+        new_content=PYTHON,
+        hunks=[
+            Hunk(
+                old_start=1,
+                old_lines=7,
+                new_start=1,
+                new_lines=7,
+                content="",
+                added_lines={3, 6},
+            )
+        ],
+    )
+    report = run_checks(
+        changeset(file),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.measured == 0.5
+    assert "bare" in result.detail
+
+
+def test_a_deletion_only_hunk_measures_nothing():
+    """No new-file line changed, so no symbol here is this change's to document."""
+    file = ChangedFile(
+        path="a.py",
+        language="python",
+        new_content=PYTHON,
+        hunks=[Hunk(old_start=6, old_lines=2, new_start=6, new_lines=0, content="")],
+    )
+    report = run_checks(
+        changeset(file),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert result.measured is None
+
+
+def test_a_whole_file_addition_measures_every_symbol_in_it():
+    """One hunk for the whole file must still enumerate each top-level function."""
+    file = ChangedFile(
+        path="a.py",
+        language="python",
+        change_type="added",
+        new_content=PYTHON,
+        hunks=whole_file_hunk(PYTHON),
+    )
+    report = run_checks(
+        changeset(file),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.measured == 0.5
+    assert "bare" in result.detail
+
+
 RUST = """/// Documented explains itself.
 fn documented() -> i32 {
     1
@@ -154,6 +218,18 @@ def test_a_preceding_comment_documents_a_symbol_where_docstrings_do_not_exist(
     )
     assert only(covered, CheckId.DOCSTRING_COVERAGE).measured == 1.0
     assert only(uncovered, CheckId.DOCSTRING_COVERAGE).measured == 0.0
+
+
+def test_a_javascript_directive_string_does_not_document_a_symbol():
+    """``"use strict"`` is a directive, not the docstring the Python arm reads."""
+    source = 'function bare() {\n  "use strict";\n  return 2;\n}\n'
+    report = run_checks(
+        changeset(changed("a.js", "javascript", source, 3, 3)),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.measured == 0.0
+    assert "bare" in result.detail
 
 
 def test_a_comment_a_blank_line_above_documents_nothing():
@@ -214,6 +290,7 @@ def test_the_threshold_boundary_is_inclusive(threshold, expected):
 # --- title -------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("origin", ["github", "gitlab"])
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
@@ -227,9 +304,28 @@ def test_the_threshold_boundary_is_inclusive(threshold, expected):
         ("update fix changes", CheckOutcome.FAILED),
     ],
 )
-def test_the_title_gate(title, expected):
-    report = run_checks(changeset(title=title), config(title=CheckConfig()))
+def test_the_title_gate(origin, title, expected):
+    report = run_checks(changeset(origin=origin, title=title), config(title=CheckConfig()))
     assert only(report, CheckId.TITLE).outcome is expected
+
+
+@pytest.mark.parametrize("origin", ["local", "paths"])
+@pytest.mark.parametrize(
+    "title", [None, "", "wip", "Add a session lookup cache", "Whole-file review of app"]
+)
+def test_local_source_titles_are_not_checked(origin, title):
+    def complete(system: str, user: str) -> str:
+        pytest.fail("A local title must not be sent for a model opinion.")
+
+    report = run_checks(
+        changeset(origin=origin, title=title),
+        config(title=CheckConfig(level=Enforcement.ERROR)),
+        complete=complete,
+    )
+    result = only(report, CheckId.TITLE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert result.level is Enforcement.ERROR
+    assert not report.notes
 
 
 # --- description -------------------------------------------------------------
@@ -254,6 +350,19 @@ def test_an_unfilled_template_is_not_a_description():
     template = (
         "## Summary\n\n<!-- say what changed -->\n\n## Checklist\n\n- [ ] Tests\n- [ ] Docs\n"
     )
+    report = run_checks(changeset(description=template), config(description=CheckConfig()))
+    result = only(report, CheckId.DESCRIPTION)
+    assert result.outcome is CheckOutcome.FAILED
+    assert "template" in result.summary
+
+
+def test_an_untouched_quoted_template_is_not_a_description():
+    """A blockquote long enough to clear the floor is still the template talking."""
+    template = (
+        "> Describe what this change does and why it is needed, in enough detail\n"
+        "> that a reviewer coming to it cold can follow the reasoning.\n"
+    )
+    assert len(template.replace(">", "").strip()) > 50
     report = run_checks(changeset(description=template), config(description=CheckConfig()))
     result = only(report, CheckId.DESCRIPTION)
     assert result.outcome is CheckOutcome.FAILED
@@ -301,6 +410,15 @@ def test_an_explicitly_named_issue_links_the_change_without_a_body_mention():
     result = only(report, CheckId.LINKED_ISSUE)
     assert result.outcome is CheckOutcome.PASSED
     assert "#66" in result.summary
+
+
+def test_a_commit_title_reference_does_not_link_a_local_diff():
+    """There is no request body to have carried the link, whatever the title says."""
+    report = run_checks(
+        changeset(origin="local", title="Closes #12 by caching the lookup", description=None),
+        config(linked_issue=CheckConfig()),
+    )
+    assert only(report, CheckId.LINKED_ISSUE).outcome is CheckOutcome.NOT_APPLICABLE
 
 
 def test_a_local_diff_has_no_body_to_carry_an_issue_link():
@@ -366,10 +484,20 @@ def test_no_model_is_asked_until_a_check_is_set_to_error():
         asked.append(user)
         return "title_ok: true"
 
-    run_checks(changeset(), config(title=CheckConfig()), complete=complete)
+    run_checks(
+        changeset(),
+        config(title=CheckConfig()),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
+        complete=complete,
+    )
     assert asked == []
 
-    run_checks(changeset(), config(**ERROR_TITLE), complete=complete)
+    run_checks(
+        changeset(),
+        config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
+        complete=complete,
+    )
     assert len(asked) == 1
 
 
@@ -378,6 +506,7 @@ def test_the_opinion_can_fail_a_check_that_passed_its_gate_but_never_blocks():
     report = run_checks(
         changeset(),
         config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
         complete=replies('title_ok: false\ntitle_note: "Names the file, not the change."'),
     )
     result = only(report, CheckId.TITLE)
@@ -391,6 +520,7 @@ def test_the_opinion_never_overturns_a_deterministic_failure():
     report = run_checks(
         changeset(title="wip"),
         config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
         complete=replies("title_ok: true"),
     )
     result = only(report, CheckId.TITLE)
@@ -404,6 +534,7 @@ def test_a_provider_failure_leaves_the_deterministic_result_and_says_so():
     report = run_checks(
         changeset(),
         config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
         complete=raises(LLMError("provider said no")),
     )
     assert only(report, CheckId.TITLE).outcome is CheckOutcome.PASSED
@@ -411,7 +542,12 @@ def test_a_provider_failure_leaves_the_deterministic_result_and_says_so():
 
 
 def test_an_unusable_reply_is_no_opinion_rather_than_a_verdict():
-    report = run_checks(changeset(), config(**ERROR_TITLE), complete=replies("nonsense: yes"))
+    report = run_checks(
+        changeset(),
+        config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Caches session lookups."),
+        complete=replies("nonsense: yes"),
+    )
     assert only(report, CheckId.TITLE).outcome is CheckOutcome.PASSED
     assert report.notes
 
@@ -435,3 +571,26 @@ def test_a_check_that_raises_is_a_note_rather_than_the_end_of_the_review(monkeyp
     report = run_checks(changeset(), config(title=CheckConfig(), linked_issue=CheckConfig()))
     assert [result.check for result in report.results] == [CheckId.LINKED_ISSUE]
     assert any("boom" in note for note in report.notes)
+
+
+@pytest.mark.parametrize("walkthrough", [None, Walkthrough(), Walkthrough(overview=" \n ")])
+def test_an_opinion_requires_a_usable_change_summary(walkthrough):
+    def complete(system: str, user: str) -> str:
+        pytest.fail("An opinion without change context must not call the provider.")
+
+    report = run_checks(
+        changeset(), config(**ERROR_TITLE), walkthrough=walkthrough, complete=complete
+    )
+    assert only(report, CheckId.TITLE).outcome is CheckOutcome.PASSED
+    assert any("no walkthrough summary" in note for note in report.notes)
+
+
+def test_an_unexpected_opinion_error_preserves_the_gates():
+    report = run_checks(
+        changeset(),
+        config(**ERROR_TITLE),
+        walkthrough=Walkthrough(overview="Adds a session lookup."),
+        complete=raises(RuntimeError("unexpected provider error")),
+    )
+    assert only(report, CheckId.TITLE).outcome is CheckOutcome.PASSED
+    assert any("unexpected provider error" in note for note in report.notes)

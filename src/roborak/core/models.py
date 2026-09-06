@@ -956,13 +956,32 @@ class ChecksReport(BaseModel):
         return [result for result in self.results if result.blocks]
 
     @property
-    def warnings(self) -> list[CheckResult]:
-        """Failures that are reported and deliberately left out of the verdict."""
+    def non_blocking(self) -> list[CheckResult]:
+        """Every failure left out of the verdict, whatever kept it out."""
         return [
             result
             for result in self.results
             if result.outcome is CheckOutcome.FAILED and not result.blocks
         ]
+
+    @property
+    def warnings(self) -> list[CheckResult]:
+        """Failures the project itself configured as ``warning``.
+
+        Not every non-blocking failure: an advisory failure can come from a check
+        configured at ``error``, and reporting it as a warning would misstate the
+        level the project actually set.
+        """
+        return [result for result in self.non_blocking if not result.advisory]
+
+    @property
+    def advisories(self) -> list[CheckResult]:
+        """Failures the model reached alone, at whatever level they were configured.
+
+        These carry their own reason for not blocking, so they are reported with
+        their real level rather than folded in with the warnings.
+        """
+        return [result for result in self.non_blocking if result.advisory]
 
 
 class FixVerdict(BaseModel):

@@ -500,6 +500,9 @@ def _render_checks(report: ChecksReport | None, gate: Gate, console: Console) ->
     if warnings := report.warnings:
         named = ", ".join(check.check.value for check in warnings)
         console.print(f"[dim]checks failed but not counted (warning): {named}[/]")
+    if advisories := report.advisories:
+        named = ", ".join(f"{check.check.value} ({check.level})" for check in advisories)
+        console.print(f"[dim]checks failed but not counted (advisory): {named}[/]")
 
 
 def _render_footer(result: ReviewResult, console: Console) -> None:

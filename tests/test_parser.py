@@ -14,12 +14,62 @@ from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
 from roborak.llm.parser import (
     MAX_EVIDENCE_FILES,
     ParseError,
+    PreMergeOpinion,
     parse_compatibility_evidence,
     parse_findings,
+    parse_premerge_opinion,
     parse_requirement_evidence,
     parse_walkthrough,
     strip_fences,
 )
+
+
+def test_premerge_opinion_returns_a_validated_model():
+    opinion = parse_premerge_opinion(
+        '```yaml\ntitle_ok: false\ntitle_note: "  Too vague.  "\n'
+        'description_ok: true\ndescription_note: "Clear scope."\n'
+        'linked_issue_ok: false\nlinked_issue_note: "Unrelated issue."\n```'
+    )
+    assert isinstance(opinion, PreMergeOpinion)
+    assert opinion.title is False
+    assert opinion.title_note == "Too vague."
+    assert opinion.description is True
+    assert opinion.description_note == "Clear scope."
+    assert opinion.linked_issue is False
+    assert opinion.linked_issue_note == "Unrelated issue."
+
+
+@pytest.mark.parametrize("verdict", ['"false"', '"true"', "0", "1", "null", "[]", "{}"])
+def test_premerge_opinion_does_not_coerce_invalid_verdicts(verdict):
+    opinion = parse_premerge_opinion(
+        f"title_ok: {verdict}\ntitle_note: Ignored\ndescription_ok: false"
+    )
+    assert opinion.title is None
+    assert opinion.title_note == ""
+    assert opinion.description is False
+    assert opinion.linked_issue is None
+
+
+@pytest.mark.parametrize("reply", ["", "nonsense: yes", "title_note: Missing verdict"])
+def test_premerge_opinion_preserves_absent_verdicts(reply):
+    assert parse_premerge_opinion(reply) == PreMergeOpinion()
+
+
+@pytest.mark.parametrize("note", ["null", "42", "true", "[]", "{}", '"  "'])
+def test_premerge_opinion_ignores_invalid_notes(note):
+    opinion = parse_premerge_opinion(f"title_ok: false\ntitle_note: {note}")
+    assert opinion.title is False
+    assert opinion.title_note == ""
+
+
+def test_premerge_opinion_bounds_notes():
+    opinion = parse_premerge_opinion(f'title_ok: true\ntitle_note: "  {"x" * 400}  "')
+    assert opinion.title_note == "x" * 300
+
+
+def test_premerge_opinion_rejects_non_mapping_replies():
+    with pytest.raises(ParseError):
+        parse_premerge_opinion("- title_ok: true")
 
 
 def test_plain_yaml():

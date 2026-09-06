@@ -52,6 +52,9 @@ def apply_opinion(
     if not candidates:
         return None
 
+    if not _summary(walkthrough).strip():
+        return "The pre-merge quality opinion was unavailable: no walkthrough summary."
+
     prompt = build_premerge_prompt(
         title=changeset.title or "",
         description=changeset.description or "",
@@ -65,13 +68,17 @@ def apply_opinion(
         opinion = parse_premerge_opinion(reply)
     except (LLMError, ParseError) as exc:
         return f"The pre-merge quality opinion was unavailable: {exc}"
-    if not opinion:
+    verdicts = (
+        (CheckId.TITLE, opinion.title, opinion.title_note),
+        (CheckId.DESCRIPTION, opinion.description, opinion.description_note),
+        (CheckId.LINKED_ISSUE, opinion.linked_issue, opinion.linked_issue_note),
+    )
+    if all(verdict is None for _, verdict, _ in verdicts):
         return "The model returned no usable pre-merge quality opinion."
 
-    for check, result in candidates.items():
-        verdict = opinion.get(check.value)
-        note = str(opinion.get(f"{check.value}_note", ""))
-        if verdict is None:
+    for check, verdict, note in verdicts:
+        result = candidates.get(check)
+        if result is None or verdict is None:
             continue
         result.opinion = note
         if verdict is False:
