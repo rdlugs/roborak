@@ -162,6 +162,50 @@ export default function Configuration() {
         monitoring&rdquo; is not a finding.
       </P>
 
+      <H3>pre_merge</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "pre_merge:            # off | warning | error",
+          "  docstring_coverage:",
+          "    level: warning",
+          "    threshold: 0.8    # fraction of diff-touched symbols that must be documented",
+          "  title:",
+          "    level: warning",
+          "  description:",
+          "    level: warning",
+          "  linked_issue:",
+          "    level: warning",
+        ].join("\n")}
+      />
+      <P>
+        Four checks about the change rather than about the code. <Code>off</Code> does not run,
+        render or reach the verdict; <Code>warning</Code> is reported in the report and the summary
+        comment and never blocks; <Code>error</Code> also blocks the pre-merge verdict and the forge
+        commit status. None of them move the exit code, which stays <Code>--fail-on</Code>&rsquo;s
+        alone.
+      </P>
+      <P>
+        Docstring coverage measures the symbols the diff <em>touched</em>, not whole files, so a
+        one-line fix in a legacy module is not judged by that module. It works for every language a
+        tree-sitter grammar is available for &mdash; a leading string in the body, or a comment on
+        the line directly above &mdash; and a file with no grammar is left out of the count rather
+        than counted as undocumented. The title, description and linked-issue gates are
+        deterministic, so they still run under <Code>--no-llm</Code>: a policy you gate merges on
+        must not depend on a provider being reachable. On a local diff, which has no request body,
+        the description and linked-issue checks report <em>not applicable</em> rather than failing.
+      </P>
+      <Callout kind="note" title="What the model is allowed to decide">
+        <P>
+          Raise one of the three text checks to <Code>error</Code> and roborak also asks the model
+          whether the title and description actually describe the change. That opinion is reported
+          and marked advisory, and it never blocks on its own &mdash; an opinion is not evidence,
+          which is the same bar <Code>require_evidence</Code> holds findings to. Below{" "}
+          <Code>error</Code> no call is made at all: an advisory note is not worth an extra request
+          on every review.
+        </P>
+      </Callout>
+
       <H3>static</H3>
       <CodeBlock
         label=".roborak.yaml"

@@ -789,7 +789,7 @@ def test_the_agent_shape_keeps_decisions_and_drops_the_file_contents(repo: Path)
 
 
 def test_the_schema_version_moved():
-    assert json_out.SCHEMA_VERSION == 5
+    assert json_out.SCHEMA_VERSION == 6
 
 
 def test_markdown_renders_the_section(repo: Path):

@@ -124,6 +124,23 @@ export default function HowItWorks() {
         <A href="/docs/configuration">Configuration</A> page.
       </P>
 
+      <H2>Two independent reasons a change is blocked</H2>
+      <P>
+        A finding blocks when its severity reaches the floor. A pre-merge check blocks when the
+        project set it to <Code>error</Code> and it failed. The two are deliberately not folded
+        together: enforcement is not a severity, and making &ldquo;this pull request has no
+        description&rdquo; block by giving it <Code>critical</Code> would put a phantom bug in the
+        severity table and in every count derived from it.
+      </P>
+      <P>
+        <Code>roborak.core.verdict</Code> takes both and produces one verdict, so the report, the{" "}
+        <Code>--panels</Code> view and the forge commit status still cannot disagree. The exit code
+        stays out of it: <Code>--fail-on</Code> alone moves that, over findings alone. A check
+        failed at <Code>warning</Code>, or failed only because the model said so, is named beside
+        the verdict as something the verdict is <em>not</em> counting &mdash; a clean pass printed
+        above a red row is a sentence a reader will take as covering both.
+      </P>
+
       <H2>Every finding is routed, not just printed</H2>
       <Ul>
         <Li>

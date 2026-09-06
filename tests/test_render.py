@@ -18,6 +18,10 @@ from roborak.core.models import (
     BoundaryKind,
     ChangedFile,
     ChangeSet,
+    CheckId,
+    CheckOutcome,
+    CheckResult,
+    ChecksReport,
     Consumer,
     FileSummary,
     Finding,
@@ -33,7 +37,7 @@ from roborak.core.models import (
     ReviewRole,
     Walkthrough,
 )
-from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
+from roborak.core.severity import Category, Effort, Enforcement, Evidence, Kind, Severity
 from roborak.core.verdict import Verdict
 from roborak.render import json_out, markdown, prompt_only, terminal
 
@@ -152,7 +156,7 @@ def test_json_coverage_explains_semantic_order_and_omitted_roles():
         ],
     )
     payload = json.loads(json_out.render(result))
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     assert payload["coverage"]["file_plan"][0] == {
         "path": "app/auth.py",
         "role": "contract",
@@ -1627,3 +1631,120 @@ def test_every_category_has_a_label():
     render time rather than a test failure -- which is exactly when a new category
     is added and nobody is looking."""
     assert set(CATEGORY_LABEL) == set(Category)
+
+
+def checks_report(
+    level: Enforcement,
+    outcome: CheckOutcome = CheckOutcome.FAILED,
+    *,
+    advisory: bool = False,
+) -> ChecksReport:
+    return ChecksReport(
+        results=[
+            CheckResult(
+                check=CheckId.DESCRIPTION,
+                level=level,
+                outcome=outcome,
+                summary="The change has no description.",
+                advisory=advisory,
+            )
+        ]
+    )
+
+
+def test_the_checks_section_lists_every_check_that_ran():
+    """Passing rows included: a list of failures alone cannot say what was checked."""
+    result = make_result()
+    result.checks = ChecksReport(
+        results=[
+            CheckResult(
+                check=CheckId.TITLE,
+                level=Enforcement.WARNING,
+                outcome=CheckOutcome.PASSED,
+                summary="The title names the change.",
+            ),
+            CheckResult(
+                check=CheckId.DOCSTRING_COVERAGE,
+                level=Enforcement.ERROR,
+                outcome=CheckOutcome.FAILED,
+                summary="1 of 4 touched symbols documented (25%, threshold 80%).",
+            ),
+        ]
+    )
+    body = markdown.render(result)
+
+    assert "Pre-merge checks" in body
+    assert "| Title | warning | Passed |" in body
+    assert "| Docstring coverage | error | Failed |" in body
+
+
+def test_checks_that_never_ran_render_nothing():
+    assert "Pre-merge checks" not in markdown.render(make_result())
+
+
+def test_every_check_switched_off_renders_nothing():
+    """An empty report still means the stage ran, but there is nothing to show."""
+    result = make_result()
+    result.checks = ChecksReport()
+    assert "Pre-merge checks" not in markdown.render(result)
+
+
+def test_a_warning_failure_is_named_beside_the_verdict_it_did_not_move():
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(Enforcement.WARNING)
+    body = markdown.render(result)
+
+    assert "Pre-merge check: pass" in body
+    assert "Not counted: Description failed at `warning`" in body
+
+
+def test_an_error_failure_is_named_as_the_reason_the_verdict_blocked():
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(Enforcement.ERROR)
+    body = markdown.render(result)
+
+    assert "Pre-merge check: blocked" in body
+    assert "Blocked by pre-merge checks configured as `error`: Description." in body
+
+
+def test_an_advisory_failure_says_it_is_the_model_talking():
+    result = make_result()
+    result.checks = checks_report(Enforcement.ERROR, advisory=True)
+    body = markdown.render(result)
+
+    assert "(advisory)" in body
+    assert "Pre-merge check: blocked" not in body
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [(Enforcement.ERROR, "blocked"), (Enforcement.WARNING, "pass")],
+)
+def test_panels_and_the_report_never_disagree_about_a_check(level, expected):
+    """``--panels`` re-derives the verdict, so it is the surface that can drift."""
+    result = make_result()
+    result.findings = []
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(level)
+
+    assert f"pre-merge check: {expected}" in render_terminal(result).lower()
+    assert f"pre-merge check: {expected}" in markdown.render(result).lower()
+    assert "description" in render_terminal(result).lower()
+
+
+def test_the_checks_reach_the_json_payload_with_what_blocked_stated():
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(Enforcement.ERROR, advisory=True)
+    payload = json.loads(json_out.render(result))
+
+    assert payload["checks"]["results"][0]["check"] == "description"
+    # Recomputing this from level and outcome alone would gate a merge on an
+    # opinion, so the payload states it rather than leaving it to be inferred.
+    assert payload["checks"]["results"][0]["advisory"] is True
+    assert payload["checks"]["results"][0]["blocks"] is False
+    assert payload["summary"]["blocking_checks"] == []

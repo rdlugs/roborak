@@ -357,6 +357,66 @@ again. `commits` may name only shas from that thread's own list.
     return RenderedPrompt(system=system, user=yaml.safe_dump(payload, sort_keys=False))
 
 
+def build_premerge_prompt(
+    *,
+    title: str,
+    description: str,
+    issue_title: str,
+    issue_body: str,
+    changed_files: list[str],
+    walkthrough_summary: str,
+) -> RenderedPrompt:
+    """Ask whether the change is described well enough to review.
+
+    One call for all three text checks, not three: the questions share every
+    input, and asking them separately would triple the cost to learn the same
+    thing. The deterministic gates have already run and passed by the time this
+    is built, so the model is only ever being asked about quality.
+
+    The prompt says plainly that a bare "no" costs the author a re-run and nothing
+    else, because the caller caps what this answer can do: an opinion here is
+    reported but never blocks a merge on its own.
+    """
+    system = f"""You judge whether a code change is described well enough for a
+reviewer to pick it up cold. You are not reviewing the code.
+
+Answer three questions, each with a boolean and one short sentence:
+
+- Does the title say what this change actually does?
+- Does the description explain the change and why it was made?
+- If an issue is linked, does the change plausibly belong to that issue?
+
+Reply with YAML and nothing else:
+
+title_ok: true
+title_note: ""
+description_ok: false
+description_note: "Says what changed but not why."
+linked_issue_ok: true
+linked_issue_note: ""
+
+Say `true` unless something is clearly wrong. A note is only worth writing when
+it names the specific thing missing; leave it empty otherwise. Omit
+`linked_issue_ok` entirely when no issue is given.
+
+{UNTRUSTED_DATA_RULE}"""
+
+    parts = [
+        f"Title:\n{_escape_untrusted(title)}",
+        f"Description:\n{_escape_untrusted(description) or '(none)'}",
+    ]
+    if issue_title or issue_body:
+        parts.append(
+            f"Linked issue:\n{_escape_untrusted(issue_title)}\n"
+            f"{_escape_untrusted(issue_body)[:2000]}"
+        )
+    if walkthrough_summary:
+        parts.append(f"What the change does:\n{_escape_untrusted(walkthrough_summary)}")
+    listed = "\n".join(f"- {_escape_untrusted(path)}" for path in changed_files[:50])
+    parts.append(f"Changed files:\n{listed}")
+    return RenderedPrompt(system=system, user="\n\n".join(parts))
+
+
 def build_reconciliation_prompt(
     *,
     issue: Issue | None,

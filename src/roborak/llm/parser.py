@@ -140,6 +140,25 @@ def parse_requirement_evidence(text: str) -> list[dict[str, str]]:
     return evidence
 
 
+def parse_premerge_opinion(text: str) -> dict[str, Any]:
+    """Read the pre-merge quality opinion, keeping only what the model was sure of.
+
+    A missing or unreadable key is left out rather than defaulted, because the
+    caller treats absence as "no opinion" and a default would turn a reply the
+    model never gave into one it did.
+    """
+    data = load_yaml_mapping(text)
+    opinion: dict[str, Any] = {}
+    for check in ("title", "description", "linked_issue"):
+        verdict = data.get(f"{check}_ok")
+        if isinstance(verdict, bool):
+            opinion[check] = verdict
+            note = data.get(f"{check}_note")
+            if isinstance(note, str) and note.strip():
+                opinion[f"{check}_note"] = note.strip()[:300]
+    return opinion
+
+
 def parse_compatibility_evidence(text: str) -> list[dict[str, str]]:
     """Read bounded cross-chunk contract evidence from a review response."""
     data = load_yaml_mapping(text)

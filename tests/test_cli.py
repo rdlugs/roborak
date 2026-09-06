@@ -294,7 +294,7 @@ def test_json_mode_emits_only_json(repo: Path):
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     assert "findings" in payload
 
 
@@ -312,6 +312,9 @@ def test_agent_mode_emits_only_json(repo: Path):
         # Present even on a change that touches no dependency: an absent key has
         # to keep meaning "the stage never ran".
         "supply_chain",
+        # Same contract: present even when every check passed, so an absent key
+        # keeps meaning the checks never ran.
+        "checks",
     }
 
 

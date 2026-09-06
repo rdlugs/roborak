@@ -35,6 +35,45 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   run a no-op. GitHub and GitLab behave identically; there is no new flag or
   config key, and `--repost` skips the pass.
 
+- **Four configurable pre-merge checks decide whether a change is ready to
+  merge, before anyone reads the diff.** The verdict answered one question -
+  did a finding reach the blocking floor - so policies that have nothing to do
+  with a line of code had to be enforced outside roborak or by hand. Docstring
+  coverage, a title check, a description check and a linked-issue check now run
+  as their own stage, each set to `off`, `warning` or `error` under a new
+  `pre_merge` config section. `off` does not run, render or reach the verdict;
+  `warning` is reported in the report and the summary comment and never blocks;
+  `error` also blocks the pre-merge verdict and the forge commit status.
+  Everything defaults to `warning`, so an upgrade reports without gating
+  anything.
+
+  Enforcement is deliberately not a severity. An `error` failure is a second,
+  independent reason to block rather than a finding forced to `critical`, which
+  would put a phantom bug in the severity table and every count derived from it.
+  Nothing here moves the exit code, which stays `--fail-on`'s alone over
+  findings. Docstring coverage measures the symbols the diff *touched* rather
+  than whole files, so a one-line fix in a legacy module is not judged by that
+  module, and it reads every language a tree-sitter grammar is available for; a
+  file with no grammar is left out of the count rather than counted as
+  undocumented. The title, description and linked-issue gates are deterministic
+  and still run under `--no-llm`, because a policy a project gates merges on
+  must not depend on a provider being reachable. On a local diff, which has no
+  request body, the description and linked-issue checks report *not applicable*
+  rather than failing. Raising one of the three text checks to `error` also buys
+  a model's opinion on whether the title and description describe the change;
+  that opinion is reported, marked advisory, and never blocks on its own, which
+  is the same bar `require_evidence` holds findings to. `ROBORAK_NO_PRE_MERGE`
+  switches all four off, and `ROBORAK_TITLE_CHECK` and its siblings set one.
+
+### Changed
+
+- **JSON output gains a `checks` block and moves to schema version 6.** It lists
+  every check that ran, passing ones included, and states `blocks` per result
+  rather than leaving it to be recomputed from level and outcome - an advisory
+  failure looks blocking by those two fields alone. `summary.blocking_checks`
+  names the checks that drove the verdict. The block is absent when the stage
+  never ran, and present but empty when every check is switched off.
+
 ## [0.8.0] - 2026-09-06
 
 ### Added

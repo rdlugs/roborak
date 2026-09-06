@@ -28,6 +28,7 @@ from roborak.core.icons import (
     SEVERITY_WORD,
 )
 from roborak.core.models import (
+    ChecksReport,
     Finding,
     ImpactMap,
     ImpactStatus,
@@ -46,7 +47,7 @@ from roborak.core.severity import (
     Kind,
     Severity,
 )
-from roborak.core.verdict import Verdict, gate_for, verdict_requested
+from roborak.core.verdict import Gate, Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.markdown import FLOW_SUMMARY
@@ -479,8 +480,26 @@ def _render_verdict(result: ReviewResult, console: Console) -> None:
     console.print(f"[{style}]{label}[/] [dim]{gate.summary_line()}[/]")
     source = "--fail-on" if gate.explicit else "review.block_on"
     console.print(f"[dim]floor: {gate.floor} (from {source}) · {gate.counts_line()}[/]")
+    _render_checks(result.checks, gate, console)
     if not gate.explicit:
         console.print(f"[dim]pass --fail-on {gate.floor} to gate the exit code on this[/]")
+
+
+def _render_checks(report: ChecksReport | None, gate: Gate, console: Console) -> None:
+    """Which pre-merge checks the verdict above is and is not counting.
+
+    ``--panels`` has no room for the table the report renders, but it cannot omit
+    this: a "pass" with a failed check underneath it and no word about the check
+    is the disagreement between surfaces that ``core.verdict`` exists to prevent.
+    """
+    if report is None:
+        return
+    if gate.failed_checks:
+        named = ", ".join(check.check.value for check in gate.failed_checks)
+        console.print(f"[dim]checks blocking (error): {named}[/]")
+    if warnings := report.warnings:
+        named = ", ".join(check.check.value for check in warnings)
+        console.print(f"[dim]checks failed but not counted (warning): {named}[/]")
 
 
 def _render_footer(result: ReviewResult, console: Console) -> None:

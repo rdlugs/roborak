@@ -128,6 +128,35 @@ supply_chain:
   # budget so it can never squeeze out a changed file.
   token_budget: 1200
 
+pre_merge:
+  # Merge-readiness policies about the change rather than about the code: the
+  # questions a reviewer asks before reading a diff at all. Every check takes a
+  # level -- `off` does not run, render or reach the verdict; `warning` reports
+  # without blocking; `error` joins the findings that block the pre-merge
+  # verdict and the forge commit status. Nothing here moves the exit code, which
+  # stays `--fail-on`'s alone.
+  docstring_coverage:
+    # How much of what the change touched carries documentation. Scoped to the
+    # symbols the diff touched, not whole files, so a one-line fix in a legacy
+    # module is not judged by that module. Measured for every language a
+    # tree-sitter grammar is available for; a file with no grammar is left out
+    # of the count rather than counted as undocumented.
+    level: warning
+    # The fraction of touched symbols that must be documented.
+    threshold: 0.8
+  title:
+    # The title is present, long enough, and not a placeholder such as "wip".
+    level: warning
+  description:
+    # The description carries prose of its own rather than an untouched
+    # template. Reported as not applicable on a local diff, which has no
+    # request body to hold one.
+    level: warning
+  linked_issue:
+    # The change names the tracked work it belongs to, through `Closes #123`
+    # in the title or description, an issue URL, or `--issue`.
+    level: warning
+
 impact:
   # Work outward from the symbols and contracts the change touched to the
   # unchanged code that depends on them, and show the model what it found. Every

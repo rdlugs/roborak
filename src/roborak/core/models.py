@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from roborak.core.severity import Category, Effort, Evidence, Kind, Severity
+from roborak.core.severity import Category, Effort, Enforcement, Evidence, Kind, Severity
 
 ChangeType = Literal["added", "modified", "deleted", "renamed"]
 Origin = Literal["local", "gitlab", "github", "paths"]
@@ -877,6 +877,94 @@ class InvestigationReport(BaseModel):
         return len(self.decisions) - len(self.settled)
 
 
+class CheckId(StrEnum):
+    """The pre-merge checks, named once so config, render and JSON agree."""
+
+    DOCSTRING_COVERAGE = "docstring_coverage"
+    TITLE = "title"
+    DESCRIPTION = "description"
+    LINKED_ISSUE = "linked_issue"
+
+
+class CheckOutcome(StrEnum):
+    """What one pre-merge check concluded."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    NOT_APPLICABLE = "not_applicable"
+    """There was nothing to measure: a local diff has no description, a changed
+    file has no grammar. Not a pass, because nobody checked anything."""
+
+    INCONCLUSIVE = "inconclusive"
+    """The check could not tell. Never counts as a pass or a failure, for the same
+    reason the investigation stage defaults to ``unresolved``: "we could not tell"
+    must never be recorded as "we checked"."""
+
+
+class CheckResult(BaseModel):
+    """One pre-merge check and what it concluded, ready for any surface."""
+
+    check: CheckId
+    level: Enforcement
+    """The configured level, carried here so no renderer has to re-read config to
+    say why a failure did or did not block."""
+
+    outcome: CheckOutcome
+    summary: str
+    """One line, short enough to survive a forge status description."""
+
+    detail: str = ""
+    """Markdown, may be several lines. Empty when the summary said it all."""
+
+    measured: float | None = None
+    threshold: float | None = None
+    """Populated by docstring coverage; ``None`` for checks that measure nothing."""
+
+    opinion: str = ""
+    """What the model said, when one ran. Empty under ``--no-llm`` and after a
+    provider failure, which are the same thing to a reader: no opinion was had."""
+
+    advisory: bool = False
+    """This failure came from the model alone, with no deterministic gate behind
+    it. Such a failure is reported but never blocks -- the same bar the evidence
+    policy sets for findings, applied to checks."""
+
+    @property
+    def blocks(self) -> bool:
+        return (
+            self.outcome is CheckOutcome.FAILED
+            and self.level is Enforcement.ERROR
+            and not self.advisory
+        )
+
+
+class ChecksReport(BaseModel):
+    """What the pre-merge checks concluded.
+
+    ``None`` on a ``ReviewResult`` means the stage never ran. A report with no
+    results means it ran and every check was switched off, which is a different
+    claim: one says nobody asked, the other says this project asked for nothing.
+    """
+
+    results: list[CheckResult] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    """Every reason a check could not do its job, in the reader's words."""
+
+    @property
+    def blocking(self) -> list[CheckResult]:
+        """The failures that reach the verdict. The single predicate for checks."""
+        return [result for result in self.results if result.blocks]
+
+    @property
+    def warnings(self) -> list[CheckResult]:
+        """Failures that are reported and deliberately left out of the verdict."""
+        return [
+            result
+            for result in self.results
+            if result.outcome is CheckOutcome.FAILED and not result.blocks
+        ]
+
+
 class FixVerdict(BaseModel):
     """Whether the commits after a published finding actually fixed it.
 
@@ -950,6 +1038,13 @@ class ReviewResult(BaseModel):
     candidate worth the call -- which is a different statement from a report whose
     status is ``unavailable``. One says nobody looked; the other says we wanted to
     and the checkout in front of us was not the code under review."""
+
+    checks: ChecksReport | None = None
+    """What the configurable pre-merge checks concluded about the change itself.
+
+    ``None`` means the stage never ran -- ``describe``, or a command that judges
+    nothing -- which is a different statement from a report with no results. One
+    says nobody asked; the other says this project switched every check off."""
 
     tokens_used: int = 0
     status: ReviewStatus = ReviewStatus.COMPLETE

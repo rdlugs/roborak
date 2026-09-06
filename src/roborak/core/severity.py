@@ -91,6 +91,25 @@ class Evidence(StrEnum):
         return self is not Evidence.UNVERIFIED
 
 
+class Enforcement(StrEnum):
+    """How much a pre-merge check is allowed to do about what it found.
+
+    Deliberately not a ``Severity``. Severity grades how bad a finding about the
+    code is; enforcement grades how much a policy about the change matters to this
+    project. Folding the two together would put "the description is empty" in the
+    severity table as a critical bug.
+    """
+
+    OFF = "off"
+    """The check does not run, render, or reach the verdict."""
+
+    WARNING = "warning"
+    """Reported, but a failure never blocks."""
+
+    ERROR = "error"
+    """A failure joins the findings that block the pre-merge verdict."""
+
+
 class Effort(StrEnum):
     """What the fix is likely to cost."""
 

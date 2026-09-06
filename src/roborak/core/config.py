@@ -24,7 +24,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from roborak.core.severity import Category, Severity
+from roborak.core.severity import Category, Enforcement, Severity
 from roborak.sandbox import in_ci
 
 log = logging.getLogger(__name__)
@@ -326,6 +326,32 @@ class SupplyChainConfig(ConfigModel):
     budget up front, so adding this section can never squeeze out a changed file."""
 
 
+class CheckConfig(ConfigModel):
+    """One pre-merge check. Every check has at least a level."""
+
+    level: Enforcement = Enforcement.WARNING
+
+
+class DocstringCoverageConfig(CheckConfig):
+    threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    """The fraction of diff-touched symbols that must carry documentation."""
+
+
+class PreMergeConfig(ConfigModel):
+    """Merge-readiness policies about the change rather than about the code.
+
+    These are the questions a reviewer asks before reading a diff at all: is the
+    title meaningful, is there a description, is an issue linked, did the change
+    document what it touched. Each defaults to ``warning``, so a project gets the
+    report without any of it deciding whether the change can merge.
+    """
+
+    docstring_coverage: DocstringCoverageConfig = Field(default_factory=DocstringCoverageConfig)
+    title: CheckConfig = Field(default_factory=CheckConfig)
+    description: CheckConfig = Field(default_factory=CheckConfig)
+    linked_issue: CheckConfig = Field(default_factory=CheckConfig)
+
+
 class LLMConfig(ConfigModel):
     model: str = "anthropic/claude-sonnet-5"
     fallback_models: list[str] = Field(default_factory=list)
@@ -421,6 +447,7 @@ class Config(ConfigModel):
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     impact: ImpactConfig = Field(default_factory=ImpactConfig)
     supply_chain: SupplyChainConfig = Field(default_factory=SupplyChainConfig)
+    pre_merge: PreMergeConfig = Field(default_factory=PreMergeConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -681,6 +708,12 @@ def _env_layer() -> dict[str, Any]:
     investigate_off = os.getenv("ROBORAK_NO_INVESTIGATE")
     if investigate_off and investigate_off not in {"0", "false", ""}:
         layer.setdefault("review", {}).setdefault("investigate", {})["enabled"] = False
+    pre_merge_off = os.getenv("ROBORAK_NO_PRE_MERGE")
+    for check in ("docstring_coverage", "title", "description", "linked_issue"):
+        if pre_merge_off and pre_merge_off not in {"0", "false", ""}:
+            layer.setdefault("pre_merge", {})[check] = {"level": Enforcement.OFF.value}
+        if level := os.getenv(f"ROBORAK_{check.upper()}_CHECK"):
+            layer.setdefault("pre_merge", {}).setdefault(check, {})["level"] = level
     return layer
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from roborak.core.config import (
     USER_CONFIG_PATH,
@@ -16,7 +17,7 @@ from roborak.core.config import (
     load_config,
     load_verification,
 )
-from roborak.core.severity import Category, Severity
+from roborak.core.severity import Category, Enforcement, Severity
 
 
 def test_user_config_default_path():
@@ -351,3 +352,64 @@ def test_the_shipped_template_matches_the_config_model(tmp_path: Path, monkeypat
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", tmp_path / "absent.yaml")
     monkeypatch.delenv("CI", raising=False)
     assert load_config(tmp_path).supply_chain.max_changes == 40
+
+
+def test_pre_merge_checks_default_to_warning(tmp_path: Path):
+    """Reporting by default, gating only when a project asks for it."""
+    config = load_config(tmp_path)
+    assert config.pre_merge.docstring_coverage.level is Enforcement.WARNING
+    assert config.pre_merge.docstring_coverage.threshold == 0.8
+    assert config.pre_merge.title.level is Enforcement.WARNING
+    assert config.pre_merge.description.level is Enforcement.WARNING
+    assert config.pre_merge.linked_issue.level is Enforcement.WARNING
+
+
+def test_a_project_can_raise_one_check_without_touching_the_others(tmp_path: Path):
+    (tmp_path / ".roborak.yaml").write_text(
+        "pre_merge:\n  title:\n    level: error\n  docstring_coverage:\n    threshold: 0.5\n"
+    )
+    config = load_config(tmp_path)
+    assert config.pre_merge.title.level is Enforcement.ERROR
+    assert config.pre_merge.description.level is Enforcement.WARNING
+    assert config.pre_merge.docstring_coverage.threshold == 0.5
+
+
+def test_no_pre_merge_switches_every_check_off(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("ROBORAK_NO_PRE_MERGE", "1")
+    config = load_config(tmp_path)
+    assert all(
+        check.level is Enforcement.OFF
+        for check in (
+            config.pre_merge.docstring_coverage,
+            config.pre_merge.title,
+            config.pre_merge.description,
+            config.pre_merge.linked_issue,
+        )
+    )
+
+
+def test_one_check_can_be_set_from_the_environment(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("ROBORAK_TITLE_CHECK", "error")
+    config = load_config(tmp_path)
+    assert config.pre_merge.title.level is Enforcement.ERROR
+    assert config.pre_merge.description.level is Enforcement.WARNING
+
+
+def test_a_named_check_beats_the_blanket_switch(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("ROBORAK_NO_PRE_MERGE", "1")
+    monkeypatch.setenv("ROBORAK_TITLE_CHECK", "error")
+    config = load_config(tmp_path)
+    assert config.pre_merge.title.level is Enforcement.ERROR
+    assert config.pre_merge.description.level is Enforcement.OFF
+
+
+def test_an_unknown_enforcement_level_is_rejected(tmp_path: Path):
+    (tmp_path / ".roborak.yaml").write_text("pre_merge:\n  title:\n    level: sometimes\n")
+    with pytest.raises(ValidationError):
+        load_config(tmp_path)
+
+
+def test_a_typo_under_pre_merge_is_rejected(tmp_path: Path):
+    (tmp_path / ".roborak.yaml").write_text("pre_merge:\n  titel:\n    level: error\n")
+    with pytest.raises(ValidationError):
+        load_config(tmp_path)
