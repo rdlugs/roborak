@@ -32,6 +32,7 @@ Severity-graded, line-anchored findings with committable fix suggestions.
 | 🔌 **Four sources, one pipeline** | Local git, GitLab MRs, GitHub PRs and raw paths all normalise into one IR, so output modes can never disagree. |
 | 🛠 **Static analysis as evidence** | Runs ruff, mypy, semgrep, eslint and phpstan - plus actionlint, hadolint and checkov for workflows, containers and IaC - with *your* config, and feeds the results to the model to confirm or explain. |
 | 💬 **Publishes where you're looking** | Inline threads for what's worth interrupting for, a summary comment for the rest, incremental so re-runs don't repeat themselves. |
+| ✅ **Closes what it opened** | Once later commits fix a finding, roborak says which commit did it and resolves its own thread - but only when the fix is verified against the history, never because the finding stopped appearing. |
 | 📦 **Reads the lockfile you don't** | Lockfiles stay out of the model's context - they're generated data - so a parser reads them instead and reports what actually moved: a swapped registry, a lost checksum, a mutable git ref, manifest/lock drift. Changes to CI workflows, Dockerfiles and Terraform get their own review checklists. |
 | 🧭 **Maps the blast radius** | Traces changed symbols, routes, events, config keys and env vars out to the unchanged code that depends on them, and says plainly when it could not look. |
 | 📋 **Issue-aware** | `--issue 42` judges the diff against what was actually asked, and reports the requirements it misses. |
@@ -341,6 +342,19 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
 - **Incremental review** fingerprints each finding independently of its line
   number, so re-running on a new push posts only what is genuinely new instead of
   repeating itself. State lives in `.roborak/state.json`; `--repost` overrides it.
+- **A thread is resolved only after the evidence that closes it has landed.**
+  A later `--post` revisits the actionable threads roborak opened and has not
+  closed, reads the commits between the thread's own anchor and the current head,
+  and asks whether they actually fix what was reported. Where they do, it replies
+  naming those commits and summarising what changed, and only then resolves the
+  thread - a comment closed without the reasoning that closed it is a finding that
+  vanished. Everything short of a verified, attributable fix leaves the thread
+  open: an untrusted checkout, a revision a shallow clone never fetched, a range
+  no commit touched the file in, a model that could not tell. Human comments, the
+  summary, nitpicks and already-resolved threads are never touched, and the
+  markers roborak leaves make a repeated run a no-op rather than a second copy.
+  On GitHub this uses the GraphQL API, which is the only one that can resolve a
+  review thread at all. `--repost` skips the pass.
 - **Existing review discussion is context, not instruction.** Forge reviews include
   bounded unresolved human comments by default, while dropping system notes, bots,
   stale positions and roborak's own output. `--no-discussions` disables it.

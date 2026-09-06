@@ -25,7 +25,13 @@ from roborak.core.models import (
     Walkthrough,
 )
 from roborak.core.severity import Severity
-from roborak.publish.base import PublishReport, RemoteState, SummaryRef, remote_state
+from roborak.publish.base import (
+    PublishReport,
+    RemoteState,
+    Resolution,
+    SummaryRef,
+    remote_state,
+)
 from roborak.publish.github import GitHubPublisher
 from roborak.publish.gitlab import GitLabPublisher
 from roborak.render import markdown
@@ -324,6 +330,11 @@ def review(
         else:
             result.walkthrough = overview.cached
 
+    resolutions: tuple[Resolution, ...] = ()
+    if publishing and not repost:
+        assert session.target is not None and remote is not None
+        resolutions = _resolutions(console, session, reviewer, result, remote)
+
     if publishing:
         assert session.target is not None and session.token is not None and remote is not None
         _publish(
@@ -338,6 +349,7 @@ def review(
             repost=repost,
             remote=remote,
             overview=overview,
+            resolutions=resolutions,
         )
 
     shared.emit(
@@ -510,6 +522,50 @@ def _cached_walkthrough(session: shared.Session) -> Walkthrough | None:
         return None
 
 
+def _resolutions(
+    console: Console,
+    session: shared.Session,
+    reviewer: Reviewer,
+    result: ReviewResult,
+    remote: RemoteState,
+) -> tuple[Resolution, ...]:
+    """Which of roborak's own open threads later commits have been shown to fix.
+
+    Runs before publishing rather than after, so that the summary a reader opens
+    is the one written once the threads it describes were closed. Skipped by
+    ``--repost``, which already means "ignore what an earlier run did".
+
+    Nothing here can fail the review. A thread whose verdict is anything short of
+    an attributable fix simply does not come back, and the comment stays open.
+    """
+    if not remote.open_threads or session.llm is None:
+        return ()
+
+    assert session.target is not None
+    key = review_key(
+        session.target.provider,
+        session.target.host,
+        session.target.project,
+        session.target.number,
+    )
+    fallback = StateStore(session.repo).get(key).last_head_sha
+
+    with console.status("[dim]checking which findings later commits fixed…[/]", spinner="dots"):
+        verdicts = reviewer.verify_fixes(
+            list(remote.open_threads),
+            session.changeset,
+            fallback_base=fallback,
+        )
+    reviewer.apply_usage(result)
+
+    by_key = {thread.key: thread for thread in remote.open_threads}
+    return tuple(
+        (by_key[verdict.thread], verdict)
+        for verdict in verdicts
+        if verdict.attributable and verdict.thread in by_key
+    )
+
+
 def _publish(
     console: Console,
     repo: Path,
@@ -523,6 +579,7 @@ def _publish(
     repost: bool,
     remote: RemoteState | None = None,
     overview: _Overview | None = None,
+    resolutions: tuple[Resolution, ...] = (),
 ) -> None:
     store = StateStore(repo)
     key = review_key(target.provider, target.host, target.project, target.number)
@@ -542,6 +599,7 @@ def _publish(
         seen_fingerprints=seen,
         summary_ref=overview.ref if overview else remote.summary,
         summary_refreshed=bool(overview and overview.refreshed),
+        resolutions=resolutions,
     )
 
     try:
@@ -564,6 +622,11 @@ def _publish(
     if report.failed:
         result.status = ReviewStatus.PARTIAL
         result.errors.append(f"could not post {len(report.failed)} inline comment(s)")
+    if report.resolution_failed:
+        # A visible partial failure rather than a warning: the alternative is a
+        # run that reported closing threads the forge never closed.
+        result.status = ReviewStatus.PARTIAL
+        result.errors.append(f"could not resolve {len(report.resolution_failed)} thread(s)")
 
 
 def _report_publish(console: Console, report: PublishReport) -> None:
@@ -579,6 +642,12 @@ def _report_publish(console: Console, report: PublishReport) -> None:
         console.print(f"[yellow]could not post {len(report.failed)} comment(s):[/]")
         for finding, reason in report.failed[:5]:
             console.print(f"  [dim]{finding.location}: {reason}[/]")
+    if report.resolved:
+        console.print(f"[green]resolved[/] {len(report.resolved)} thread(s) fixed by later commits")
+    if report.resolution_failed:
+        console.print(f"[yellow]could not resolve {len(report.resolution_failed)} thread(s):[/]")
+        for location, reason in report.resolution_failed[:5]:
+            console.print(f"  [dim]{location}: {reason}[/]")
     if report.summary_updated:
         console.print("[green]updated[/] the existing summary comment")
     elif report.summary_posted:

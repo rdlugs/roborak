@@ -877,6 +877,33 @@ class InvestigationReport(BaseModel):
         return len(self.decisions) - len(self.settled)
 
 
+class FixVerdict(BaseModel):
+    """Whether the commits after a published finding actually fixed it.
+
+    ``inconclusive`` is the default, and every failure in the pass lands on it:
+    an unusable checkout, a missing anchor revision, a provider error, a reply
+    that could not be read, a thread the model declined to name. A thread left
+    open costs a maintainer one click; a thread resolved on a guess buries a real
+    finding, so the two mistakes are not weighed equally here.
+    """
+
+    thread: str
+    """The forge's own handle for the thread, as roborak read it back."""
+
+    state: Literal["fixed", "not_fixed", "inconclusive"] = "inconclusive"
+    commits: list[str] = Field(default_factory=list)
+    """The revisions the fix is attributed to, newest first. A ``fixed`` verdict
+    naming none is not attributable, and the caller demotes it."""
+
+    summary: str = ""
+    """What changed, in the words that go into the thread reply."""
+
+    @property
+    def attributable(self) -> bool:
+        """Whether this verdict can carry an evidence reply and close a thread."""
+        return self.state == "fixed" and bool(self.commits) and bool(self.summary.strip())
+
+
 class ReviewResult(BaseModel):
     """Everything a review produced, ready for any renderer or publisher."""
 

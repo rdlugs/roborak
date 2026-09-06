@@ -56,7 +56,7 @@ Source → ChangeSet → Compressor → Static pass → LLM → Validator → Re
 | `src/roborak/supply/` | Parsing manifest and lockfile pairs into a bounded dependency delta, and classifying files by trust boundary |
 | `src/roborak/llm/` | Prompt construction, LiteLLM calls, chunking, response parsing |
 | `src/roborak/render/` | The one document: terminal, markdown, JSON, agent and summary forms |
-| `src/roborak/publish/` | Translating new-file coordinates into each forge's position payload |
+| `src/roborak/publish/` | Translating new-file coordinates into each forge's position payload, and retiring threads later commits fixed |
 | `src/roborak/cli/` | Typer commands; thin, with the work delegated downward |
 | `evals/` | Live reviewer-quality evaluation, deliberately outside PR CI |
 

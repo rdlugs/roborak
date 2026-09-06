@@ -38,6 +38,11 @@ MAX_PATTERN_CHARS = 200
 """Ceiling on a search pattern. A regular expression long enough to exceed this is
 not a question about the change."""
 
+SHA = re.compile(r"^[0-9a-f]{7,40}$")
+"""Both revisions reaching ``show_commits`` come from a forge payload rather than
+from configuration, so they are proved to be object names before they are argv.
+A revision is not a pathspec and ``--`` does not fence it."""
+
 
 @dataclass
 class ToolResult:
@@ -231,5 +236,113 @@ def show_diff(changeset: ChangeSet, path: str, *, config: InvestigateConfig) -> 
     body = "\n".join(hunk.header + "\n" + hunk.content for hunk in file.hunks)
     if not body.strip():
         return ToolResult(error=f"no diff text is available for {path}")
+    text, cut = bound(body, config.max_output_chars)
+    return ToolResult(text=text, truncated=cut)
+
+
+def _git(
+    repo: Path, *args: str, config: InvestigateConfig
+) -> subprocess.CompletedProcess[str] | None:
+    """One git command as argv, credential-free, or ``None`` if it could not run.
+
+    Separate from ``context.impact._git`` because that one returns only stdout on
+    success and runs with the caller's environment. This stage takes its arguments
+    from a model, so it gets the same ``safe_environment`` the search does.
+    """
+    try:
+        return subprocess.run(
+            ("git", *args),
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=safe_environment(),
+            timeout=config.timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def has_revision(repo: Path, revision: str, *, config: InvestigateConfig) -> bool:
+    """Whether this checkout actually holds ``revision``.
+
+    A shallow clone -- which is what most CI produces -- has the head and very
+    little else, so the commit a thread was anchored at is often simply absent.
+    That is "we cannot tell", not "nothing changed", and the caller must not read
+    an empty range as an answer.
+    """
+    if not SHA.match(revision):
+        return False
+    done = _git(repo, "cat-file", "-e", f"{revision}^{{commit}}", config=config)
+    return done is not None and done.returncode == 0
+
+
+def commits_touching(
+    repo: Path,
+    path: str,
+    *,
+    base: str,
+    head: str,
+    config: InvestigateConfig,
+) -> list[tuple[str, str]] | None:
+    """``(sha, subject)`` for each commit in ``base..head`` that touched ``path``.
+
+    ``None`` means the question could not be asked at all -- an unusable git, a
+    revision this checkout does not have -- which is distinct from the empty list,
+    meaning nothing in the range went near the file.
+    """
+    if not (SHA.match(base) and SHA.match(head)):
+        return None
+    if resolve_in_repo(repo, path) is None:
+        return None
+    done = _git(
+        repo,
+        "log",
+        "--no-merges",
+        "--format=%H%x00%s",
+        f"{base}..{head}",
+        "--",
+        path,
+        config=config,
+    )
+    if done is None or done.returncode != 0:
+        return None
+
+    commits: list[tuple[str, str]] = []
+    for line in done.stdout.splitlines():
+        sha, _, subject = line.partition("\0")
+        if SHA.match(sha):
+            commits.append((sha, subject.strip()))
+    return commits
+
+
+def show_commits(
+    repo: Path,
+    path: str,
+    *,
+    base: str,
+    head: str,
+    config: InvestigateConfig,
+) -> ToolResult:
+    """What happened to one file between two revisions: the log, then the diff.
+
+    The one operation the investigation surface did not have, because until now
+    every question it answered was about the change in front of it rather than
+    about the ones that came after a comment was written.
+    """
+    commits = commits_touching(repo, path, base=base, head=head, config=config)
+    if commits is None:
+        return ToolResult(error=f"could not read the history of {path} between those revisions")
+    if not commits:
+        return ToolResult(error=f"no commit between those revisions touched {path}")
+
+    done = _git(repo, "diff", "--unified=3", f"{base}..{head}", "--", path, config=config)
+    if done is None or done.returncode != 0:
+        return ToolResult(error=f"could not read the diff of {path} between those revisions")
+
+    log_lines = [f"{sha[:12]} {subject}" for sha, subject in commits]
+    body = "\n".join(log_lines) + "\n\n" + done.stdout
     text, cut = bound(body, config.max_output_chars)
     return ToolResult(text=text, truncated=cut)

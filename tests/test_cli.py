@@ -1290,6 +1290,7 @@ def _mr_session(monkeypatch):
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
+            resolutions=(),
         ):
             built["post_inline"] = post_inline
             built["post_summary"] = post_summary
@@ -1438,6 +1439,7 @@ def _empty_mr_session(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
+            resolutions=(),
         ):
             self._run = {"post_inline": post_inline, "post_summary": post_summary}
 
@@ -1542,6 +1544,7 @@ def _empty_pr_session(
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
+            resolutions=(),
         ):
             self._run = {
                 "number": target.number,
@@ -1651,6 +1654,7 @@ def _install_gitlab_session(monkeypatch, published: list, *, files: bool = True)
             seen_fingerprints,
             summary_ref=None,
             summary_refreshed=False,
+            resolutions=(),
         ):
             self._run = {"post_inline": post_inline, "post_summary": post_summary}
 

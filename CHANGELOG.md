@@ -8,6 +8,33 @@ flags, config schema and JSON output may change in a minor release.
 The release workflow reads the section for the tag being published and uses it as
 the GitHub Release body, so the `## [x.y.z] - date` heading format is load-bearing.
 
+## [Unreleased]
+
+### Added
+
+- **roborak resolves its own review threads once later commits have fixed them.**
+  Publishing was a one-way street: a finding went out and nothing ever looked at
+  it again, so an inline thread opened on one commit stayed open long after the
+  author pushed the fix, and the discussion never recorded which commit did the
+  work. A later `review --post` now revisits the actionable threads roborak
+  opened and has not closed, reads the commits between each thread's own anchor
+  and the current head, and asks whether they actually fix what was reported.
+  Where they do, it replies naming those commits and summarising what changed,
+  and only then resolves the thread.
+
+  The bar is a verified fix, never an absent one. A finding that stopped
+  appearing, or a commit that merely touched the surrounding code, proves
+  nothing, and everything short of an attributable fix leaves the thread open:
+  an untrusted checkout, a revision a shallow clone never fetched, a range no
+  commit touched the file in, a model that could not tell. Human comments, the
+  summary, nitpicks and already-resolved threads are never touched. The evidence
+  reply always precedes the resolve and never the other way round, and the two
+  fail independently: a reply that did not land skips the resolve entirely, and
+  either failure is reported as a partial publish rather than recorded as a
+  closure the forge never made. Markers left on the thread itself make a repeated
+  run a no-op. GitHub and GitLab behave identically; there is no new flag or
+  config key, and `--repost` skips the pass.
+
 ## [0.8.0] - 2026-09-06
 
 ### Added

@@ -65,11 +65,16 @@ Renderer → Publisher
   results), `availability.py` (whether this checkout *is* the reviewed change), `runner.py` (the
   round loop and confirm/revise/drop). Read-only by construction; nothing here writes, executes a
   repository-chosen command, or reaches the network.
+- `analysis/resolution.py` - the mirror of `investigate/`, run at publish time: whether the
+  commits since a published thread's anchor actually fixed what it reported. The commit range
+  is roborak's to choose, never the model's.
 - `analysis/reviewer.py` - the orchestrator (`review`, `describe`, `improve`, `ask`, `walkthrough`);
   `analysis/validator.py` - drops unanchored findings, snaps near misses, filters by confidence
   and severity, collapses duplicates.
 - `render/` - one result object, many forms: terminal, markdown, JSON, agent, prompt-only.
 - `publish/` - the only place new-file coordinates become a forge position payload.
+  `publish/threads.py` is the return path: roborak's own open threads, read back off the forge,
+  and the reply/resolve calls that retire them. GitHub needs GraphQL for all three.
 - `cli/` - thin Typer commands; `cli/shared.py` holds the shared `start`/`emit`/`finish` flow.
 - `state/store.py` - `.roborak/state.json`, for incremental review fingerprints.
 
@@ -99,6 +104,13 @@ Renderer → Publisher
   unparseable reply or a provider failure leaves the finding exactly as it arrived - "we could not
   tell" must never be recorded as "we checked". `validator.is_unproven_blocker` is the single
   predicate deciding both what gets investigated and what gets demoted; two copies would drift.
+- **A thread is resolved only after its evidence reply has landed.** `publish/threads.py` replies
+  before it resolves, never beside it: a comment closed without the reasoning that closed it is a
+  finding that vanished. The two calls fail independently and are recovered independently - the
+  `roborak:fixed` marker on the thread suppresses a second reply, and the forge's own resolved flag
+  keeps a closed thread out of the list - so nothing may record a closure the forge did not make.
+  `analysis/resolution.py` defaults every failure to `inconclusive` for the same reason the
+  investigation stage defaults to `unresolved`.
 - **A forge review never reads a checkout that is not the reviewed change.** Dynamic reads require
   a clean tree at the reviewed head SHA; otherwise roborak uses forge-supplied file content or
   reports the stage unavailable. `context/forge_checkout.py` may fetch its own tree when the local
