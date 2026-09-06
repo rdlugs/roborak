@@ -144,9 +144,16 @@ def _ask(
     known = {key: {sha for sha, _ in evidence[thread.key][0]} for key, thread in ids.items()}
     operations: list[dict[str, Any]] = []
     opened: set[str] = set()
+    tokens_spent = 0
 
     for round_index in range(1, config.max_rounds + 1):
-        final = round_index == config.max_rounds or len(opened) >= config.max_files
+        # Checked before the call for the same reason the round limit is: a spent
+        # budget makes this round the deciding one rather than a round wasted asking.
+        final = (
+            round_index == config.max_rounds
+            or len(opened) >= config.max_files
+            or tokens_spent >= config.token_budget
+        )
         prompt = build_resolution_prompt(
             threads=[_describe(key, thread, evidence) for key, thread in ids.items()],
             operations=operations,
@@ -164,6 +171,8 @@ def _ask(
         except Exception as exc:  # noqa: BLE001 - a failed stage never fails the review
             log.warning("resolution round %d failed: %s", round_index, exc)
             return {}
+
+        tokens_spent += len(reply) // 4
 
         try:
             verdicts = parse_resolution_verdicts(reply, valid_ids=set(ids), known_commits=known)

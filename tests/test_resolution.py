@@ -467,6 +467,23 @@ def test_the_model_may_read_the_current_file_before_deciding(repo):
     assert "SELECT * FROM s WHERE u = ?" in llm.prompts[1][1]
 
 
+def test_an_exhausted_token_budget_stops_the_stage_asking(repo):
+    """A budget spent asking must stop the rounds, not settle the thread on nothing."""
+    anchor = git(repo, "rev-parse", "HEAD")
+    fix_it(repo)
+    llm = ScriptedLLM(["requests:\n  - tool: read_file\n    path: app/auth.py\n    start: 1\n"])
+
+    [verdict] = run_verify(
+        [thread_at(repo, anchor)],
+        repo,
+        llm,
+        InvestigateConfig(max_rounds=5, token_budget=1),
+    )
+
+    assert verdict.state == "inconclusive"
+    assert llm.calls < 5
+
+
 def test_the_state_stores_head_stands_in_for_a_thread_with_no_anchor(repo):
     anchor = git(repo, "rev-parse", "HEAD")
     fixing = fix_it(repo)
