@@ -396,7 +396,14 @@ def test_a_forge_change_without_a_matching_checkout_is_unavailable(repo):
     assert "no tree to search" in result.notes[0]
 
 
-def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
+def test_a_forge_change_whose_head_is_checked_out_is_verified(repo):
+    """A clean local checkout at the head *is* the reviewed change, not limited.
+
+    ``head_present`` proves the working tree is checked out at ``head_sha`` and
+    clean, so the search reads exactly the code under review. Reporting it
+    ``limited`` would understate what the map knows, and would fetch a throwaway
+    checkout for a tree the user already has.
+    """
     write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
     write(repo, "checkout.py", "def pay():\n    return charge_card(1)\n")
     commit(repo)
@@ -407,9 +414,10 @@ def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
     changeset = changed(repo, "service.py", origin="gitlab", head=head)
     result = impact.analyse(changeset, repo, ImpactConfig())
 
-    assert result.status is ImpactStatus.LIMITED
+    assert result.status is ImpactStatus.CONSUMERS_FOUND
     assert node_named(result, "charge_card").consumers
-    assert "may not hold exactly the code under review" in result.notes[0]
+    assert "may not hold exactly the code under review" not in " ".join(result.notes)
+    assert "temporary checkout" not in " ".join(result.notes)
 
 
 def test_a_forge_change_whose_head_is_merely_in_the_object_database_is_not_searched(repo):

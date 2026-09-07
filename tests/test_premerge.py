@@ -338,6 +338,7 @@ def forge_change(repo: Path, head: str, content: str, *, carry: bool = False) ->
         for file in changeset.files:
             file.new_content = None
     changeset.head_sha = head
+    changeset.origin = "github"  # type: ignore[assignment]
     return changeset
 
 
@@ -470,6 +471,30 @@ def test_without_a_repo_the_check_still_runs_on_carried_content() -> None:
         config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
     )
     assert only(report, CheckId.DOCSTRING_COVERAGE).measured == 1.0
+
+
+def test_a_local_file_without_content_is_unreadable_not_read_from_the_commit(
+    committed: tuple[Path, str],
+) -> None:
+    """A local change carries its text; a missing one is unreadable, not stale.
+
+    The reviewed-commit fallback exists for forge changes alone. A local change
+    whose ``new_content`` is missing was unreadable, and reading the head commit
+    instead would measure text the change did not write -- here the committed
+    ``a.py`` holds ``PYTHON``, so a fallback would report a ratio the change
+    never produced.
+    """
+    repo, head = committed
+    report = run_checks(
+        changeset(changed("a.py", "python", None, 6, 6), origin="local", head_sha=head),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert result.measured is None
+    assert "could not be read" in result.summary
+    assert "no content available at the reviewed commit: `a.py`" in result.detail
 
 
 # --- title -------------------------------------------------------------------

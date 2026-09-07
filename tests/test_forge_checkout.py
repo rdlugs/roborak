@@ -330,15 +330,20 @@ def test_off_leaves_the_change_unavailable_and_fetches_nothing(
 def test_a_head_already_present_locally_is_searched_where_it_sits(
     local: Path, forge: Path, watch_scratch: list[Path]
 ) -> None:
-    """Nothing is fetched when the commit is already here, and it stays limited."""
+    """Nothing is fetched when the commit is already here, and it is verified.
+
+    A clean checkout at the head is the reviewed change, so the search runs
+    against it without a throwaway fetch and without the "may not hold exactly
+    the code under review" caveat.
+    """
     git(local, "fetch", "-q", "--depth=1", f"file://{forge}", "HEAD")
     git(local, "checkout", "-q", "FETCH_HEAD")
 
     result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
 
     assert watch_scratch == []
-    assert result.status is ImpactStatus.LIMITED
-    assert "may not hold exactly the code under review" in result.notes[0]
+    assert result.status is not ImpactStatus.LIMITED
+    assert "may not hold exactly the code under review" not in " ".join(result.notes)
 
 
 # --- degradation -------------------------------------------------------------

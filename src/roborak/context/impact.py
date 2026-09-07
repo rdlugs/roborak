@@ -298,10 +298,12 @@ def analyse_in(changeset: ChangeSet, tree: ReviewedTree, config: ImpactConfig) -
     if status is not None:
         return ImpactMap(status=status, notes=notes)
 
-    # A verified temporary checkout *is* the change under review, so the caveat
-    # that the tree may not match would be false. Only the local-checkout path,
-    # where a matching commit says nothing about the working directory, keeps it.
-    limited = changeset.origin in {"gitlab", "github"} and not fetched.verified
+    # A verified checkout *is* the change under review, so the caveat that the
+    # tree may not match would be false. ``present`` covers a clean local
+    # checkout at the head, ``fetched.verified`` a temporary one fetched and
+    # proven against ``head_sha``; only a forge change searched against a tree
+    # that is neither keeps the caveat.
+    limited = changeset.origin in {"gitlab", "github"} and not present and not fetched.verified
     nodes, parsed_any = _seed(changeset, repo, config)
     if not nodes:
         return ImpactMap(

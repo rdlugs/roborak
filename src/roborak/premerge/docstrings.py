@@ -97,7 +97,7 @@ def measure(changeset: ChangeSet, repo: Path | None = None) -> CoverageMeasureme
     for file in changeset.files:
         if file.change_type == "deleted" or file.is_binary or not file.hunks:
             continue
-        content = _content(file, repo, changeset.head_sha)
+        content = _content(file, repo, changeset.head_sha, changeset.origin)
         if content is None:
             unreadable.append(file.path)
             continue
@@ -115,10 +115,19 @@ def measure(changeset: ChangeSet, repo: Path | None = None) -> CoverageMeasureme
     )
 
 
-def _content(file: ChangedFile, repo: Path | None, head: str) -> str | None:
-    """The file's new text, from the change itself or from the reviewed commit."""
+def _content(file: ChangedFile, repo: Path | None, head: str, origin: str) -> str | None:
+    """The file's new text, from the change itself or from the reviewed commit.
+
+    The reviewed-commit fallback exists for forge changes alone: a merge or pull
+    request arrives as hunks, and the commit under review is the only place the
+    whole file lives. A local or path change already carries its text in
+    ``new_content``; when that is missing the file was unreadable, and reading the
+    head commit instead would measure stale text the change did not write.
+    """
     if file.new_content is not None:
         return file.new_content
+    if origin not in {"github", "gitlab"}:
+        return None
     if repo is None:
         return None
     return content_at_head(file, repo, head)
