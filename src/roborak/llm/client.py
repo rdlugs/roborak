@@ -32,6 +32,7 @@ class LLMResponse:
     completion_tokens: int = 0
     latency_ms: int = 0
     cost_usd: float | None = None
+    finish_reason: str | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -88,6 +89,7 @@ class LLMClient:
         raw_cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
         return LLMResponse(
             text=text,
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
             model=model,
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,

@@ -9,6 +9,7 @@ import {
   ASK_GROUPS,
   DESCRIBE_GROUPS,
   GLOBAL_FLAGS,
+  FIX_GROUPS,
   IMPROVE_GROUPS,
   REVIEW_GROUPS,
 } from "@/content/commands";
@@ -16,10 +17,10 @@ import {
 export default function Commands() {
   return (
     <>
-      <PageHead title="Commands" description="Full flag reference for review, describe, improve, ask, rules, config and setup." />
+      <PageHead title="Commands" description="Full flag reference for review, describe, improve, fix, ask, rules, config and setup." />
       <H1>Commands</H1>
       <Lead>
-        Seven commands, one shared way of naming a change. <Code>roborak</Code> and{" "}
+        Eight commands, one shared way of naming a change. <Code>roborak</Code> and{" "}
         <Code>rk</Code> are the same executable, and a bare invocation falls through to{" "}
         <Code>review</Code>.
       </Lead>
@@ -37,6 +38,7 @@ export default function Commands() {
             what: "Summarise a change: title, overview, per-file table, and a flow diagram.",
           },
           { cmd: "improve", what: "Propose concrete, committable improvements to the changed code." },
+          { cmd: "fix", what: "Preview and apply committable suggestions in a Git checkout." },
           { cmd: "ask", what: "Ask a question about the change, answered from the diff." },
           { cmd: "rules", what: "Inspect and test the project's review rules." },
           { cmd: "config", what: "Inspect and scaffold roborak's configuration." },
@@ -69,6 +71,25 @@ export default function Commands() {
         groups={IMPROVE_GROUPS}
         example={"rk improve --uncommitted --prompt-only"}
       />
+
+      <Cmd
+        name="fix"
+        synopsis="roborak fix [OPTIONS]"
+        summary="Preview eligible replacements, then confirm once before applying. Use --dry-run for a preview without writes or --yes for scripts and pipes. --json emits a dedicated fix report."
+        groups={FIX_GROUPS}
+        example={"rk fix --uncommitted --dry-run"}
+      />
+      <P>
+        Run from the Git repository root, or pass it with <Code>--dir</Code>.
+        Existing local edits are supported; fixes remain unstaged and preserve the index.
+        PR/MR targets require a clean checkout at the exact reviewed head. Merge conflicts
+        are refused. Changed snapshots, moved anchors, overlaps, and non-committable
+        suggestions are skipped with reasons. Reports separate applied, skipped, failed,
+        and eligible suggestions. Exit 0 covers completed runs, cancellation, and dry-run;
+        exit 2 indicates operational failure or incomplete generation. Writes are atomic
+        per file; failures retain successful changes in other files. No tests, formatting,
+        commits, or publishing run automatically.
+      </P>
 
       <Cmd
         name="ask"
