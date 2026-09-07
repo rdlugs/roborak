@@ -6,12 +6,12 @@ working tree may hold an unrelated branch. Reading it anyway would let roborak
 confirm or drop a finding on the strength of code that is not in the merge
 request -- the most expensive mistake this stage could make.
 
-The blast-radius pass answers a weaker version of this question with
-``git cat-file -e`` (``context/impact.py``), which proves the head commit was
-*fetched* rather than *checked out*, and then labels its own results as possibly
-stale. That is the right trade for a context pass whose output is prose. It is
-the wrong trade here, where the output moves a severity, so this module asks for
-equality instead.
+The blast-radius pass answers the same question with ``rev-parse HEAD`` plus a
+clean ``status --porcelain`` (``context/impact.py``): the working tree must be
+checked out at the reviewed head and carry no uncommitted changes, or the search
+fetches a throwaway checkout instead. That is the right trade for a context pass
+whose output is prose. It is the wrong trade here, where the output moves a
+severity, so this module asks for equality instead.
 """
 
 from __future__ import annotations

@@ -25,11 +25,28 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
+from roborak.analysis.reviewer import Reviewer
 from roborak.context import forge_checkout, impact
 from roborak.context.diff import whole_file_hunk
-from roborak.core.config import ForgeCheckout, ImpactConfig
-from roborak.core.models import ChangedFile, ChangeSet, ForgeRef, ImpactStatus
+from roborak.core.config import (
+    Config,
+    DocstringCoverageConfig,
+    ForgeCheckout,
+    ImpactConfig,
+    PreMergeConfig,
+)
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    CheckId,
+    CheckResult,
+    ForgeRef,
+    ImpactStatus,
+    ReviewResult,
+)
+from roborak.core.severity import Enforcement
 
 SERVICE = """\
     def charge_card(amount):
@@ -223,6 +240,78 @@ def test_a_server_that_refuses_a_bare_sha_falls_back_to_the_published_ref(
     assert result.nodes
 
 
+# --- one checkout, shared ----------------------------------------------------
+#
+# The blast radius and the docstring check both need a tree, and both used to be
+# told they could not have one. `Reviewer.review` fetches it, so these drive the
+# reviewer rather than `impact.analyse`: the claim is about who pays and how
+# often, which is not visible from inside either stage.
+
+
+def review_with(repo: Path, changeset: ChangeSet, config: Config, llm: Any = None) -> ReviewResult:
+    return Reviewer(config=config, repo=repo, llm=llm).review(changeset)
+
+
+def coverage(result: ReviewResult) -> CheckResult:
+    assert result.checks is not None
+    return next(
+        check for check in result.checks.results if check.check is CheckId.DOCSTRING_COVERAGE
+    )
+
+
+def test_the_docstring_check_measures_from_the_temporary_checkout(
+    local: Path, forge: Path, fetch_from: Callable[[Path | str], None]
+) -> None:
+    """Issue #81: a pull request used to report every file unparseable.
+
+    Under ``--no-llm``, so the deterministic gate is shown to stand on its own -- a
+    check a project can block merges on must not measure less because no model was
+    configured.
+    """
+    fetch_from(forge)
+
+    result = review_with(local, forge_change(head_of(forge)), Config())
+
+    check = coverage(result)
+    assert check.measured == 0.0  # `charge_card` carries no docstring
+    assert "charge_card" in check.detail
+
+
+def test_one_checkout_serves_both_stages(
+    local: Path,
+    forge: Path,
+    fetch_from: Callable[[Path | str], None],
+    watch_scratch: list[Path],
+) -> None:
+    """The point of hoisting it: two consumers, one fetch."""
+    from tests.test_pipeline import StubLLM
+
+    fetch_from(forge)
+
+    result = review_with(
+        local, forge_change(head_of(forge)), Config(), llm=StubLLM(reply="findings: []")
+    )
+
+    assert len(watch_scratch) == 1
+    assert result.impact is not None and result.impact.nodes
+    assert coverage(result).measured == 0.0
+
+
+def test_nothing_is_fetched_when_no_stage_would_read_a_tree(
+    local: Path, forge: Path, fetch_from: Callable[[Path | str], None], watch_scratch: list[Path]
+) -> None:
+    """A review with both consumers switched off must not pay for a clone."""
+    fetch_from(forge)
+    config = Config(
+        impact=ImpactConfig(enabled=False),
+        pre_merge=PreMergeConfig(docstring_coverage=DocstringCoverageConfig(level=Enforcement.OFF)),
+    )
+
+    review_with(local, forge_change(head_of(forge)), config)
+
+    assert watch_scratch == []
+
+
 # --- staying out of the way --------------------------------------------------
 
 
@@ -234,22 +323,27 @@ def test_off_leaves_the_change_unavailable_and_fetches_nothing(
     result = impact.analyse(forge_change(head_of(forge)), local, config)
 
     assert result.status is ImpactStatus.UNAVAILABLE
-    assert "no checkout to search" in result.notes[0]
+    assert "no tree to search" in result.notes[0]
     assert watch_scratch == []
 
 
 def test_a_head_already_present_locally_is_searched_where_it_sits(
     local: Path, forge: Path, watch_scratch: list[Path]
 ) -> None:
-    """Nothing is fetched when the commit is already here, and it stays limited."""
+    """Nothing is fetched when the commit is already here, and it is verified.
+
+    A clean checkout at the head is the reviewed change, so the search runs
+    against it without a throwaway fetch and without the "may not hold exactly
+    the code under review" caveat.
+    """
     git(local, "fetch", "-q", "--depth=1", f"file://{forge}", "HEAD")
     git(local, "checkout", "-q", "FETCH_HEAD")
 
     result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
 
     assert watch_scratch == []
-    assert result.status is ImpactStatus.LIMITED
-    assert "may not hold exactly the code under review" in result.notes[0]
+    assert result.status is not ImpactStatus.LIMITED
+    assert "may not hold exactly the code under review" not in " ".join(result.notes)
 
 
 # --- degradation -------------------------------------------------------------
@@ -308,7 +402,7 @@ def test_a_review_whose_fetch_fails_still_reports_why(
     result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
 
     assert result.status is ImpactStatus.UNAVAILABLE
-    assert "no checkout to search" in result.notes[0]
+    assert "no tree to search" in result.notes[0]
     assert "A temporary checkout of the change was attempted" in result.notes[1]
 
 
@@ -417,6 +511,42 @@ def test_a_checkout_that_cannot_be_removed_does_not_fail_the_review(
     monkeypatch.setattr(forge_checkout.shutil, "rmtree", refuse)
 
     forge_checkout._remove(scratch)  # must not raise
+
+
+def test_a_scratch_directory_that_cannot_be_created_degrades_to_a_note(
+    local: Path,
+    forge: Path,
+    fetch_from: Callable[[Path | str], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup failure is a note, not an exception: the review still runs.
+
+    ``mkdtemp`` runs before the cleanup ``try``, so a machine with no temporary
+    storage used to raise out of ``tree_for`` and abort the whole review before
+    either consumer's handler could catch it.
+    """
+    fetch_from(forge)
+
+    def refuse(*args: object, **kwargs: object) -> str:
+        raise OSError("no temporary storage")
+
+    monkeypatch.setattr(forge_checkout.tempfile, "mkdtemp", refuse)
+
+    result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
+
+    assert result.status is ImpactStatus.UNAVAILABLE
+    assert any("a temporary directory could not be created" in note for note in result.notes)
+
+
+def test_a_verified_checkout_must_name_the_repository_it_fetched() -> None:
+    """``verified`` is only ever true alongside a ``repo``, and the model enforces it.
+
+    The caveat the caller drops on a verified checkout is only honest when there
+    is a tree to point at, so a ``Checkout`` that claims verification without one
+    is rejected at construction rather than trusted downstream.
+    """
+    with pytest.raises(ValidationError):
+        forge_checkout.Checkout(verified=True)
 
 
 # --- credentials -------------------------------------------------------------

@@ -18,10 +18,12 @@ language as unmeasurable would tell a reader less than measuring it and saying s
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from roborak.context.ast_context import SYMBOL_TYPES, node_name, parse, walk
+from roborak.context.impact import content_at_head
 from roborak.core.models import ChangedFile, ChangeSet
 
 
@@ -42,8 +44,24 @@ class CoverageMeasurement:
 
     symbols: list[SymbolCoverage]
     unparsed_files: list[str]
-    """Changed files with no grammar available. Excluded from the denominator
+    """Changed files a grammar could not read. Excluded from the denominator
     rather than counted as undocumented: we did not look, so we cannot say."""
+
+    unreadable_files: list[str] = field(default_factory=list)
+    """Changed files whose new text could not be obtained at all.
+
+    Excluded for the same reason and reported separately, because they are a
+    different fact. Blaming a missing grammar for a file nobody managed to read
+    sends the reader to look for a tree-sitter package that would not have helped.
+    """
+
+    parsed_any: bool = False
+    """Whether any eligible file was read and parsed, symbols or not.
+
+    A file the grammar read perfectly well can still yield no touched symbol, and
+    that is not the same fact as a file nobody could read. The no-ratio summary
+    needs this to tell "nothing was readable" from "nothing was touched".
+    """
 
     @property
     def documented(self) -> int:
@@ -63,22 +81,56 @@ class CoverageMeasurement:
         return [symbol for symbol in self.symbols if not symbol.documented]
 
 
-def measure(changeset: ChangeSet) -> CoverageMeasurement:
-    """Documentation coverage over the symbols this change touched."""
+def measure(changeset: ChangeSet, repo: Path | None = None) -> CoverageMeasurement:
+    """Documentation coverage over the symbols this change touched.
+
+    ``repo`` is the tree the change lives in, and only the forge sources need it:
+    they carry hunks alone, so without it every pull request measured nothing and
+    reported itself unparseable. The content is read by sha out of the reviewed
+    commit and used for the parse only -- writing it back onto the changeset would
+    put whole files into the compressor's budget and the anchoring path.
+    """
     symbols: list[SymbolCoverage] = []
     unparsed: list[str] = []
+    unreadable: list[str] = []
+    parsed_any = False
     for file in changeset.files:
         if file.change_type == "deleted" or file.is_binary or not file.hunks:
             continue
-        if file.new_content is None:
-            unparsed.append(file.path)
+        content = _content(file, repo, changeset.head_sha, changeset.origin)
+        if content is None:
+            unreadable.append(file.path)
             continue
-        tree = parse(file.language, file.new_content)
+        tree = parse(file.language, content)
         if tree is None:
             unparsed.append(file.path)
             continue
+        parsed_any = True
         symbols.extend(_symbols_for(file, tree))
-    return CoverageMeasurement(symbols=symbols, unparsed_files=unparsed)
+    return CoverageMeasurement(
+        symbols=symbols,
+        unparsed_files=unparsed,
+        unreadable_files=unreadable,
+        parsed_any=parsed_any,
+    )
+
+
+def _content(file: ChangedFile, repo: Path | None, head: str, origin: str) -> str | None:
+    """The file's new text, from the change itself or from the reviewed commit.
+
+    The reviewed-commit fallback exists for forge changes alone: a merge or pull
+    request arrives as hunks, and the commit under review is the only place the
+    whole file lives. A local or path change already carries its text in
+    ``new_content``; when that is missing the file was unreadable, and reading the
+    head commit instead would measure stale text the change did not write.
+    """
+    if file.new_content is not None:
+        return file.new_content
+    if origin not in {"github", "gitlab"}:
+        return None
+    if repo is None:
+        return None
+    return content_at_head(file, repo, head)
 
 
 def _symbols_for(file: ChangedFile, tree: Any) -> list[SymbolCoverage]:

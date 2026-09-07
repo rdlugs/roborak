@@ -42,7 +42,7 @@ from roborak.core.models import (
     VerificationReport,
     Walkthrough,
 )
-from roborak.core.severity import Kind
+from roborak.core.severity import Enforcement, Kind
 from roborak.investigate.runner import investigate
 from roborak.llm.client import LLMClient, LLMError, LLMResponse
 from roborak.llm.parser import (
@@ -106,9 +106,11 @@ class Reviewer:
     forge_token: str | None = None
     """Credentials for the forge the change came from, when the CLI had any.
 
-    Used by one stage only: the blast-radius pass, to fetch a temporary checkout
-    of a private merge or pull request whose head this machine has never seen. It
-    is never needed when the local remote already authenticates."""
+    Used for one thing: fetching a temporary checkout of a private merge or pull
+    request whose head this machine has never seen. Both stages that read a tree --
+    the blast radius and the docstring check -- share that one checkout, so this is
+    still spent at most once a review. It is never needed when the local remote
+    already authenticates."""
 
     _rules: list[object] | None = field(default=None, repr=False)
     _rules_key: str | None = field(default=None, repr=False)
@@ -155,10 +157,10 @@ class Reviewer:
         if not self._prepare(changeset, result):
             # Every file filtered out, so there is nothing for an opinion to weigh.
             # The deterministic gates still have a title and a description to judge.
-            result.checks = self._premerge_checks(changeset)
+            result.checks = self._premerge_checks(changeset, self.repo)
             return result
 
-        result.impact = self._impact = self._blast_radius(changeset)
+        self._read_the_tree(changeset, result)
 
         findings = list(self.static_findings)
         if self.llm is not None:
@@ -171,20 +173,18 @@ class Reviewer:
 
         result.investigation = self._investigate(findings, changeset)
 
-        result.checks = self._premerge_checks(changeset)
-
         result.findings = validator.validate(findings, changeset, self.config)
         self.apply_usage(result)
         return result
 
-    def _premerge_checks(self, changeset: ChangeSet) -> ChecksReport:
+    def _premerge_checks(self, changeset: ChangeSet, repo: Path) -> ChecksReport:
         """The configurable merge-readiness checks, which never end a review.
 
         Degrades the way the blast radius does: a stage that cannot run reports
         what it could not do, because an absent report reads as "never asked".
         """
         try:
-            return run_checks(changeset, self.config.pre_merge, issue=self.issue)
+            return run_checks(changeset, self.config.pre_merge, repo=repo, issue=self.issue)
         except Exception as exc:  # noqa: BLE001 - no check is worth failing a review over
             log.warning("pre-merge checks did not run: %s", exc)
             return ChecksReport(notes=[f"The pre-merge checks did not run: {exc}"])
@@ -368,7 +368,44 @@ class Reviewer:
         )
         return self._complete("ask", prompt.system, prompt.user).text.strip()
 
-    def _blast_radius(self, changeset: ChangeSet) -> ImpactMap | None:
+    def _read_the_tree(self, changeset: ChangeSet, result: ReviewResult) -> None:
+        """The two stages that need a tree, run against one checkout of the change.
+
+        A merge or pull request arrives as a diff, and both the blast radius and
+        the docstring check need the whole file: one to find the unchanged callers
+        of a changed symbol, the other to parse the symbol at all. When the
+        reviewed head is not in this repository ``forge_checkout`` fetches a
+        throwaway one, and it is fetched *here* so that the second stage reads the
+        tree the first one paid for instead of cloning again.
+
+        Scoped as tightly as the work it serves. Both stages are local and finish
+        in seconds; running them inside the ``with`` block rather than around the
+        whole review means the temporary clone is deleted before the model calls
+        start rather than sitting on disk for the length of them.
+        """
+        with impact.tree_for(
+            changeset,
+            self.repo,
+            self.config.impact,
+            wanted=self._wants_tree(),
+            forge_token=self.forge_token,
+        ) as tree:
+            result.impact = self._impact = self._blast_radius(changeset, tree)
+            result.checks = self._premerge_checks(changeset, tree.repo)
+
+    def _wants_tree(self) -> bool:
+        """Whether any stage in this review would read a tree it may not have.
+
+        The docstring check counts even under ``--no-llm``: the pre-merge gates are
+        deterministic on purpose, so what they can measure must not depend on a
+        model being configured. ``impact.forge_checkout: off`` remains the single
+        switch that stops a review reaching the network for repository content.
+        """
+        return (self.config.impact.enabled and self.llm is not None) or (
+            self.config.pre_merge.docstring_coverage.level is not Enforcement.OFF
+        )
+
+    def _blast_radius(self, changeset: ChangeSet, tree: impact.ReviewedTree) -> ImpactMap | None:
         """What the change reaches, or ``None`` when nobody asked.
 
         Non-fatal by construction, the same way the overview pass is. A review
@@ -379,9 +416,7 @@ class Reviewer:
         if not self.config.impact.enabled or self.llm is None:
             return None
         try:
-            return impact.analyse(
-                changeset, self.repo, self.config.impact, forge_token=self.forge_token
-            )
+            return impact.analyse_in(changeset, tree, self.config.impact)
         except Exception as exc:  # noqa: BLE001 - context is optional; a review is not
             log.warning("blast-radius analysis failed; reviewing without it: %s", exc)
             return ImpactMap(

@@ -31,9 +31,13 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+from pydantic import BaseModel
 
 from roborak.context import ast_context, forge_checkout
 from roborak.context.diff import detect_language
@@ -233,41 +237,73 @@ _LITERAL_NODES = frozenset(
 """Node types a name can appear inside without being a reference to anything."""
 
 
-def analyse(
-    changeset: ChangeSet, repo: Path, config: ImpactConfig, *, forge_token: str | None = None
-) -> ImpactMap:
-    """Map the blast radius of ``changeset``, as far as the evidence allows.
+class ReviewedTree(BaseModel):
+    """A tree the reviewed change can be read out of, and where it came from."""
 
-    A forge change whose head commit is nowhere local used to end here: no tree,
-    no consumers, nothing to say. ``forge_checkout`` fetches a throwaway one, so
-    the search runs against exactly the reviewed commit. Its lifetime is this
-    call -- every path below reads the tree while the map is being built, and
-    none of them holds a reference to it afterwards.
-    """
-    present = _head_present(changeset, repo)
-    with forge_checkout.acquire(
-        changeset, repo, config, head_present=present, token=forge_token
-    ) as fetched:
-        return _analyse(changeset, fetched.repo or repo, config, fetched=fetched, present=present)
+    repo: Path
+    """The local checkout, or the temporary one when this machine lacked the head."""
+
+    fetched: forge_checkout.Checkout
+    head_present: bool
+    """Whether the local working tree is a clean checkout of the reviewed head.
+    What the caveats on the map are built from, so it travels with the tree."""
 
 
-def _analyse(
+@contextmanager
+def tree_for(
     changeset: ChangeSet,
     repo: Path,
     config: ImpactConfig,
     *,
-    fetched: forge_checkout.Checkout,
-    present: bool,
+    wanted: bool = True,
+    forge_token: str | None = None,
+) -> Iterator[ReviewedTree]:
+    """A tree for ``changeset``, for as long as the ``with`` block runs.
+
+    A forge change whose head commit is nowhere local used to end the blast radius
+    here: no tree, no consumers, nothing to say. ``forge_checkout`` fetches a
+    throwaway one, so the search runs against exactly the reviewed commit.
+
+    The composition lives here rather than inside ``analyse`` because it now has
+    two consumers -- the blast radius and the docstring check -- and ``review``
+    runs both against one checkout. Two spellings of "which tree is this change
+    in" would drift, and the one that drifted would be the one nobody ran.
+
+    ``wanted`` is the caller saying no stage of this review will read the tree, so
+    nothing should be fetched for it; the local checkout is yielded either way.
+    """
+    present = head_present(changeset, repo)
+    with forge_checkout.acquire(
+        changeset, repo, config, head_present=present or not wanted, token=forge_token
+    ) as fetched:
+        yield ReviewedTree(repo=fetched.repo or repo, fetched=fetched, head_present=present)
+
+
+def analyse(
+    changeset: ChangeSet, repo: Path, config: ImpactConfig, *, forge_token: str | None = None
 ) -> ImpactMap:
-    """The map itself, against whichever tree ``analyse`` settled on."""
+    """Map the blast radius of ``changeset``, fetching a tree if it needs one.
+
+    For a caller that wants the map and nothing else. ``review`` holds the tree
+    itself, because the docstring check reads the same one.
+    """
+    with tree_for(changeset, repo, config, forge_token=forge_token) as tree:
+        return analyse_in(changeset, tree, config)
+
+
+def analyse_in(changeset: ChangeSet, tree: ReviewedTree, config: ImpactConfig) -> ImpactMap:
+    """The map itself, against whichever tree the caller settled on."""
+    repo, fetched, present = tree.repo, tree.fetched, tree.head_present
     status, notes = _availability(changeset, fetched=fetched, present=present)
     if status is not None:
         return ImpactMap(status=status, notes=notes)
 
-    # A verified temporary checkout *is* the change under review, so the caveat
-    # that the tree may not match would be false. Only the local-checkout path,
-    # where a matching commit says nothing about the working directory, keeps it.
-    limited = changeset.origin in {"gitlab", "github"} and not fetched.verified
+    # A verified checkout *is* the change under review, so the caveat that the
+    # tree may not match would be false. ``present`` covers a clean local
+    # checkout at the head, ``fetched.verified`` a temporary one fetched and
+    # proven against ``head_sha``; only a forge change searched against a tree
+    # that is neither keeps the caveat.
+    limited = changeset.origin in {"gitlab", "github"} and not present and not fetched.verified
     nodes, parsed_any = _seed(changeset, repo, config)
     if not nodes:
         return ImpactMap(
@@ -362,24 +398,32 @@ def _availability(
     # all. Reported alongside rather than instead of, because "we could not fetch
     # one either" is the more specific half of the same answer.
     return ImpactStatus.UNAVAILABLE, [
-        "This change was fetched from the forge and the working directory does not "
-        "hold its head commit, so there was no checkout to search for consumers.",
+        "This change was fetched from the forge and the working directory is not a "
+        "clean checkout of its head commit, so there was no tree to search for consumers.",
         *fetched.notes,
     ]
 
 
-def _head_present(changeset: ChangeSet, repo: Path) -> bool:
-    """Whether ``repo`` already holds the reviewed commit.
+def head_present(changeset: ChangeSet, repo: Path) -> bool:
+    """Whether ``repo``'s working tree is the reviewed commit, clean.
 
-    The one probe behind two decisions -- whether the local checkout can be
-    searched, and whether it is worth fetching another one -- so the two can
-    never answer it differently. ``cat-file -e`` proves the object was *fetched*,
-    not that it is checked out, which is why anything built on it stays limited.
+    The search reads working-tree and untracked files, so the commit merely
+    sitting in the object database is not enough: the tree on disk must be
+    checked out at the head and carry no uncommitted changes, or the search
+    would read code that is not the change under review. ``rev-parse HEAD``
+    proves the checkout is at the head, and ``status --porcelain`` proves it is
+    clean; either failing sends the caller to fetch a throwaway checkout.
     """
     if changeset.origin in {"local", "paths"}:
         return True
     head = changeset.head_sha
-    return bool(head) and _git(repo, "cat-file", "-e", f"{head}^{{commit}}") is not None
+    if not head:
+        return False
+    checked_out = (_git(repo, "rev-parse", "HEAD") or "").strip()
+    if checked_out != head:
+        return False
+    dirty = _git(repo, "status", "--porcelain")
+    return dirty is not None and not dirty.strip()
 
 
 def _git(repo: Path, *args: str, timeout: float = 10) -> str | None:
@@ -415,7 +459,7 @@ def _seed(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> tuple[list[
     for file in changeset.files:
         if file.is_binary or file.change_type == "deleted":
             continue
-        content = _content(file, repo, changeset.head_sha)
+        content = content_at_head(file, repo, changeset.head_sha)
         if content is None:
             continue
         # A copy, never the changeset's own file: content read here is evidence
@@ -435,7 +479,7 @@ def _seed(changeset: ChangeSet, repo: Path, config: ImpactConfig) -> tuple[list[
     return nodes, parsed_any
 
 
-def _content(file: ChangedFile, repo: Path, head: str) -> str | None:
+def content_at_head(file: ChangedFile, repo: Path, head: str) -> str | None:
     """The new text of a changed file, from the change or from the reviewed tree.
 
     Only the local and path sources populate ``new_content``; a merge or pull
@@ -444,6 +488,11 @@ def _content(file: ChangedFile, repo: Path, head: str) -> str | None:
     untraceable rather than untraced. Reading it back out of the commit under
     review costs one ``git show`` per changed file and is the same text the forge
     would have sent.
+
+    Shared with the docstring-coverage check, which needs a parse tree for exactly
+    the same reason and was reporting every forge change unmeasurable without one.
+    A blob addressed by sha is the reviewed change whatever the working tree holds,
+    which is what makes this safe where reading the checkout would not be.
     """
     if file.new_content is not None:
         return file.new_content

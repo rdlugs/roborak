@@ -190,7 +190,11 @@ export default function Configuration() {
         one-line fix in a legacy module is not judged by that module. It works for every language a
         tree-sitter grammar is available for &mdash; a leading string in the body, or a comment on
         the line directly above &mdash; and a file with no grammar is left out of the count rather
-        than counted as undocumented. The title, description and linked-issue gates are
+        than counted as undocumented. So is one whose content could not be read, which is reported
+        as unread rather than blamed on a missing grammar. A merge or pull request arrives as a
+        diff, so the changed files are read back out of the reviewed commit, through the same
+        temporary checkout <Code>impact.forge_checkout</Code> fetches when this repository does not
+        have that commit. The title, description and linked-issue gates are
         deterministic, so they still run under <Code>--no-llm</Code>: a policy you gate merges on
         must not depend on a provider being reachable. On a local diff, which has no request body,
         the description and linked-issue checks report <em>not applicable</em> rather than failing.
@@ -288,7 +292,7 @@ export default function Configuration() {
           "  max_snippet_lines: 6",
           "  token_budget: 1500        # prompt tokens the consumer snippets may occupy",
           "  timeout_seconds: 10",
-          "  forge_checkout: auto      # fetch a temporary checkout of a PR/MR this repo lacks",
+          "  forge_checkout: auto      # temporary checkout of a PR/MR this repo lacks; shared",
           "  forge_checkout_timeout_seconds: 60",
         ].join("\n")}
       />
@@ -321,6 +325,12 @@ export default function Configuration() {
         edit the file. The blast radius then reports <Code>unavailable</Code> for those reviews,
         as it did before. A fetch that fails for any reason degrades to a note and never fails
         the review.
+      </P>
+      <P>
+        One checkout serves the whole review. The docstring-coverage check needs the same tree for
+        the same reason - a diff alone does not parse - so it reads whichever tree this stage
+        settled on instead of fetching a second one, and it does so under <Code>--no-llm</Code>
+        too. Turning <Code>forge_checkout</Code> off therefore leaves both without one.
       </P>
 
       <H3>review.investigate</H3>

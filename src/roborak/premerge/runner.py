@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from roborak.core.config import PreMergeConfig
 from roborak.core.models import (
@@ -37,6 +38,7 @@ def run_checks(
     changeset: ChangeSet,
     config: PreMergeConfig,
     *,
+    repo: Path | None = None,
     issue: Issue | None = None,
     walkthrough: Walkthrough | None = None,
     complete: Complete | None = None,
@@ -46,11 +48,19 @@ def run_checks(
     ``complete`` is ``None`` under ``--no-llm`` and whenever no model is
     configured, which is exactly why the gates are deterministic: the checks a
     project gates its merges on must not depend on a provider being reachable.
+
+    ``repo`` is the tree the reviewed change can be read out of, which for a merge
+    or pull request may be a temporary checkout rather than the user's own. Only
+    the docstring check wants it, and only because a diff alone does not parse.
     """
     report = ChecksReport()
 
     if config.docstring_coverage.level is not Enforcement.OFF:
-        _run(report, lambda: _docstring_coverage(changeset, config), CheckId.DOCSTRING_COVERAGE)
+        _run(
+            report,
+            lambda: _docstring_coverage(changeset, config, repo),
+            CheckId.DOCSTRING_COVERAGE,
+        )
     if config.title.level is not Enforcement.OFF:
         _run(report, lambda: check_title(changeset, config.title.level), CheckId.TITLE)
     if config.description.level is not Enforcement.OFF:
@@ -114,23 +124,22 @@ def _run(report: ChecksReport, check: Callable[[], CheckResult], name: CheckId) 
         report.notes.append(f"The {name.value} check could not run: {exc}")
 
 
-def _docstring_coverage(changeset: ChangeSet, config: PreMergeConfig) -> CheckResult:
+def _docstring_coverage(
+    changeset: ChangeSet, config: PreMergeConfig, repo: Path | None = None
+) -> CheckResult:
     """Documentation coverage over the symbols the diff touched."""
     level = config.docstring_coverage.level
     threshold = config.docstring_coverage.threshold
-    measurement = docstrings.measure(changeset)
+    measurement = docstrings.measure(changeset, repo)
     ratio = measurement.ratio
 
     if ratio is None:
-        summary = "No documentable symbols were touched."
-        if measurement.unparsed_files:
-            summary = "None of the changed files could be parsed for symbols."
         return CheckResult(
             check=CheckId.DOCSTRING_COVERAGE,
             level=level,
             outcome=CheckOutcome.NOT_APPLICABLE,
-            summary=summary,
-            detail=_unparsed_note(measurement.unparsed_files),
+            summary=_nothing_measured(measurement),
+            detail=_notes(measurement),
             threshold=threshold,
         )
 
@@ -145,7 +154,7 @@ def _docstring_coverage(changeset: ChangeSet, config: PreMergeConfig) -> CheckRe
         detail_parts.append(f"Undocumented:\n{listed}")
         if len(measurement.undocumented) > 10:
             detail_parts.append(f"...and {len(measurement.undocumented) - 10} more.")
-    if note := _unparsed_note(measurement.unparsed_files):
+    if note := _notes(measurement):
         detail_parts.append(note)
 
     return CheckResult(
@@ -159,10 +168,42 @@ def _docstring_coverage(changeset: ChangeSet, config: PreMergeConfig) -> CheckRe
     )
 
 
-def _unparsed_note(paths: list[str]) -> str:
+def _nothing_measured(measurement: docstrings.CoverageMeasurement) -> str:
+    """Why there is no ratio, distinguishing the three ways that happens.
+
+    A change whose files could not be read is not a change no grammar covers, and
+    neither is a change that touched no symbol. Reporting all three as the middle
+    one sent the reader looking for a tree-sitter package that would not have
+    helped -- which is what every forge review used to say.
+
+    ``parsed_any`` is the tie-breaker for the mixed case: one unreadable file
+    beside one the grammar read but found no symbol in is not "all unreadable",
+    and saying so would blame a missing grammar for a file that was never read.
+    """
+    if measurement.parsed_any:
+        return "No documentable symbols were touched."
+    if measurement.unreadable_files and not measurement.unparsed_files:
+        return "The changed files could not be read at the reviewed commit."
+    if measurement.unparsed_files:
+        return "None of the changed files could be parsed for symbols."
+    return "No documentable symbols were touched."
+
+
+def _notes(measurement: docstrings.CoverageMeasurement) -> str:
     """Say what was not measured, rather than counting it as undocumented."""
+    return "\n\n".join(
+        note
+        for note in (
+            _listed(measurement.unparsed_files, "no grammar available"),
+            _listed(measurement.unreadable_files, "no content available at the reviewed commit"),
+        )
+        if note
+    )
+
+
+def _listed(paths: list[str], reason: str) -> str:
     if not paths:
         return ""
     listed = ", ".join(f"`{path}`" for path in paths[:5])
     more = f" and {len(paths) - 5} more" if len(paths) > 5 else ""
-    return f"Not measured, no grammar available: {listed}{more}."
+    return f"Not measured, {reason}: {listed}{more}."
