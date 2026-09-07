@@ -67,6 +67,11 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- Pre-merge results and the overall verdict now share one `ℹ️ Pre-merge checks`
+  dropdown. Results have readable status icons, and any failed check expands the
+  section, including warning and advisory failures that leave the verdict at pass.
+  Verdict calculations and exit codes are unchanged.
+
 - **JSON output gains a `checks` block and moves to schema version 6.** It lists
   every check that ran, passing ones included, and states `blocks` per result
   rather than leaving it to be recomputed from level and outcome - an advisory
