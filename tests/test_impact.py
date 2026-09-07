@@ -393,7 +393,7 @@ def test_a_forge_change_without_a_matching_checkout_is_unavailable(repo):
 
     assert result.status is ImpactStatus.UNAVAILABLE
     assert result.nodes == []
-    assert "no checkout to search" in result.notes[0]
+    assert "no tree to search" in result.notes[0]
 
 
 def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
@@ -410,6 +410,52 @@ def test_a_forge_change_whose_head_is_checked_out_is_limited(repo):
     assert result.status is ImpactStatus.LIMITED
     assert node_named(result, "charge_card").consumers
     assert "may not hold exactly the code under review" in result.notes[0]
+
+
+def test_a_forge_change_whose_head_is_merely_in_the_object_database_is_not_searched(repo):
+    """Object availability is not a clean checkout: the tree on disk is arbitrary.
+
+    The head commit sits in the object database but the working tree is checked
+    out at a different commit, so searching it would read code that is not the
+    change under review. The search must not run against it.
+    """
+    write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
+    write(repo, "checkout.py", "def pay():\n    return charge_card(1)\n")
+    commit(repo)
+    head = subprocess.run(
+        ("git", "rev-parse", "HEAD"), cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    # Move the working tree to a different commit while the head object stays put.
+    write(repo, "other.py", "def unrelated():\n    return 1\n")
+    commit(repo)
+
+    changeset = changed(repo, "service.py", origin="github", head=head)
+    result = impact.analyse(changeset, repo, ImpactConfig())
+
+    assert result.status is ImpactStatus.UNAVAILABLE
+    assert result.nodes == []
+    assert "no tree to search" in result.notes[0]
+
+
+def test_a_forge_change_whose_checkout_is_dirty_is_not_searched(repo):
+    """A matching HEAD with uncommitted changes is a different tree on disk."""
+    write(repo, "service.py", "def charge_card(amount):\n    return amount\n")
+    write(repo, "checkout.py", "def pay():\n    return charge_card(1)\n")
+    commit(repo)
+    head = subprocess.run(
+        ("git", "rev-parse", "HEAD"), cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    # Dirty the tree without committing: the file on disk is not the reviewed one.
+    write(repo, "checkout.py", "def pay():\n    return charge_card(999)\n")
+
+    changeset = changed(repo, "service.py", origin="github", head=head)
+    result = impact.analyse(changeset, repo, ImpactConfig())
+
+    assert result.status is ImpactStatus.UNAVAILABLE
+    assert result.nodes == []
+    assert "no tree to search" in result.notes[0]
 
 
 def test_an_unusable_git_falls_back_to_walking_the_directory(repo, monkeypatch):

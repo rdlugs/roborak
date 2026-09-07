@@ -39,9 +39,10 @@ import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, model_validator
 
 from roborak.core.config import ForgeCheckout, ImpactConfig
 from roborak.core.models import ChangeSet, ForgeRef
@@ -63,8 +64,7 @@ predictable ref regardless, so the sha is tried first for its precision and this
 is the fallback."""
 
 
-@dataclass(frozen=True)
-class Checkout:
+class Checkout(BaseModel):
     """What the blast-radius search got, and what to say about it.
 
     ``repo is None`` is the ordinary answer: nothing was fetched, either because
@@ -74,13 +74,19 @@ class Checkout:
     """
 
     repo: Path | None = None
-    notes: list[str] = field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
     verified: bool = False
     """The tree is the reviewed commit, proven by ``rev-parse`` after the fetch.
 
     Only ever true alongside a ``repo``. It is what lets the caller drop the
     "may not hold exactly the code under review" caveat, so it is never set
     optimistically."""
+
+    @model_validator(mode="after")
+    def _verified_requires_a_repo(self) -> Checkout:
+        if self.verified and self.repo is None:
+            raise ValueError("a verified checkout must name the repository it fetched")
+        return self
 
 
 @contextmanager
@@ -94,10 +100,10 @@ def acquire(
 ) -> Iterator[Checkout]:
     """A checkout of ``changeset``'s head, for as long as the ``with`` block runs.
 
-    ``head_present`` is the caller's answer to "is the reviewed commit already in
-    the local object database", asked there rather than here so that the one probe
-    deciding whether the local checkout is searchable also decides whether to go
-    looking for another one. Two copies of that question would drift.
+    ``head_present`` is the caller's answer to "is the local working tree a clean
+    checkout of the reviewed commit", asked there rather than here so that the one
+    probe deciding whether the local checkout is searchable also decides whether
+    to go looking for another one. Two copies of that question would drift.
 
     Yields an empty ``Checkout`` whenever one is unnecessary, disabled or
     unobtainable. The directory is removed on the way out either way.
@@ -106,7 +112,13 @@ def acquire(
         yield Checkout()
         return
 
-    scratch = tempfile.mkdtemp(prefix="roborak-impact-")
+    try:
+        scratch = tempfile.mkdtemp(prefix="roborak-impact-")
+    except OSError as exc:
+        log.debug("could not create a temporary checkout: %s", exc)
+        yield Checkout(notes=[_unavailable("a temporary directory could not be created")])
+        return
+
     try:
         yield _fetch(changeset, repo, config, Path(scratch), token=token)
     finally:

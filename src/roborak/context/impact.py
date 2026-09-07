@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 from roborak.context import ast_context, forge_checkout
 from roborak.context.diff import detect_language
 from roborak.core.config import ImpactConfig
@@ -235,8 +237,7 @@ _LITERAL_NODES = frozenset(
 """Node types a name can appear inside without being a reference to anything."""
 
 
-@dataclass(frozen=True)
-class ReviewedTree:
+class ReviewedTree(BaseModel):
     """A tree the reviewed change can be read out of, and where it came from."""
 
     repo: Path
@@ -244,8 +245,8 @@ class ReviewedTree:
 
     fetched: forge_checkout.Checkout
     head_present: bool
-    """Whether the local object database already held the reviewed commit. What
-    the caveats on the map are built from, so it travels with the tree."""
+    """Whether the local working tree is a clean checkout of the reviewed head.
+    What the caveats on the map are built from, so it travels with the tree."""
 
 
 @contextmanager
@@ -395,24 +396,32 @@ def _availability(
     # all. Reported alongside rather than instead of, because "we could not fetch
     # one either" is the more specific half of the same answer.
     return ImpactStatus.UNAVAILABLE, [
-        "This change was fetched from the forge and the working directory does not "
-        "hold its head commit, so there was no checkout to search for consumers.",
+        "This change was fetched from the forge and the working directory is not a "
+        "clean checkout of its head commit, so there was no tree to search for consumers.",
         *fetched.notes,
     ]
 
 
 def head_present(changeset: ChangeSet, repo: Path) -> bool:
-    """Whether ``repo`` already holds the reviewed commit.
+    """Whether ``repo``'s working tree is the reviewed commit, clean.
 
-    The one probe behind two decisions -- whether the local checkout can be
-    searched, and whether it is worth fetching another one -- so the two can
-    never answer it differently. ``cat-file -e`` proves the object was *fetched*,
-    not that it is checked out, which is why anything built on it stays limited.
+    The search reads working-tree and untracked files, so the commit merely
+    sitting in the object database is not enough: the tree on disk must be
+    checked out at the head and carry no uncommitted changes, or the search
+    would read code that is not the change under review. ``rev-parse HEAD``
+    proves the checkout is at the head, and ``status --porcelain`` proves it is
+    clean; either failing sends the caller to fetch a throwaway checkout.
     """
     if changeset.origin in {"local", "paths"}:
         return True
     head = changeset.head_sha
-    return bool(head) and _git(repo, "cat-file", "-e", f"{head}^{{commit}}") is not None
+    if not head:
+        return False
+    checked_out = (_git(repo, "rev-parse", "HEAD") or "").strip()
+    if checked_out != head:
+        return False
+    dirty = _git(repo, "status", "--porcelain")
+    return dirty is not None and not dirty.strip()
 
 
 def _git(repo: Path, *args: str, timeout: float = 10) -> str | None:

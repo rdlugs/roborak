@@ -9,6 +9,7 @@ report without blocking, and ``error`` must reach the verdict and stop there.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +27,7 @@ from roborak.core.models import (
 from roborak.core.severity import Enforcement
 from roborak.llm.client import LLMError
 from roborak.premerge.runner import run_checks
+from roborak.sources.local_git import LocalGitSource, Scope
 
 PYTHON = '''def documented(value):
     """It says what it does."""
@@ -295,14 +297,20 @@ def test_the_threshold_boundary_is_inclusive(threshold, expected):
 # `new_content`, so the check had no file to parse and reported every one of them
 # "not applicable" for want of a grammar. It reads the reviewed commit instead,
 # which means these tests need a real repository rather than a fixture.
+#
+# The hunks below are not hand-built either: they come out of ``LocalGitSource``,
+# the one source that runs a real ``git diff`` against real files, so the line
+# anchoring the check depends on is exercised against production coordinates
+# rather than a ``set(range(start, end + 1))`` the test author wrote to agree
+# with the assertion.
 
 
-def git(repo, *args: str) -> None:
+def git(repo: Path, *args: str) -> None:
     subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
 
 
 @pytest.fixture
-def committed(tmp_path):
+def committed(tmp_path: Path) -> tuple[Path, str]:
     """A repository whose HEAD commit holds ``a.py``, and that commit's sha."""
     git(tmp_path, "init", "-q")
     git(tmp_path, "config", "user.email", "t@example.com")
@@ -316,11 +324,47 @@ def committed(tmp_path):
     return tmp_path, head
 
 
-def test_a_forge_change_is_measured_from_the_reviewed_commit(committed):
+def forge_change(repo: Path, head: str, content: str, *, carry: bool = False) -> ChangeSet:
+    """A forge-shaped changeset whose hunks come from a real ``git diff``.
+
+    ``LocalGitSource`` is the only source that runs a real diff against real
+    files, so it produces the hunks here; the content it attaches is then dropped
+    (a merge or pull request arrives as hunks alone) unless ``carry`` keeps it,
+    exercising the carried-content path.
+    """
+    (repo / "a.py").write_text(content)
+    changeset = LocalGitSource(repo=repo, scope=Scope.UNCOMMITTED).load()
+    if not carry:
+        for file in changeset.files:
+            file.new_content = None
+    changeset.head_sha = head
+    return changeset
+
+
+BARE_EDITED = '''def documented(value):
+    """It says what it does."""
+    return value
+
+
+def bare(value):
+    return value + 1
+'''
+
+DOCUMENTED_EDITED = '''def documented(value):
+    """It says what it does, now."""
+    return value
+
+
+def bare(value):
+    return value
+'''
+
+
+def test_a_forge_change_is_measured_from_the_reviewed_commit(committed: tuple[Path, str]) -> None:
     """The regression: hunks with no content still measure, by reading the commit."""
     repo, head = committed
     report = run_checks(
-        changeset(changed("a.py", "python", None, 6, 6), head_sha=head),
+        forge_change(repo, head, BARE_EDITED),
         config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
         repo=repo,
     )
@@ -330,12 +374,13 @@ def test_a_forge_change_is_measured_from_the_reviewed_commit(committed):
     assert "bare" in result.detail
 
 
-def test_content_carried_by_the_change_is_preferred_to_the_commit(committed):
+def test_content_carried_by_the_change_is_preferred_to_the_commit(
+    committed: tuple[Path, str],
+) -> None:
     """A local review must not pay a `git show` for a file it already has."""
     repo, head = committed
-    (repo / "a.py").write_text("def rewritten_on_disk(value):\n    return value\n")
     report = run_checks(
-        changeset(changed("a.py", "python", PYTHON, 2, 2), head_sha=head),
+        forge_change(repo, head, DOCUMENTED_EDITED, carry=True),
         config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
         repo=repo,
     )
@@ -344,7 +389,9 @@ def test_content_carried_by_the_change_is_preferred_to_the_commit(committed):
     assert result.measured == 1.0
 
 
-def test_an_unreachable_commit_says_so_rather_than_blaming_a_grammar(committed):
+def test_an_unreachable_commit_says_so_rather_than_blaming_a_grammar(
+    committed: tuple[Path, str],
+) -> None:
     """The misleading half of the bug: "no grammar" for a file nobody could read."""
     repo, _ = committed
     report = run_checks(
@@ -361,7 +408,9 @@ def test_an_unreachable_commit_says_so_rather_than_blaming_a_grammar(committed):
     assert "`a.py`" in result.detail
 
 
-def test_a_file_with_no_grammar_still_reports_the_grammar_reason(committed):
+def test_a_file_with_no_grammar_still_reports_the_grammar_reason(
+    committed: tuple[Path, str],
+) -> None:
     """The split must not collapse: a read file a parser refused is a third thing."""
     repo, head = committed
     report = run_checks(
@@ -375,7 +424,7 @@ def test_a_file_with_no_grammar_still_reports_the_grammar_reason(committed):
     assert "no grammar available" in result.detail
 
 
-def test_both_reasons_are_reported_when_both_happened(committed):
+def test_both_reasons_are_reported_when_both_happened(committed: tuple[Path, str]) -> None:
     """One unreadable file must not hide an unparseable one, or the reverse."""
     repo, head = committed
     report = run_checks(
@@ -392,7 +441,29 @@ def test_both_reasons_are_reported_when_both_happened(committed):
     assert "no content available at the reviewed commit: `gone.py`" in result.detail
 
 
-def test_without_a_repo_the_check_still_runs_on_carried_content():
+def test_an_unreadable_file_beside_a_parsed_file_with_no_symbol_is_not_all_unreadable(
+    committed: tuple[Path, str],
+) -> None:
+    """A file the grammar read but found no symbol in is not proof nothing was read."""
+    repo, head = committed
+    report = run_checks(
+        changeset(
+            changed("module.py", "python", "x = 1\n", 1, 1),
+            changed("gone.py", "python", None, 1, 1),
+            head_sha=head,
+        ),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert result.measured is None
+    assert "No documentable symbols were touched" in result.summary
+    assert "could not be read" not in result.summary
+    assert "no content available at the reviewed commit: `gone.py`" in result.detail
+
+
+def test_without_a_repo_the_check_still_runs_on_carried_content() -> None:
     """`run_checks` is called with no repo elsewhere; that path must not break."""
     report = run_checks(
         changeset(changed("a.py", "python", PYTHON, 2, 2)),

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from roborak.analysis.reviewer import Reviewer
 from roborak.context import forge_checkout, impact
@@ -36,7 +37,15 @@ from roborak.core.config import (
     ImpactConfig,
     PreMergeConfig,
 )
-from roborak.core.models import ChangedFile, ChangeSet, CheckId, ForgeRef, ImpactStatus
+from roborak.core.models import (
+    ChangedFile,
+    ChangeSet,
+    CheckId,
+    CheckResult,
+    ForgeRef,
+    ImpactStatus,
+    ReviewResult,
+)
 from roborak.core.severity import Enforcement
 
 SERVICE = """\
@@ -239,11 +248,11 @@ def test_a_server_that_refuses_a_bare_sha_falls_back_to_the_published_ref(
 # often, which is not visible from inside either stage.
 
 
-def review_with(repo: Path, changeset: ChangeSet, config: Config, llm: Any = None):
+def review_with(repo: Path, changeset: ChangeSet, config: Config, llm: Any = None) -> ReviewResult:
     return Reviewer(config=config, repo=repo, llm=llm).review(changeset)
 
 
-def coverage(result: Any):
+def coverage(result: ReviewResult) -> CheckResult:
     assert result.checks is not None
     return next(
         check for check in result.checks.results if check.check is CheckId.DOCSTRING_COVERAGE
@@ -314,7 +323,7 @@ def test_off_leaves_the_change_unavailable_and_fetches_nothing(
     result = impact.analyse(forge_change(head_of(forge)), local, config)
 
     assert result.status is ImpactStatus.UNAVAILABLE
-    assert "no checkout to search" in result.notes[0]
+    assert "no tree to search" in result.notes[0]
     assert watch_scratch == []
 
 
@@ -388,7 +397,7 @@ def test_a_review_whose_fetch_fails_still_reports_why(
     result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
 
     assert result.status is ImpactStatus.UNAVAILABLE
-    assert "no checkout to search" in result.notes[0]
+    assert "no tree to search" in result.notes[0]
     assert "A temporary checkout of the change was attempted" in result.notes[1]
 
 
@@ -497,6 +506,42 @@ def test_a_checkout_that_cannot_be_removed_does_not_fail_the_review(
     monkeypatch.setattr(forge_checkout.shutil, "rmtree", refuse)
 
     forge_checkout._remove(scratch)  # must not raise
+
+
+def test_a_scratch_directory_that_cannot_be_created_degrades_to_a_note(
+    local: Path,
+    forge: Path,
+    fetch_from: Callable[[Path | str], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup failure is a note, not an exception: the review still runs.
+
+    ``mkdtemp`` runs before the cleanup ``try``, so a machine with no temporary
+    storage used to raise out of ``tree_for`` and abort the whole review before
+    either consumer's handler could catch it.
+    """
+    fetch_from(forge)
+
+    def refuse(*args: object, **kwargs: object) -> str:
+        raise OSError("no temporary storage")
+
+    monkeypatch.setattr(forge_checkout.tempfile, "mkdtemp", refuse)
+
+    result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
+
+    assert result.status is ImpactStatus.UNAVAILABLE
+    assert any("a temporary directory could not be created" in note for note in result.notes)
+
+
+def test_a_verified_checkout_must_name_the_repository_it_fetched() -> None:
+    """``verified`` is only ever true alongside a ``repo``, and the model enforces it.
+
+    The caveat the caller drops on a verified checkout is only honest when there
+    is a tree to point at, so a ``Checkout`` that claims verification without one
+    is rejected at construction rather than trusted downstream.
+    """
+    with pytest.raises(ValidationError):
+        forge_checkout.Checkout(verified=True)
 
 
 # --- credentials -------------------------------------------------------------

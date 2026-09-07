@@ -175,7 +175,13 @@ def _nothing_measured(measurement: docstrings.CoverageMeasurement) -> str:
     neither is a change that touched no symbol. Reporting all three as the middle
     one sent the reader looking for a tree-sitter package that would not have
     helped -- which is what every forge review used to say.
+
+    ``parsed_any`` is the tie-breaker for the mixed case: one unreadable file
+    beside one the grammar read but found no symbol in is not "all unreadable",
+    and saying so would blame a missing grammar for a file that was never read.
     """
+    if measurement.parsed_any:
+        return "No documentable symbols were touched."
     if measurement.unreadable_files and not measurement.unparsed_files:
         return "The changed files could not be read at the reviewed commit."
     if measurement.unparsed_files:

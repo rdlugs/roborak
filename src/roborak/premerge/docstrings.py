@@ -55,6 +55,14 @@ class CoverageMeasurement:
     sends the reader to look for a tree-sitter package that would not have helped.
     """
 
+    parsed_any: bool = False
+    """Whether any eligible file was read and parsed, symbols or not.
+
+    A file the grammar read perfectly well can still yield no touched symbol, and
+    that is not the same fact as a file nobody could read. The no-ratio summary
+    needs this to tell "nothing was readable" from "nothing was touched".
+    """
+
     @property
     def documented(self) -> int:
         return sum(1 for symbol in self.symbols if symbol.documented)
@@ -85,6 +93,7 @@ def measure(changeset: ChangeSet, repo: Path | None = None) -> CoverageMeasureme
     symbols: list[SymbolCoverage] = []
     unparsed: list[str] = []
     unreadable: list[str] = []
+    parsed_any = False
     for file in changeset.files:
         if file.change_type == "deleted" or file.is_binary or not file.hunks:
             continue
@@ -96,9 +105,13 @@ def measure(changeset: ChangeSet, repo: Path | None = None) -> CoverageMeasureme
         if tree is None:
             unparsed.append(file.path)
             continue
+        parsed_any = True
         symbols.extend(_symbols_for(file, tree))
     return CoverageMeasurement(
-        symbols=symbols, unparsed_files=unparsed, unreadable_files=unreadable
+        symbols=symbols,
+        unparsed_files=unparsed,
+        unreadable_files=unreadable,
+        parsed_any=parsed_any,
     )
 
 
