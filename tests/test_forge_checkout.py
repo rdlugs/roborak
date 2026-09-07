@@ -26,10 +26,18 @@ from typing import Any
 
 import pytest
 
+from roborak.analysis.reviewer import Reviewer
 from roborak.context import forge_checkout, impact
 from roborak.context.diff import whole_file_hunk
-from roborak.core.config import ForgeCheckout, ImpactConfig
-from roborak.core.models import ChangedFile, ChangeSet, ForgeRef, ImpactStatus
+from roborak.core.config import (
+    Config,
+    DocstringCoverageConfig,
+    ForgeCheckout,
+    ImpactConfig,
+    PreMergeConfig,
+)
+from roborak.core.models import ChangedFile, ChangeSet, CheckId, ForgeRef, ImpactStatus
+from roborak.core.severity import Enforcement
 
 SERVICE = """\
     def charge_card(amount):
@@ -221,6 +229,78 @@ def test_a_server_that_refuses_a_bare_sha_falls_back_to_the_published_ref(
     result = impact.analyse(forge_change(head_of(forge)), local, ImpactConfig())
 
     assert result.nodes
+
+
+# --- one checkout, shared ----------------------------------------------------
+#
+# The blast radius and the docstring check both need a tree, and both used to be
+# told they could not have one. `Reviewer.review` fetches it, so these drive the
+# reviewer rather than `impact.analyse`: the claim is about who pays and how
+# often, which is not visible from inside either stage.
+
+
+def review_with(repo: Path, changeset: ChangeSet, config: Config, llm: Any = None):
+    return Reviewer(config=config, repo=repo, llm=llm).review(changeset)
+
+
+def coverage(result: Any):
+    assert result.checks is not None
+    return next(
+        check for check in result.checks.results if check.check is CheckId.DOCSTRING_COVERAGE
+    )
+
+
+def test_the_docstring_check_measures_from_the_temporary_checkout(
+    local: Path, forge: Path, fetch_from: Callable[[Path | str], None]
+) -> None:
+    """Issue #81: a pull request used to report every file unparseable.
+
+    Under ``--no-llm``, so the deterministic gate is shown to stand on its own -- a
+    check a project can block merges on must not measure less because no model was
+    configured.
+    """
+    fetch_from(forge)
+
+    result = review_with(local, forge_change(head_of(forge)), Config())
+
+    check = coverage(result)
+    assert check.measured == 0.0  # `charge_card` carries no docstring
+    assert "charge_card" in check.detail
+
+
+def test_one_checkout_serves_both_stages(
+    local: Path,
+    forge: Path,
+    fetch_from: Callable[[Path | str], None],
+    watch_scratch: list[Path],
+) -> None:
+    """The point of hoisting it: two consumers, one fetch."""
+    from tests.test_pipeline import StubLLM
+
+    fetch_from(forge)
+
+    result = review_with(
+        local, forge_change(head_of(forge)), Config(), llm=StubLLM(reply="findings: []")
+    )
+
+    assert len(watch_scratch) == 1
+    assert result.impact is not None and result.impact.nodes
+    assert coverage(result).measured == 0.0
+
+
+def test_nothing_is_fetched_when_no_stage_would_read_a_tree(
+    local: Path, forge: Path, fetch_from: Callable[[Path | str], None], watch_scratch: list[Path]
+) -> None:
+    """A review with both consumers switched off must not pay for a clone."""
+    fetch_from(forge)
+    config = Config(
+        impact=ImpactConfig(enabled=False),
+        pre_merge=PreMergeConfig(docstring_coverage=DocstringCoverageConfig(level=Enforcement.OFF)),
+    )
+
+    review_with(local, forge_change(head_of(forge)), config)
+
+    assert watch_scratch == []
 
 
 # --- staying out of the way --------------------------------------------------

@@ -8,6 +8,8 @@ report without blocking, and ``error`` must reach the verdict and stop there.
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from roborak.context.diff import whole_file_hunk
@@ -285,6 +287,118 @@ def test_the_threshold_boundary_is_inclusive(threshold, expected):
         ),
     )
     assert only(report, CheckId.DOCSTRING_COVERAGE).outcome is expected
+
+
+# --- docstring coverage on a forge change ------------------------------------
+#
+# A merge or pull request arrives as hunks alone: no source populates
+# `new_content`, so the check had no file to parse and reported every one of them
+# "not applicable" for want of a grammar. It reads the reviewed commit instead,
+# which means these tests need a real repository rather than a fixture.
+
+
+def git(repo, *args: str) -> None:
+    subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
+
+
+@pytest.fixture
+def committed(tmp_path):
+    """A repository whose HEAD commit holds ``a.py``, and that commit's sha."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@example.com")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "a.py").write_text(PYTHON)
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "seed")
+    head = subprocess.run(
+        ("git", "rev-parse", "HEAD"), cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    return tmp_path, head
+
+
+def test_a_forge_change_is_measured_from_the_reviewed_commit(committed):
+    """The regression: hunks with no content still measure, by reading the commit."""
+    repo, head = committed
+    report = run_checks(
+        changeset(changed("a.py", "python", None, 6, 6), head_sha=head),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.FAILED
+    assert result.measured == 0.0
+    assert "bare" in result.detail
+
+
+def test_content_carried_by_the_change_is_preferred_to_the_commit(committed):
+    """A local review must not pay a `git show` for a file it already has."""
+    repo, head = committed
+    (repo / "a.py").write_text("def rewritten_on_disk(value):\n    return value\n")
+    report = run_checks(
+        changeset(changed("a.py", "python", PYTHON, 2, 2), head_sha=head),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.PASSED
+    assert result.measured == 1.0
+
+
+def test_an_unreachable_commit_says_so_rather_than_blaming_a_grammar(committed):
+    """The misleading half of the bug: "no grammar" for a file nobody could read."""
+    repo, _ = committed
+    report = run_checks(
+        changeset(changed("a.py", "python", None, 6, 6), head_sha="0" * 40),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert result.measured is None
+    assert "could not be read" in result.summary
+    assert "grammar" not in result.summary
+    assert "no content available" in result.detail
+    assert "`a.py`" in result.detail
+
+
+def test_a_file_with_no_grammar_still_reports_the_grammar_reason(committed):
+    """The split must not collapse: a read file a parser refused is a third thing."""
+    repo, head = committed
+    report = run_checks(
+        changeset(changed("notes.bin", None, "whatever", 1, 1), head_sha=head),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert result.outcome is CheckOutcome.NOT_APPLICABLE
+    assert "parsed for symbols" in result.summary
+    assert "no grammar available" in result.detail
+
+
+def test_both_reasons_are_reported_when_both_happened(committed):
+    """One unreadable file must not hide an unparseable one, or the reverse."""
+    repo, head = committed
+    report = run_checks(
+        changeset(
+            changed("notes.bin", None, "whatever", 1, 1),
+            changed("gone.py", "python", None, 1, 1),
+            head_sha=head,
+        ),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+        repo=repo,
+    )
+    result = only(report, CheckId.DOCSTRING_COVERAGE)
+    assert "no grammar available: `notes.bin`" in result.detail
+    assert "no content available at the reviewed commit: `gone.py`" in result.detail
+
+
+def test_without_a_repo_the_check_still_runs_on_carried_content():
+    """`run_checks` is called with no repo elsewhere; that path must not break."""
+    report = run_checks(
+        changeset(changed("a.py", "python", PYTHON, 2, 2)),
+        config(docstring_coverage=DocstringCoverageConfig(level=Enforcement.WARNING)),
+    )
+    assert only(report, CheckId.DOCSTRING_COVERAGE).measured == 1.0
 
 
 # --- title -------------------------------------------------------------------

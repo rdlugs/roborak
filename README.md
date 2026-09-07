@@ -252,7 +252,11 @@ pre_merge:
 **Docstring coverage** measures the symbols the diff *touched*, not whole files, so a one-line
 fix in a legacy module is not judged by that module. It works for every language a tree-sitter
 grammar is available for: a leading string in the body, or a comment on the line directly above.
-A file with no grammar is left out of the count rather than counted as undocumented.
+A file with no grammar is left out of the count rather than counted as undocumented, and so is
+one whose content could not be read - reported as unread, which is a different thing. A merge or
+pull request arrives as a diff, so the check reads the changed files back out of the reviewed
+commit, reusing the same temporary checkout the blast radius fetches when this repository does
+not have that commit (`impact.forge_checkout`).
 
 **Title**, **description** and **linked issue** are deterministic gates - present, long enough,
 not a placeholder, not an untouched template, naming an issue through `Closes #123`, an issue
@@ -586,6 +590,7 @@ impact:
   token_budget: 1500      # prompt tokens the consumer snippets may occupy
   timeout_seconds: 10
   forge_checkout: auto    # fetch a temporary checkout of a PR/MR this repo lacks; off disables
+                          # (shared with the docstring-coverage check)
   forge_checkout_timeout_seconds: 60
 
 output:

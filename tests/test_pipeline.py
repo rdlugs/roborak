@@ -1014,7 +1014,7 @@ def test_a_failing_impact_stage_never_fails_the_review(tmp_path, monkeypatch):
     def explode(*args, **kwargs):
         raise RuntimeError("tree-sitter fell over")
 
-    monkeypatch.setattr(impact_module, "analyse", explode)
+    monkeypatch.setattr(impact_module, "analyse_in", explode)
     repo = impact_repo(tmp_path)
 
     result = Reviewer(config=Config(), repo=repo, llm=StubLLM(reply="findings: []")).review(
