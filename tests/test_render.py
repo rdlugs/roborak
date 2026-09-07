@@ -1685,6 +1685,61 @@ def test_checks_that_never_ran_render_nothing():
     assert "Pre-merge checks" not in markdown.render(make_result())
 
 
+@pytest.mark.parametrize("form", list(markdown.Form))
+@pytest.mark.parametrize("with_detail", [False, True])
+@pytest.mark.parametrize("with_opinion", [False, True])
+def test_check_detail_and_opinion_preserve_multiline_markdown(
+    form: markdown.Form, with_detail: bool, with_opinion: bool
+) -> None:
+    from roborak.publish.base import summary_markdown
+
+    detail = (
+        "Missing documentation:\n\n- `app.py:3`\n  - Public function\n\n"
+        "```python\ndef f():\n    return 1 | 2\n```"
+    )
+    opinion = (
+        "The description is vague.\n\nSuggested topics:\n"
+        "- Explain the trigger.\n- Explain the outcome."
+    )
+    result = ReviewResult(block_on=Severity.CRITICAL)
+    result.checks = checks_report(Enforcement.WARNING, advisory=True)
+    check = result.checks.results[0]
+    check.detail = detail if with_detail else ""
+    check.opinion = opinion if with_opinion else ""
+    result.checks.results.append(
+        CheckResult(
+            check=CheckId.TITLE,
+            level=Enforcement.WARNING,
+            outcome=CheckOutcome.PASSED,
+            summary="The title names the change.",
+            detail="Title detail.\n\nA second paragraph.",
+            opinion="Title opinion.\n\nA separate paragraph.",
+        )
+    )
+    result.checks.notes = ["Report note."]
+    document = markdown.render(result, form=form)
+    table = document[document.index("| Check |") :].split("\n\n", 1)[0]
+    assert "| Check | Level | Result | Summary |" in table
+    assert "The change has no description. (advisory)" in table
+    assert "**Detail**" not in table
+    assert "**Model opinion**" not in table
+    assert ("### Description\n\n" in document) is (with_detail or with_opinion)
+    assert (f"**Detail**\n\n{detail}" in document) is with_detail
+    assert (f"**Model opinion**\n\n{opinion}" in document) is with_opinion
+    assert document.index(table) < document.index("### Title\n\n")
+    if with_detail or with_opinion:
+        assert document.index("### Description\n\n") < document.index("### Title\n\n")
+    assert "### Title\n\n**Detail**\n\nTitle detail.\n\nA second paragraph." in document
+    assert "**Model opinion**\n\nTitle opinion.\n\nA separate paragraph." in document
+    assert document.index("A separate paragraph.") < document.index("Report note.")
+    assert document.index("Report note.") < document.index("Pre-merge check: pass")
+    assert "Not counted: Description (`warning`) failed on the model's opinion alone" in document
+    if form is markdown.Form.PUBLISHED:
+        assert summary_markdown(result) == document
+    else:
+        assert "<details" not in document
+
+
 @pytest.mark.parametrize(
     ("outcome", "label"),
     [

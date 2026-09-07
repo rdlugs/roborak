@@ -331,9 +331,10 @@ def _checks_section(result: ReviewResult, *, form: Form) -> str:
     """
     report = result.checks
     body = _check_rows(report.results) if report and report.results else ""
+    details = _check_details(report.results) if report else ""
     notes = "\n\n".join(_wrap(f"_{note}_") for note in report.notes) if report else ""
     verdict = _pre_merge_check(result, form=form)
-    inner = "\n\n".join(part for part in (body, notes, verdict) if part)
+    inner = "\n\n".join(part for part in (body, details, notes, verdict) if part)
     if not inner:
         return ""
     return _details(
@@ -346,16 +347,30 @@ def _checks_section(result: ReviewResult, *, form: Form) -> str:
 
 
 def _check_rows(results: list[CheckResult]) -> str:
-    rows = ["| Check | Level | Result | Detail |", "| --- | --- | --- | --- |"]
+    rows = ["| Check | Level | Result | Summary |", "| --- | --- | --- | --- |"]
     for result in results:
-        detail = result.summary
+        summary = result.summary
         if result.advisory:
-            detail = f"{detail} (advisory)"
+            summary = f"{summary} (advisory)"
         rows.append(
             f"| {_CHECK_LABEL[result.check]} | {result.level} "
-            f"| {_OUTCOME_LABEL[result.outcome]} | {_escape_cell(detail)} |"
+            f"| {_OUTCOME_LABEL[result.outcome]} | {_escape_cell(summary)} |"
         )
     return "\n".join(rows)
+
+
+def _check_details(results: list[CheckResult]) -> str:
+    sections: list[str] = []
+    for result in results:
+        # These fields can contain lists and code blocks that a table cell would flatten.
+        parts = []
+        if result.detail:
+            parts.append(f"**Detail**\n\n{result.detail}")
+        if result.opinion:
+            parts.append(f"**Model opinion**\n\n{result.opinion}")
+        if parts:
+            sections.append(f"### {_CHECK_LABEL[result.check]}\n\n" + "\n\n".join(parts))
+    return "\n\n".join(sections)
 
 
 def _impact_section(impact: ImpactMap | None, *, form: Form) -> str:
