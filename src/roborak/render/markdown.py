@@ -183,9 +183,6 @@ def render(
     if investigation := _investigation_section(result.investigation, form=form):
         sections.append(investigation)
 
-    if checks := _checks_section(result.checks, form=form):
-        sections.append(checks)
-
     if not grouped:
         sections.append(_nothing_to_report(result))
     else:
@@ -204,7 +201,7 @@ def render(
             sections.append(f"<!-- {FLOW_MARKER_PREFIX}:{flow} -->")
         if carried := encode_walkthrough(result.walkthrough):
             sections.append(f"<!-- {WALKTHROUGH_MARKER_PREFIX}:{carried} -->")
-    sections.append(_pre_merge_check(result, form=form))
+    sections.append(_checks_section(result, form=form))
     sections.append("---")
     if machine_sections:
         sections.append(_review_info(result, collapsible=collapsible))
@@ -310,10 +307,10 @@ wants their editor, not a table cell."""
 
 
 _OUTCOME_LABEL: dict[CheckOutcome, str] = {
-    CheckOutcome.PASSED: "Passed",
-    CheckOutcome.FAILED: "Failed",
-    CheckOutcome.NOT_APPLICABLE: "Not applicable",
-    CheckOutcome.INCONCLUSIVE: "Inconclusive",
+    CheckOutcome.PASSED: f"{icons.PASSED} Passed",
+    CheckOutcome.FAILED: f"{icons.FAILED} Failed",
+    CheckOutcome.NOT_APPLICABLE: f"{icons.NOT_APPLICABLE} Not applicable",
+    CheckOutcome.INCONCLUSIVE: f"{icons.WARNED} Inconclusive",
 }
 
 _CHECK_LABEL: dict[CheckId, str] = {
@@ -324,7 +321,7 @@ _CHECK_LABEL: dict[CheckId, str] = {
 }
 
 
-def _checks_section(report: ChecksReport | None, *, form: Form) -> str:
+def _checks_section(result: ReviewResult, *, form: Form) -> str:
     """What the configurable pre-merge checks concluded.
 
     Renders every check that ran, passing ones included. A section listing only
@@ -332,16 +329,20 @@ def _checks_section(report: ChecksReport | None, *, form: Form) -> str:
     project switched off, which is the difference between "we looked" and "nobody
     asked" -- the same distinction every other stage section here preserves.
     """
-    if report is None or (not report.results and not report.notes):
+    report = result.checks
+    body = _check_rows(report.results) if report and report.results else ""
+    notes = "\n\n".join(_wrap(f"_{note}_") for note in report.notes) if report else ""
+    verdict = _pre_merge_check(result, form=form)
+    inner = "\n\n".join(part for part in (body, notes, verdict) if part)
+    if not inner:
         return ""
-
-    body = _check_rows(report.results) if report.results else ""
-    notes = "\n\n".join(_wrap(f"_{note}_") for note in report.notes)
-    inner = "\n\n".join(part for part in (body, notes) if part)
-    blocking = len(report.blocking)
-    named = f" - {blocking} blocking" if blocking else ""
-    summary = f"{icons.INFO} Pre-merge checks{named}"
-    return _details(summary, inner, level=2, collapsible=form is Form.PUBLISHED)
+    return _details(
+        f"{icons.INFO} Pre-merge checks",
+        inner,
+        level=2,
+        collapsible=form is Form.PUBLISHED,
+        expanded=bool(report and any(r.outcome is CheckOutcome.FAILED for r in report.results)),
+    )
 
 
 def _check_rows(results: list[CheckResult]) -> str:
@@ -1202,10 +1203,9 @@ _VERDICT_CALLOUT: dict[Verdict, str] = {
 def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     """The verdict, stated rather than left to be tallied.
 
-    Rendered on every review, including a clean one: a section that appears only
+    Rendered on every review, including a clean one: a verdict that appears only
     when something is wrong teaches the reader that its absence means nothing was
-    checked. It is the last thing before the footer because it is the one line a
-    reader who skims the review still has to see.
+    checked. It follows the individual results inside the combined checks section.
 
     Because the summary comment *is* this document (``publish.base.summary_markdown``),
     writing it here is also what puts the verdict on the merge request, on every
@@ -1229,13 +1229,9 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
         lines.append(f"_Not gated: pass `--fail-on {gate.floor}` for the exit code too._")
     body = "\n\n".join(lines)
 
-    # The summary line is the verdict itself, so folding this section still leaves
-    # a skimming reader the one sentence they have to see. The callout goes in as
-    # the body rather than around the section: ``_details`` will not quote what it
-    # is given, and an alert only keeps its coloured bar as a quote in its own right.
     if form is Form.PUBLISHED:
         body = _callout(_VERDICT_CALLOUT[gate.verdict], body)
-    return _details(_VERDICT_TITLE[gate.verdict], body, level=2, collapsible=form is Form.PUBLISHED)
+    return f"### {_VERDICT_TITLE[gate.verdict]}\n\n{body}"
 
 
 def _checks_verdict_note(gate: Gate, report: ChecksReport | None) -> str:
@@ -1376,7 +1372,14 @@ def _listed(names: Iterable[str]) -> str:
     return f"{head} and {rest} more" if rest > 0 else head
 
 
-def _details(summary: str, body: str, *, level: int = 4, collapsible: bool = True) -> str:
+def _details(
+    summary: str,
+    body: str,
+    *,
+    level: int = 4,
+    collapsible: bool = True,
+    expanded: bool = False,
+) -> str:
     """One section, collapsible where the reader can collapse it.
 
     The body is never wrapped in a ``<blockquote>``, however tempting the indent
@@ -1391,7 +1394,8 @@ def _details(summary: str, body: str, *, level: int = 4, collapsible: bool = Tru
     """
     if not collapsible:
         return f"{'#' * level} {summary}\n\n{body}"
-    return f"<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>"
+    attribute = " open" if expanded else ""
+    return f"<details{attribute}>\n<summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
 def _callout(kind: str, body: str) -> str:

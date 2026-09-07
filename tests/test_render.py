@@ -1174,16 +1174,17 @@ def test_the_published_check_is_a_callout_the_forge_renders():
     assert "> [!TIP]" in markdown.render(ReviewResult(block_on=Severity.CRITICAL))
 
 
-def test_the_published_check_folds_with_the_verdict_on_the_summary_line() -> None:
-    """Folded, the summary line is all a skimming reader gets -- so it is the verdict."""
+def test_the_published_checks_contain_the_verdict() -> None:
     result = make_result()
     result.block_on = Severity.CRITICAL
     document = markdown.render(result)
 
-    summary = "<summary>\u26d4 Pre-merge check: blocked</summary>"
+    summary = "<summary>ℹ️ Pre-merge checks</summary>"
     opened = document.index(summary)
     section = document[opened : document.index("</details>", opened)]
 
+    assert "### ⛔ Pre-merge check: blocked" in section
+    assert "<summary>⛔ Pre-merge check: blocked</summary>" not in document
     assert "> [!CAUTION]" in section
     assert "> Judged against **critical** and above" in section
     assert "> Findings:" in section
@@ -1674,12 +1675,100 @@ def test_the_checks_section_lists_every_check_that_ran():
     body = markdown.render(result)
 
     assert "Pre-merge checks" in body
-    assert "| Title | warning | Passed |" in body
-    assert "| Docstring coverage | error | Failed |" in body
+    assert "| Title | warning | ✅ Passed |" in body
+    assert "| Docstring coverage | error | ❌ Failed |" in body
+    assert "<details open>\n<summary>ℹ️ Pre-merge checks</summary>" in body
+    assert "Pre-merge check:" not in body
 
 
 def test_checks_that_never_ran_render_nothing():
     assert "Pre-merge checks" not in markdown.render(make_result())
+
+
+@pytest.mark.parametrize(
+    ("outcome", "label"),
+    [
+        (CheckOutcome.PASSED, "✅ Passed"),
+        (CheckOutcome.FAILED, "❌ Failed"),
+        (CheckOutcome.INCONCLUSIVE, "⚠️ Inconclusive"),
+        (CheckOutcome.NOT_APPLICABLE, "➖ Not applicable"),
+    ],
+)
+@pytest.mark.parametrize("level", [Enforcement.WARNING, Enforcement.ERROR])
+@pytest.mark.parametrize("advisory", [False, True])
+def test_checks_expand_for_failed_results_regardless_of_enforcement(
+    outcome: CheckOutcome, label: str, level: Enforcement, advisory: bool
+) -> None:
+    from roborak.publish.base import summary_markdown
+
+    result = ReviewResult(block_on=Severity.CRITICAL)
+    result.checks = checks_report(level, outcome, advisory=advisory)
+    result.checks.results.append(
+        CheckResult(
+            check=CheckId.TITLE,
+            level=Enforcement.WARNING,
+            outcome=CheckOutcome.PASSED,
+            summary="The title names the change.",
+        )
+    )
+    result.checks.notes = ["All available checks were evaluated."]
+    before = json_out.render(result)
+    document = markdown.render(result)
+    opening = "<details open>" if outcome is CheckOutcome.FAILED else "<details>"
+    summary = "<summary>ℹ️ Pre-merge checks</summary>"
+    assert f"{opening}\n{summary}" in document
+    assert document.count(summary) == 1
+    start = document.index(summary)
+    section = document[start : document.index("</details>", start)]
+    assert "<details" not in section
+    assert f"| Description | {level} | {label} |" in section
+    assert "The change has no description." in section
+    assert "| Title | warning | ✅ Passed | The title names the change. |" in section
+    assert "All available checks were evaluated." in section
+    expected = (
+        "blocked"
+        if outcome is CheckOutcome.FAILED and level is Enforcement.ERROR and not advisory
+        else "pass"
+    )
+    assert f"Pre-merge check: {expected}" in section
+    assert section.index("| Check |") < section.index("Pre-merge check:")
+    if advisory:
+        assert "(advisory)" in section
+    assert summary_markdown(result) == document
+    assert json_out.render(result) == before
+    terminal_document = markdown.render(result, form=markdown.Form.TERMINAL)
+    assert "## ℹ️ Pre-merge checks" in terminal_document
+    assert "<details" not in terminal_document
+    assert label in terminal_document
+
+
+@pytest.mark.parametrize("report", [None, ChecksReport(), ChecksReport(notes=["Checks disabled."])])
+@pytest.mark.parametrize("requested", [False, True])
+def test_checks_without_results_preserve_only_requested_verdicts(
+    report: ChecksReport | None, requested: bool
+) -> None:
+    result = ReviewResult(checks=report, block_on=Severity.CRITICAL if requested else None)
+    document = markdown.render(result)
+    present = requested or bool(report and report.notes)
+    assert ("<summary>ℹ️ Pre-merge checks</summary>" in document) is present
+    assert ("Pre-merge check: pass" in document) is requested
+    assert "<details open>" not in document
+    assert "| Check |" not in document
+    if report and report.notes:
+        assert "Checks disabled." in document
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_verdict_alone_does_not_expand_checks(incomplete: bool) -> None:
+    result = make_result()
+    result.block_on = Severity.CRITICAL
+    result.checks = checks_report(Enforcement.ERROR, CheckOutcome.INCONCLUSIVE)
+    if incomplete:
+        result.errors = ["The model timed out."]
+    document = markdown.render(result)
+    assert "<details>\n<summary>ℹ️ Pre-merge checks</summary>" in document
+    expected = "inconclusive" if incomplete else "blocked"
+    assert f"Pre-merge check: {expected}" in document
 
 
 def test_every_check_switched_off_renders_nothing():

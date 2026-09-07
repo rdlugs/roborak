@@ -100,6 +100,7 @@ FAILED = ERROR
 TIMED_OUT = "⌛"
 WARNED = "⚠️"
 NEUTRAL = "⚪"
+NOT_APPLICABLE = "➖"
 UNKNOWN = "❔"
 BLOCKED = "⛔"
 LINKED = "🔗"
