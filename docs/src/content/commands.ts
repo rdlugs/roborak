@@ -165,3 +165,14 @@ export const GLOBAL_FLAGS: FlagGroup[] = [
     ],
   },
 ];
+
+export const FIX_GROUPS: FlagGroup[] = [
+  {
+    title: "Options",
+    flags: [
+      ...IMPROVE_GROUPS[0].flags.filter(flag => !["--agent", "--prompt-only", "--panels", "--fail-on"].includes(flag.name)),
+      { name: "--dry-run", help: "Preview eligible replacements without writing." },
+      { name: "--yes, -y", help: "Apply without confirmation; required for noninteractive writes." },
+    ],
+  },
+];

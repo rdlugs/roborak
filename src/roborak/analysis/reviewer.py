@@ -319,7 +319,9 @@ class Reviewer:
         response = self._complete("walkthrough", prompt.system, prompt.user)
         return parse_walkthrough(response.text)
 
-    def improve(self, changeset: ChangeSet) -> ReviewResult:
+    def improve(
+        self, changeset: ChangeSet, *, candidates: list[Finding] | None = None
+    ) -> ReviewResult:
         """Suggestion-only mode: every finding carries committable code."""
         self._usage.clear()
         result = ReviewResult(changeset=changeset, model=self.config.model, issue=self.issue)
@@ -335,13 +337,21 @@ class Reviewer:
         )
         try:
             response = self._complete("improve", prompt.system, prompt.user)
-            findings = parse_findings(response.text, valid_files={f.path for f in changeset.files})
+            if candidates is not None and response.finish_reason not in {None, "stop", "end_turn"}:
+                raise ParseError("Suggestion generation did not finish normally.")
+            findings = parse_findings(
+                response.text,
+                valid_files={f.path for f in changeset.files},
+                autofix=candidates is not None,
+            )
         except (LLMError, ParseError) as exc:
             log.error("improve failed: %s", exc)
             result.errors.append(str(exc))
             result.status = ReviewStatus.FAILED
             return result
 
+        if candidates is not None:
+            candidates.extend(f.model_copy(deep=True) for f in findings)
         findings = [f for f in findings if f.suggestion]
         result.findings = validator.validate(findings, changeset, self.config)
         self.apply_usage(result)

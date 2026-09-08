@@ -74,9 +74,19 @@ def _salvage_prefix(text: str) -> Any:
     return None
 
 
-def parse_findings(text: str, *, valid_files: set[str] | None = None) -> list[Finding]:
+def parse_findings(
+    text: str, *, valid_files: set[str] | None = None, autofix: bool = False
+) -> list[Finding]:
     """Extract findings, skipping any entry that cannot be made sense of."""
-    data = load_yaml_mapping(text)
+    if autofix:
+        try:
+            data = yaml.safe_load(strip_fences(text))
+        except yaml.YAMLError as exc:
+            raise ParseError("Incomplete autofix response.") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
+            raise ParseError("Autofix requires a complete findings list.")
+    else:
+        data = load_yaml_mapping(text)
     raw = data.get("findings") or []
     if not isinstance(raw, list):
         raise ParseError("`findings` must be a list.")
@@ -87,6 +97,18 @@ def parse_findings(text: str, *, valid_files: set[str] | None = None) -> list[Fi
             continue
         finding = _coerce_finding(entry, valid_files)
         if finding is not None:
+            if autofix:
+                replacement = entry.get("suggestion")
+                start, end = entry.get("start_line"), entry.get("end_line")
+                valid_range = type(start) is int and type(end) is int and 1 <= start <= end
+                finding.suggestion = (
+                    replacement
+                    if valid_range
+                    and isinstance(replacement, str)
+                    and replacement.strip()
+                    and not replacement.lstrip().startswith(("```", "@@", "--- ", "diff --git"))
+                    else None
+                )
             findings.append(finding)
     return findings
 

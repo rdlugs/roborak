@@ -12,6 +12,7 @@ from rich.console import Console
 from roborak import __version__
 from roborak.cli.commands import ask as ask_cmd
 from roborak.cli.commands import describe as describe_cmd
+from roborak.cli.commands import fix as fix_cmd
 from roborak.cli.commands import improve as improve_cmd
 from roborak.cli.commands import review as review_cmd
 from roborak.cli.commands import setup_cmd
@@ -30,6 +31,7 @@ app.command("setup")(setup_cmd.setup)
 app.command("review")(review_cmd.review)
 app.command("describe")(describe_cmd.describe)
 app.command("improve")(improve_cmd.improve)
+app.command("fix")(fix_cmd.fix)
 app.command("ask")(ask_cmd.ask)
 app.add_typer(rules_app, name="rules")
 app.add_typer(config_app, name="config")

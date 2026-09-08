@@ -276,6 +276,9 @@ Every check is off with `ROBORAK_NO_PRE_MERGE=1`, or one at a time with
 ```bash
 uv run roborak describe                     # title, overview, per-file table, mermaid flow
 uv run roborak improve                      # suggestions only, every one committable
+uv run roborak fix --dry-run                # preview committable replacements
+uv run roborak fix                          # preview, confirm, and apply
+uv run roborak fix --yes --json              # apply in scripts, report JSON
 uv run roborak ask "why is this locked?"    # a question answered from the diff
 
 uv run roborak rules init                   # scaffold .roborak/rules/ with an example
@@ -286,6 +289,29 @@ uv run roborak config init                  # write a commented .roborak.yaml
 uv run roborak config init --global         # …or ~/.config/roborak/.roborak.yaml, mode 600
 uv run roborak config show                  # the effective config, all layers merged
 ```
+
+`fix` accepts the same source, model, and configuration options as `improve`.
+It requires a Git checkout at its repository root. Existing staged and unstaged
+local edits are supported; fixes remain unstaged and the index is preserved.
+PR/MR targets require a clean local checkout at the exact reviewed head.
+Merge conflicts are refused. Files changed during generation or confirmation,
+ambiguous overlaps, moved anchors, and non-committable suggestions are skipped.
+
+`fix --dry-run` reports eligible replacements and unified diffs without writing.
+Interactive runs preview changes and ask once before applying; scripts and pipes
+must use `--yes` or `--dry-run`. Reports separate applied, skipped, failed, and
+eligible suggestions, with reasons; `--json` emits a dedicated fix report.
+Exit `0` means the run completed (including skips, cancellation, or dry-run), and
+`2` means an operational failure or incomplete generation. Each write temporarily
+moves the target aside, validates it, and publishes only if the target path is still
+absent. Concurrent saves at that path are preserved. Failed recovery retains the
+original in a `.roborak-fix-*` directory beside the target and reports its location.
+Filesystems without hard-link support are refused before moving the target.
+Writers using already-open file descriptors are not locked out; detected changes
+to the moved original are retained for recovery, but later descriptor writes cannot
+be guaranteed. Avoid editing files while applying fixes. A failed file does not
+undo successful changes to other files.
+No tests, formatting, staging, commits, or publishing run automatically.
 
 Each accepts the same `--mr` / `--pr` / `--issue` / `--base` targeting as `review`.
 
