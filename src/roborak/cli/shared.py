@@ -16,7 +16,7 @@ from typing import NoReturn
 import typer
 from rich.console import Console
 
-from roborak.core.config import Config, ForgeConfig, load_config
+from roborak.core.config import Config, ForgeConfig, ReviewProfile, load_config
 from roborak.core.models import ChangeSet, Issue, ReviewResult, ReviewStatus
 from roborak.core.severity import Severity
 from roborak.core.verdict import blocking_findings
@@ -108,6 +108,7 @@ def start(
     include_untracked: bool = False,
     no_discussions: bool = False,
     config_path: Path | None = None,
+    profile: ReviewProfile | None = None,
     model: str | None = None,
     no_llm: bool = False,
     quiet_status: bool = False,
@@ -121,7 +122,7 @@ def start(
         fail(console, "--committed and --uncommitted are mutually exclusive.")
 
     try:
-        config = load_config(repo, config_path)
+        config = load_config(repo, config_path, profile=profile)
     except (OSError, ValueError) as exc:
         fail(console, f"config error: {exc}")
 

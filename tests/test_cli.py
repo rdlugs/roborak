@@ -2127,3 +2127,113 @@ def test_premerge_opinion_waits_for_the_walkthrough(repo: Path, monkeypatch, ove
         assert title["outcome"] == "passed"
         assert title["advisory"] is False
     assert payload["tokens_used"] == 10 * len(purposes)
+
+
+@pytest.mark.parametrize("profile", ["fast", "balanced", "strict", "security"])
+def test_review_profile_reaches_stages_with_cli_overrides(repo: Path, monkeypatch, profile: str):
+    from roborak.core.models import ReviewResult
+    from roborak.core.severity import Severity
+
+    seen = {}
+
+    def fake_review(self, changeset):
+        seen["config"] = self.config
+        return ReviewResult(changeset=changeset)
+
+    monkeypatch.setattr("roborak.analysis.reviewer.Reviewer.review", fake_review)
+    monkeypatch.setenv("ROBORAK_PROFILE", "security")
+    monkeypatch.setenv("ROBORAK_SEVERITY_FLOOR", "major")
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "-C",
+            str(repo),
+            "--profile",
+            profile,
+            "--no-llm",
+            "--no-static",
+            "--no-impact",
+            "--no-investigate",
+            "--no-walkthrough",
+            "--severity",
+            "info",
+        ],
+    )
+    assert result.exit_code == EXIT_OK, result.output
+    config = seen["config"]
+    assert config.profile == profile
+    assert config.review.severity_floor is Severity.INFO
+    assert not config.static.enabled
+    assert not config.impact.enabled
+    assert not config.review.investigate.enabled
+    assert not config.output.walkthrough
+    assert config.verification.enabled == (profile != "fast")
+    assert config.verification.max_commands == (8 if profile == "strict" else 4)
+
+
+@pytest.mark.parametrize("command", [["review"], ["config", "show"]])
+def test_profile_cli_rejects_unknown_names(command: list[str]):
+    result = runner.invoke(app, [*command, "--profile", "typo"])
+    assert result.exit_code == EXIT_ERROR
+    assert "typo" in result.output
+    assert "balanced" in result.output
+
+
+def test_config_show_reports_resolved_and_trusted_profiles(repo: Path):
+    path = repo / ".roborak.yaml"
+    path.write_text("profile: strict\n")
+    subprocess.run(["git", "add", ".roborak.yaml"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "strict profile"], cwd=repo, check=True)
+    path.write_text("profile: fast\nllm:\n  api_keys:\n    anthropic: secret-profile-key\n")
+    result = runner.invoke(app, ["config", "show", "-C", str(repo)])
+    assert result.exit_code == EXIT_OK, result.output
+    out = flatten(result.output)
+    assert "profile: fast" in out
+    assert "walkthrough: false" in out
+    assert "max_commands: 8" in out
+    assert "verification loaded from: base revision HEAD (profile: strict)" in out
+    assert "secret-profile-key" not in out
+    overridden = runner.invoke(app, ["config", "show", "-C", str(repo), "--profile", "balanced"])
+    assert overridden.exit_code == EXIT_OK, overridden.output
+    out = flatten(overridden.output)
+    assert "profile: balanced" in out
+    assert "max_commands: 4" in out
+    assert "walkthrough: true" in out
+
+
+@pytest.mark.parametrize(
+    "fail_on, expected", [(None, EXIT_OK), ("critical", EXIT_OK), ("major", EXIT_FINDINGS)]
+)
+def test_strict_profile_changes_verdict_but_only_fail_on_changes_exit(
+    repo: Path, monkeypatch, fail_on, expected
+):
+    from roborak.core.models import Finding, ReviewResult
+    from roborak.core.severity import Category, Severity
+
+    def fake_review(self, changeset):
+        return ReviewResult(
+            changeset=changeset,
+            findings=[
+                Finding(
+                    file="app.py",
+                    start_line=2,
+                    end_line=2,
+                    severity=Severity.MAJOR,
+                    category=Category.BUG,
+                    title="Wrong result",
+                    body="Returns the wrong value.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("roborak.analysis.reviewer.Reviewer.review", fake_review)
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    args = ["review", "-C", str(repo), "--profile", "strict", "--no-llm", "--no-static"]
+    if fail_on:
+        args += ["--fail-on", fail_on]
+    result = runner.invoke(app, args)
+    assert result.exit_code == expected, result.output
+    if fail_on != "critical":
+        assert "Pre-merge check: blocked" in result.output

@@ -28,6 +28,7 @@ const PUBLISHING: FlagGroup = {
 const PIPELINE: FlagGroup = {
   title: "Which stages run",
   flags: [
+    { name: "--profile", arg: "fast|balanced|strict|security", help: "Preset defaults; explicit configuration and flags still win." },
     { name: "--no-walkthrough", help: "Skip the overview; one model call instead of two." },
     { name: "--no-llm", help: "Static analysis only; makes no model calls." },
     { name: "--no-static", help: "Skip static analysis; model only." },

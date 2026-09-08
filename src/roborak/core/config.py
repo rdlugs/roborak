@@ -1,7 +1,8 @@
 """Layered configuration.
 
 Precedence, highest first: CLI flags, environment (``ROBORAK_*``), the project's
-``.roborak.yaml`` / ``.roborak.yml``, the user's ``~/.config/roborak/.roborak.yaml``, then defaults.
+``.roborak.yaml`` / ``.roborak.yml``, the user's ``~/.config/roborak/.roborak.yaml``,
+then the selected profile and built-in defaults.
 The shape is a section per stage -- review, static analysis, verification, blast
 radius, the model, forge credentials, output -- plus path ignores and a rules
 directory.
@@ -17,12 +18,13 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+from copy import deepcopy
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from roborak.core.severity import Category, Enforcement, Severity
 from roborak.sandbox import in_ci
@@ -61,6 +63,53 @@ class ConfigModel(BaseModel):
     """Configuration is user-authored, so typos must fail instead of disappearing."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class ReviewProfile(StrEnum):
+    FAST = "fast"
+    BALANCED = "balanced"
+    STRICT = "strict"
+    SECURITY = "security"
+
+
+_PROFILE_DEFAULTS: dict[ReviewProfile, dict[str, Any]] = {
+    ReviewProfile.BALANCED: {},
+    ReviewProfile.FAST: {
+        "output": {"walkthrough": False},
+        "verification": {"enabled": False},
+        "impact": {"enabled": False, "forge_checkout": "off"},
+        "review": {"investigate": {"enabled": False}},
+    },
+    ReviewProfile.STRICT: {
+        "review": {
+            "block_on": "major",
+            "investigate": {
+                "max_candidates": 10,
+                "max_rounds": 3,
+                "max_files": 20,
+                "token_budget": 40000,
+            },
+        },
+        "impact": {"max_nodes": 24, "max_consumers_per_node": 10, "token_budget": 3000},
+        "verification": {
+            "broaden_paths": ["**"],
+            "max_commands": 8,
+            "timeout_seconds": 600,
+        },
+    },
+    ReviewProfile.SECURITY: {
+        "review": {"categories": ["security", "reliability"], "block_on": "major"},
+        "supply_chain": {"max_changes": 80, "max_assets": 40, "token_budget": 2400},
+        "static": {"max_findings_in_prompt": 80},
+    },
+}
+
+
+def _expand_profile(data: dict[str, Any]) -> dict[str, Any]:
+    profile = ReviewProfile(data.get("profile", ReviewProfile.BALANCED))
+    # Copy the preset, including lists: mutating one resolved config must not
+    # change the defaults seen by a later invocation.
+    return _deep_merge(deepcopy(_PROFILE_DEFAULTS[profile]), data)
 
 
 class Execution(StrEnum):
@@ -441,6 +490,7 @@ class ForgeConfig(ConfigModel):
 
 
 class Config(ConfigModel):
+    profile: ReviewProfile = ReviewProfile.BALANCED
     version: Literal[1] = 1
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     static: StaticConfig = Field(default_factory=StaticConfig)
@@ -456,6 +506,11 @@ class Config(ConfigModel):
     language_instructions: dict[str, str] = Field(default_factory=dict)
     """Extra prompt guidance keyed by language, e.g. ``{"php": "This is Laravel 10."}``."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_profile(cls, data: Any) -> Any:
+        return _expand_profile(data) if isinstance(data, dict) else data
+
     @property
     def model(self) -> str:
         return self.llm.model
@@ -470,8 +525,10 @@ def project_config_path(repo: Path, explicit_path: Path | None = None) -> Path |
     return next((repo / name for name in PROJECT_CONFIG_NAMES if (repo / name).is_file()), None)
 
 
-def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
-    """Merge every configuration layer into one ``Config``."""
+def load_config(
+    repo: Path, explicit_path: Path | None = None, *, profile: ReviewProfile | None = None
+) -> Config:
+    """Select one profile, then merge explicit settings over its defaults."""
     layers: list[dict[str, Any]] = []
 
     if USER_CONFIG_PATH.is_file():
@@ -493,11 +550,17 @@ def load_config(repo: Path, explicit_path: Path | None = None) -> Config:
     merged: dict[str, Any] = {}
     for layer in layers:
         merged = _deep_merge(merged, layer)
+    if profile is not None:
+        merged["profile"] = profile
     return Config.model_validate(merged)
 
 
 def load_verification(
-    repo: Path, *, ref: str = "HEAD", explicit_path: Path | None = None
+    repo: Path,
+    *,
+    ref: str = "HEAD",
+    explicit_path: Path | None = None,
+    profile: ReviewProfile | None = None,
 ) -> tuple[VerificationConfig, str, list[str]]:
     """The verification section, read from somewhere the change cannot have written.
 
@@ -529,12 +592,12 @@ def load_verification(
     project: dict[str, Any] = {}
 
     if USER_CONFIG_PATH.is_file():
-        layers.append(_verification_of(_read_yaml(USER_CONFIG_PATH)))
+        layers.append(_verification_layer(_read_yaml(USER_CONFIG_PATH)))
 
     if explicit_path is not None:
         if not explicit_path.is_file():
             raise FileNotFoundError(f"Config file not found: {explicit_path}")
-        project = _verification_of(_read_yaml(explicit_path))
+        project = _read_yaml(explicit_path)
         source = f"{explicit_path}"
     elif ref:
         at_ref = _project_config_at_ref(repo, ref)
@@ -545,7 +608,7 @@ def load_verification(
                 "environment configuration was consulted."
             )
         else:
-            project = _verification_of(at_ref)
+            project = at_ref
             source = f"base revision {ref[:12]}"
     else:
         source = "user and environment configuration"
@@ -554,25 +617,40 @@ def load_verification(
             "user and environment configuration was consulted."
         )
 
-    layers.append(project)
-    layers.append(_verification_of(_env_layer()))
+    layers.append(_verification_layer(project))
+    layers.append(_verification_layer(_env_layer()))
 
     merged: dict[str, Any] = {}
     for layer in layers:
         merged = _deep_merge(merged, layer)
-    config = VerificationConfig.model_validate(merged)
+    if profile is not None:
+        merged["profile"] = profile
+    selected_profile = ReviewProfile(merged.get("profile", ReviewProfile.BALANCED))
+    config = VerificationConfig.model_validate(_verification_of(_expand_profile(merged)))
+    source += f" (profile: {selected_profile.value})"
 
     # Only worth saying when the checkout is asking for something *different*. A
     # committed configuration reads identically from both places, and a note on
     # every run would train the reader to skip the one run where it matters.
     working_tree = _working_tree_verification(repo)
-    if explicit_path is None and working_tree is not None and working_tree != project:
+    if (
+        explicit_path is None
+        and working_tree is not None
+        and working_tree != _verification_of(project)
+    ):
         notes.append(
             "Verification commands in the working tree's project configuration were not used: "
             "they are read from the base revision, so a change cannot define the command that "
             "verifies it. Commit them, or pass --config with a path you trust."
         )
     return config, source, notes
+
+
+def _verification_layer(data: dict[str, Any]) -> dict[str, Any]:
+    layer: dict[str, Any] = {"verification": _verification_of(data)}
+    if "profile" in data:
+        layer["profile"] = data["profile"]
+    return layer
 
 
 def _verification_of(data: dict[str, Any]) -> dict[str, Any]:
@@ -678,6 +756,8 @@ def _warn_if_others_can_read_keys(path: Path, data: dict[str, Any]) -> None:
 def _env_layer() -> dict[str, Any]:
     """Map the handful of env vars worth supporting onto the config tree."""
     layer: dict[str, Any] = {}
+    if profile := os.getenv("ROBORAK_PROFILE"):
+        layer["profile"] = profile
     if model := os.getenv("ROBORAK_MODEL"):
         layer.setdefault("llm", {})["model"] = model
     if floor := os.getenv("ROBORAK_SEVERITY_FLOOR"):

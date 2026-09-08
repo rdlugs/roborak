@@ -13,7 +13,13 @@ from rich.syntax import Syntax
 
 from roborak.cli.shared import EXIT_OK, fail
 from roborak.core import config as core_config
-from roborak.core.config import PROJECT_CONFIG_NAMES, Config, load_config
+from roborak.core.config import (
+    PROJECT_CONFIG_NAMES,
+    Config,
+    ReviewProfile,
+    load_config,
+    load_verification,
+)
 from roborak.llm.client import missing_credentials
 
 config_app = typer.Typer(help="Inspect and scaffold roborak's configuration.")
@@ -33,6 +39,10 @@ def template_text() -> str:
 
 @config_app.command("show")
 def show_config(
+    profile: Annotated[
+        ReviewProfile | None,
+        typer.Option("--profile", help="Preview a preset with explicit settings applied."),
+    ] = None,
     repo: Annotated[Path | None, typer.Option("--dir", "-C")] = None,
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
 ) -> None:
@@ -41,7 +51,10 @@ def show_config(
     repo = (repo or Path.cwd()).resolve()
 
     try:
-        config = load_config(repo, config_path)
+        config = load_config(repo, config_path, profile=profile)
+        config.verification, verification_source, notes = load_verification(
+            repo, explicit_path=config_path, profile=profile
+        )
     except (OSError, ValueError) as exc:
         fail(console, f"config error: {exc}")
 
@@ -59,6 +72,10 @@ def show_config(
     if project_path is not None:
         sources.append(str(project_path))
     console.print(f"[dim]loaded from: {', '.join(sources) or 'defaults only'}[/]")
+
+    console.print(f"[dim]verification loaded from: {verification_source}[/]")
+    for note in notes:
+        console.print(f"[dim]{note}[/]")
 
     if missing := missing_credentials(config.model, config.llm):
         console.print(f"[yellow]note[/] {config.model} needs {missing}, which is not set.")
