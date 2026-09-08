@@ -187,11 +187,14 @@ def test_publication_failure_restores_original(repo: Path, monkeypatch: pytest.M
     link = autofix.os.link
 
     def fail_publication(
-        source: str | Path, destination: str | Path, *, follow_symlinks: bool = True
+        source: str | Path, destination: str | Path, *, follow_symlinks: bool | None = None
     ) -> None:
         if Path(source).name == "replacement" and Path(destination) == target:
             raise OSError("publication failed")
-        link(source, destination, follow_symlinks=follow_symlinks)
+        if follow_symlinks is None:
+            link(source, destination)
+        else:
+            link(source, destination, follow_symlinks=follow_symlinks)
 
     monkeypatch.setattr(autofix.os, "link", fail_publication)
     autofix.apply(plan)
@@ -227,13 +230,16 @@ def test_open_descriptor_save_preserved_for_recovery(
     with target.open("r+b") as editor:
 
         def save_before_publication(
-            source: str | Path, destination: str | Path, *, follow_symlinks: bool = True
+            source: str | Path, destination: str | Path, *, follow_symlinks: bool | None = None
         ) -> None:
             if Path(source).name == "replacement" and Path(destination) == target:
                 editor.write(newer)
                 editor.truncate()
                 editor.flush()
-            link(source, destination, follow_symlinks=follow_symlinks)
+            if follow_symlinks is None:
+                link(source, destination)
+            else:
+                link(source, destination, follow_symlinks=follow_symlinks)
 
         monkeypatch.setattr(autofix.os, "link", save_before_publication)
         autofix.apply(plan)
