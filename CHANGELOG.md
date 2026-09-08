@@ -12,6 +12,15 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **Review profiles select a set of defaults for common review needs.** Choose
+  `fast`, `balanced`, `strict`, or `security` with the `profile` config key,
+  `ROBORAK_PROFILE`, or `review --profile`. Explicit settings override preset
+  defaults, and `balanced` preserves existing behavior. `config show --profile`
+  previews resolved settings and identifies verification's trusted source and
+  profile. Verification continues reading project settings from the base revision;
+  profiles never grant execution trust or supply commands. Only `--fail-on`
+  changes the exit-code threshold.
+
 - **`roborak fix` previews and applies committable suggestions in a local Git
   checkout.** `--dry-run` shows eligible replacements and unified diffs without
   writing; interactive runs preview and ask for confirmation, while scripts use
