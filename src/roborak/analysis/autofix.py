@@ -243,7 +243,7 @@ def _replace_if_unchanged(temporary: str, target: Path, snapshot: Snapshot) -> N
         if captured:
             try:
                 os.link(original, target, follow_symlinks=False)
-            except OSError as restore_error:
+            except (OSError, NotImplementedError) as restore_error:
                 raise OSError(
                     f"{exc} Original file retained at {original}; "
                     f"could not restore without overwriting the target: {restore_error}"

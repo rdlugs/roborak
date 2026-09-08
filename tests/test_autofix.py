@@ -204,6 +204,34 @@ def test_publication_failure_restores_original(repo: Path, monkeypatch: pytest.M
     assert not list(repo.glob(".roborak-fix-*"))
 
 
+@pytest.mark.parametrize("restore_error", [OSError, NotImplementedError])
+def test_restore_failure_retains_original(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, restore_error: type[Exception]
+) -> None:
+    plan = plan_for(repo)
+    target = repo / "app.py"
+    link = autofix.os.link
+
+    def fail_publication_and_restore(
+        source: str | Path, destination: str | Path, *, follow_symlinks: bool = True
+    ) -> None:
+        if not follow_symlinks:
+            raise restore_error("restore unsupported")
+        if Path(source).name == "replacement" and Path(destination) == target:
+            raise OSError("publication failed")
+        link(source, destination)
+
+    monkeypatch.setattr(autofix.os, "link", fail_publication_and_restore)
+    autofix.apply(plan)
+    assert not target.exists()
+    recovery = next(repo.glob(".roborak-fix-*")) / "original"
+    assert recovery.read_bytes() == plan.snapshots["app.py"].content
+    assert plan.report.items[0].outcome == "failed"
+    assert str(recovery) in plan.report.items[0].reason
+    assert "publication failed" in plan.report.items[0].reason
+    assert "restore unsupported" in plan.report.items[0].reason
+
+
 def test_unsupported_links_leave_target_in_place(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
