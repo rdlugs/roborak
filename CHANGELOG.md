@@ -12,6 +12,18 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Added
 
+- **`roborak fix` previews and applies committable suggestions in a local Git
+  checkout.** `--dry-run` shows eligible replacements and unified diffs without
+  writing; interactive runs preview and ask for confirmation, while scripts use
+  `--yes` to apply. Text and JSON reports distinguish applied, skipped, failed,
+  and eligible suggestions, with reasons. Fixes preserve indentation, line
+  endings, and the Git index, leaving edits unstaged. PR/MR targets require a
+  clean local checkout at the reviewed head. Snapshot and anchor checks reject
+  stale files, ambiguous overlaps, unsafe targets, and incomplete suggestions.
+  Concurrent saves at the target path are preserved, and failed recovery retains
+  the original beside the target and reports its location. A failed file leaves
+  successful changes to other files in place.
+
 - **roborak resolves its own review threads once later commits have fixed them.**
   Publishing was a one-way street: a finding went out and nothing ever looked at
   it again, so an inline thread opened on one commit stayed open long after the
