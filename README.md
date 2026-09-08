@@ -302,8 +302,15 @@ Interactive runs preview changes and ask once before applying; scripts and pipes
 must use `--yes` or `--dry-run`. Reports separate applied, skipped, failed, and
 eligible suggestions, with reasons; `--json` emits a dedicated fix report.
 Exit `0` means the run completed (including skips, cancellation, or dry-run), and
-`2` means an operational failure or incomplete generation. Fixes are written
-atomically per file; a failed file does not undo successful changes to other files.
+`2` means an operational failure or incomplete generation. Each write temporarily
+moves the target aside, validates it, and publishes only if the target path is still
+absent. Concurrent saves at that path are preserved. Failed recovery retains the
+original in a `.roborak-fix-*` directory beside the target and reports its location.
+Filesystems without hard-link support are refused before moving the target.
+Writers using already-open file descriptors are not locked out; detected changes
+to the moved original are retained for recovery, but later descriptor writes cannot
+be guaranteed. Avoid editing files while applying fixes. A failed file does not
+undo successful changes to other files.
 No tests, formatting, staging, commits, or publishing run automatically.
 
 Each accepts the same `--mr` / `--pr` / `--issue` / `--base` targeting as `review`.

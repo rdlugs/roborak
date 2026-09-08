@@ -12,6 +12,7 @@ from rich.prompt import Confirm
 from roborak.analysis import autofix
 from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
+from roborak.cli.commands.setup_cmd import Aborted
 from roborak.core.models import Finding
 
 
@@ -71,7 +72,11 @@ def fix(
     if not dry_run and any(i.outcome == "eligible" for i in plan.report.items):
         if not yes:
             render(plan.report, console)
-        if yes or Confirm.ask("Apply these fixes?", console=console, default=False):
+        try:
+            confirmed = yes or Confirm.ask("Apply these fixes?", console=console, default=False)
+        except (EOFError, KeyboardInterrupt):
+            raise Aborted from None
+        if confirmed:
             autofix.apply(plan)
         else:
             autofix.cancel(plan)

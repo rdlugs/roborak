@@ -86,8 +86,15 @@ export default function Commands() {
         are refused. Changed snapshots, moved anchors, overlaps, and non-committable
         suggestions are skipped with reasons. Reports separate applied, skipped, failed,
         and eligible suggestions. Exit 0 covers completed runs, cancellation, and dry-run;
-        exit 2 indicates operational failure or incomplete generation. Writes are atomic
-        per file; failures retain successful changes in other files. No tests, formatting,
+        exit 2 indicates operational failure or incomplete generation. Each write temporarily
+        moves the target aside, validates it, and publishes only if the target path is still
+        absent. Concurrent saves at that path are preserved. Failed recovery retains the
+        original in a <Code>.roborak-fix-*</Code> directory beside the target and reports its
+        location. Filesystems without hard-link support are refused before moving the target.
+        Writers using already-open file descriptors are not locked out; detected changes to
+        the moved original are retained for recovery, but later descriptor writes cannot be
+        guaranteed. Avoid editing files while applying fixes. Failures retain successful
+        changes in other files. No tests, formatting,
         commits, or publishing run automatically.
       </P>
 

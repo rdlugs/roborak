@@ -211,6 +211,53 @@ def prepare(plan: FixPlan, candidates: list[Finding], result: ReviewResult) -> N
             )
 
 
+def _matches_snapshot(path: Path, snapshot: Snapshot) -> bool:
+    info = path.lstat()
+    return (
+        (info.st_dev, info.st_ino, info.st_mode) == (snapshot.device, snapshot.inode, snapshot.mode)
+        and info.st_nlink == 1
+        and path.read_bytes() == snapshot.content
+    )
+
+
+def _replace_if_unchanged(temporary: str, target: Path, snapshot: Snapshot) -> None:
+    # Capture the actual destination before validating it. Publishing and restoring
+    # use link's exclusive creation: neither may overwrite a concurrent save.
+    recovery = Path(tempfile.mkdtemp(prefix=".roborak-fix-", dir=target.parent))
+    original = recovery / "original"
+    staged = recovery / "replacement"
+    captured = False
+    try:
+        # Refuse unsupported filesystems before moving the user's file.
+        os.link(temporary, staged)
+        os.replace(target, original)
+        captured = True
+        if not _matches_snapshot(original, snapshot):
+            raise ValueError("Target changed before writing.")
+        os.link(staged, target)
+        # A writer holding an old descriptor can still change the captured inode.
+        # Preserve that file for recovery rather than discard an observed save.
+        if not _matches_snapshot(original, snapshot):
+            raise ValueError("Captured target changed while writing.")
+    except (OSError, ValueError) as exc:
+        if captured:
+            try:
+                os.link(original, target, follow_symlinks=False)
+            except OSError as restore_error:
+                raise OSError(
+                    f"{exc} Original file retained at {original}; "
+                    f"could not restore without overwriting the target: {restore_error}"
+                ) from exc
+            original.unlink()
+        raise
+    else:
+        original.unlink()
+    finally:
+        staged.unlink(missing_ok=True)
+        if not original.exists() and not original.is_symlink():
+            recovery.rmdir()
+
+
 def apply(plan: FixPlan) -> None:
     try:
         check_tree(plan.repo, plan.head, forge=plan.forge)
@@ -235,7 +282,7 @@ def apply(plan: FixPlan) -> None:
                 for item in items:
                     item.outcome, item.reason = "skipped", "Target changed before writing."
                 continue
-            os.replace(temporary, plan.repo / name)
+            _replace_if_unchanged(temporary, plan.repo / name, plan.snapshots[name])
             for item in items:
                 item.outcome, item.reason = "applied", "Replacement applied."
         except (OSError, ValueError) as exc:

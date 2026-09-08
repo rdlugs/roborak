@@ -13,6 +13,8 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, ConfigDict
+
 from roborak.core.config import LLMConfig
 
 log = logging.getLogger(__name__)
@@ -24,8 +26,9 @@ class LLMError(RuntimeError):
     """A model call failed in a way the user needs to hear about."""
 
 
-@dataclass
-class LLMResponse:
+class LLMResponse(BaseModel):
+    model_config = ConfigDict(strict=True)
+
     text: str
     model: str
     prompt_tokens: int = 0
@@ -83,16 +86,18 @@ class LLMClient:
             api_key=self._key_for(model),
             api_base=self.config.api_base,
         )
-        text = response.choices[0].message.content or ""
+        text = response.choices[0].message.content
         usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
         hidden = getattr(response, "_hidden_params", None) or {}
         raw_cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
         return LLMResponse(
-            text=text,
+            text=text if text is not None else "",
             finish_reason=getattr(response.choices[0], "finish_reason", None),
             model=model,
-            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            prompt_tokens=prompt_tokens if prompt_tokens is not None else 0,
+            completion_tokens=completion_tokens if completion_tokens is not None else 0,
             latency_ms=round((time.monotonic() - started) * 1000),
             cost_usd=float(raw_cost) if isinstance(raw_cost, int | float) else None,
         )

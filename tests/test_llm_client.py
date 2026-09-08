@@ -88,6 +88,69 @@ def test_every_model_failing_still_raises(client):
 
 
 @pytest.mark.parametrize(
+    "field,value",
+    [
+        ("finish_reason", []),
+        ("finish_reason", {}),
+        ("finish_reason", 42),
+        ("content", []),
+        ("content", {}),
+        ("content", False),
+        ("prompt_tokens", "10"),
+        ("prompt_tokens", False),
+        ("completion_tokens", []),
+        ("completion_tokens", [10]),
+    ],
+)
+@pytest.mark.parametrize("fallback", [False, True])
+def test_invalid_response_uses_failure_path(client, monkeypatch, field, value, fallback):
+    instance, fake = client(
+        LLMConfig(model="primary", fallback_models=["fallback"] if fallback else [])
+    )
+    completion = fake.completion
+
+    def respond(**kwargs):
+        response = completion(**kwargs)
+        if kwargs["model"] == "primary":
+            choice = response.choices[0]
+            if field == "content":
+                choice.message.content = value
+            elif field == "finish_reason":
+                choice.finish_reason = value
+            else:
+                response.usage = SimpleNamespace(**{field: value})
+        return response
+
+    monkeypatch.setattr(fake, "completion", respond)
+    if fallback:
+        response = instance.complete("sys", "user")
+        assert response.model == "fallback"
+        assert response.text == "ok"
+        assert [call["model"] for call in fake.calls] == ["primary", "fallback"]
+    else:
+        with pytest.raises(LLMError, match="validation error"):
+            instance.complete("sys", "user")
+
+
+@pytest.mark.parametrize("finish_reason", [None, "stop", "end_turn", "length", "custom"])
+def test_valid_finish_reason_preserved(client, monkeypatch, finish_reason):
+    instance, fake = client(LLMConfig(model="primary"))
+    monkeypatch.setattr(
+        fake,
+        "completion",
+        lambda **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content=None), finish_reason=finish_reason)
+            ]
+        ),
+    )
+    response = instance.complete("sys", "user")
+    assert response.finish_reason == finish_reason
+    assert response.text == ""
+    assert response.total_tokens == 0
+
+
+@pytest.mark.parametrize(
     ("model", "expected"),
     [
         ("anthropic/claude-opus-4-8", "anthropic"),
