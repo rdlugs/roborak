@@ -67,7 +67,7 @@ export default function Configuration() {
       <P>
         Select one profile by CLI &gt; environment &gt; project &gt; user &gt; balanced.
         Profiles never combine. Explicit fields always override preset defaults, even when
-        the profile is selected with <Code>--profile</Code>. Fields populated by
+        the profile is selected with <Code>--profile</Code>. Fields populated by{" "}
         <Code>config init</Code> count as explicit: remove or comment out the fields you want
         a preset to control. Unlisted fields retain their built-in defaults.
       </P>
