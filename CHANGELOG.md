@@ -10,6 +10,8 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-09
+
 ### Added
 
 - **Review profiles select a set of defaults for common review needs.** Choose
@@ -552,7 +554,8 @@ works without a checkout.
 - **Any LiteLLM model**, with keys from the environment or the config file.
 - `--version` / `-V` on the CLI.
 
-[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/rdlugs/roborak/releases/tag/v0.9.0
 [0.8.0]: https://github.com/rdlugs/roborak/releases/tag/v0.8.0
 [0.7.0]: https://github.com/rdlugs/roborak/releases/tag/v0.7.0
 [0.6.0]: https://github.com/rdlugs/roborak/releases/tag/v0.6.0
