@@ -416,7 +416,7 @@ def test_a_typo_under_pre_merge_is_rejected(tmp_path: Path):
 
 
 @pytest.mark.parametrize("profile", ["balanced", "fast", "strict", "security"])
-def test_profiles_resolve_without_granting_execution(profile: str):
+def test_profiles_resolve_without_granting_execution(profile: str) -> None:
     from roborak.core.config import Execution
 
     config = Config.model_validate({"profile": profile})
@@ -456,7 +456,9 @@ def test_profiles_resolve_without_granting_execution(profile: str):
         assert config.static.max_findings_in_prompt == 80
 
 
-def test_profile_selection_does_not_merge_presets(tmp_path: Path, monkeypatch):
+def test_profile_selection_does_not_merge_presets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from roborak.core.config import ReviewProfile
 
     user = tmp_path / "user.yaml"
@@ -483,7 +485,9 @@ def test_profile_selection_does_not_merge_presets(tmp_path: Path, monkeypatch):
     assert selected.impact.max_nodes == 12
 
 
-def test_explicit_profile_fields_merge_recursively_and_replace_lists(tmp_path: Path, monkeypatch):
+def test_explicit_profile_fields_merge_recursively_and_replace_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     user = tmp_path / "user.yaml"
     user.write_text("profile: strict\nreview:\n  investigate:\n    max_candidates: 7\n")
     monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
@@ -499,7 +503,7 @@ def test_explicit_profile_fields_merge_recursively_and_replace_lists(tmp_path: P
 
 
 @pytest.mark.parametrize("layer", ["config", "environment", "cli"])
-def test_invalid_profiles_fail(tmp_path: Path, monkeypatch, layer: str):
+def test_invalid_profiles_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layer: str) -> None:
     kwargs = {}
     if layer == "config":
         (tmp_path / ".roborak.yaml").write_text("profile: typo\n")
@@ -511,7 +515,7 @@ def test_invalid_profiles_fail(tmp_path: Path, monkeypatch, layer: str):
         load_config(tmp_path, **kwargs)
 
 
-def test_profile_defaults_are_not_shared_between_instances():
+def test_profile_defaults_are_not_shared_between_instances() -> None:
     first = Config.model_validate({"profile": "strict"})
     first.verification.broaden_paths.append("extra")
     first.review.investigate.max_candidates = 99
@@ -520,7 +524,9 @@ def test_profile_defaults_are_not_shared_between_instances():
     assert second.review.investigate.max_candidates == 10
 
 
-def test_ci_ignores_the_working_tree_profile(tmp_path: Path, monkeypatch):
+def test_ci_ignores_the_working_tree_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("CI", "true")
     project = tmp_path / ".roborak.yaml"
     project.write_text("profile: fast\n")

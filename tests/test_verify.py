@@ -583,22 +583,36 @@ def test_a_review_that_filtered_every_file_keeps_its_verification_record():
     assert result.verification is report
 
 
-@pytest.mark.parametrize("working_profile", ["fast", "security", "typo"])
-def test_verification_profile_comes_from_the_base(repo: Path, working_profile: str):
+@pytest.mark.parametrize("working_profile", ["strict", "fast", "security", "typo", None])
+@pytest.mark.parametrize("verification_yaml", ["", TRUSTED_YAML])
+def test_verification_profile_comes_from_the_base(
+    repo: Path, working_profile: str | None, verification_yaml: str
+) -> None:
     path = repo / ".roborak.yaml"
-    path.write_text("profile: strict\n" + TRUSTED_YAML)
+    path.write_text("profile: strict\n" + verification_yaml)
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "add strict profile")
-    path.write_text(f"profile: {working_profile}\n" + HOSTILE_YAML)
-    resolved, source, _ = load_verification(repo)
+    trusted, _, notes = load_verification(repo)
+    assert notes == []
+    profile_yaml = f"profile: {working_profile}\n" if working_profile is not None else ""
+    path.write_text(profile_yaml + verification_yaml)
+    resolved, source, notes = load_verification(repo)
+    assert resolved == trusted
     assert resolved.enabled
     assert resolved.broaden_paths == ["**"]
-    assert resolved.fallback == ["true", "trusted"]
+    assert resolved.max_commands == 8
+    assert resolved.fallback == (["true", "trusted"] if verification_yaml else [])
     assert resolved.execution is Execution.AUTO
     assert "profile: strict" in source
+    if working_profile == "strict":
+        assert notes == []
+    else:
+        assert any("working tree" in note and "profile" in note for note in notes)
 
 
-def test_verification_profiles_respect_trusted_overrides(repo: Path, monkeypatch):
+def test_verification_profiles_respect_trusted_overrides(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from roborak.core.config import ReviewProfile
 
     user = repo / "user.yaml"
@@ -629,7 +643,7 @@ def test_verification_profiles_respect_trusted_overrides(repo: Path, monkeypatch
 
 
 @pytest.mark.parametrize("fallback", [[], ["true", "all"]])
-def test_strict_selects_the_broad_fallback_when_available(fallback: list[str]):
+def test_strict_selects_the_broad_fallback_when_available(fallback: list[str]) -> None:
     resolved = Config.model_validate(
         {
             "profile": "strict",
@@ -646,7 +660,7 @@ def test_strict_selects_the_broad_fallback_when_available(fallback: list[str]):
     assert select(resolved, changeset("app.py"))[0].command == ["true", "targeted"]
 
 
-def test_a_strict_profile_without_commands_does_not_invent_verification():
+def test_a_strict_profile_without_commands_does_not_invent_verification() -> None:
     assert (
         select(Config.model_validate({"profile": "strict"}).verification, changeset("x.py")) == []
     )

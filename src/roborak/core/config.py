@@ -636,12 +636,12 @@ def load_verification(
     if (
         explicit_path is None
         and working_tree is not None
-        and working_tree != _verification_of(project)
+        and working_tree != _verification_layer(project)
     ):
         notes.append(
-            "Verification commands in the working tree's project configuration were not used: "
-            "they are read from the base revision, so a change cannot define the command that "
-            "verifies it. Commit them, or pass --config with a path you trust."
+            "Verification settings (including profile selection) in the working tree's project "
+            "configuration were not used: they are read from the base revision, so a change "
+            "cannot define how it is verified. Commit them, or pass --config with a path you trust."
         )
     return config, source, notes
 
@@ -699,8 +699,8 @@ def _project_config_at_ref(repo: Path, ref: str) -> dict[str, Any] | None:
 def _working_tree_verification(repo: Path) -> dict[str, Any] | None:
     """What the checkout asks for, so we can say when we did not use it.
 
-    ``None`` means the checkout asks for nothing, which is the ordinary case and
-    is never worth a note.
+    ``None`` means no readable project configuration was found. Keep empty
+    layers so removing a profile or verification settings also produces a note.
     """
     for name in PROJECT_CONFIG_NAMES:
         candidate = repo / name
@@ -710,8 +710,9 @@ def _working_tree_verification(repo: Path) -> dict[str, Any] | None:
             data = yaml.safe_load(candidate.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
             return None
-        section = _verification_of(data) if isinstance(data, dict) else {}
-        return section or None
+        if data is None:
+            data = {}
+        return _verification_layer(data) if isinstance(data, dict) else None
     return None
 
 

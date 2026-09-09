@@ -2130,13 +2130,16 @@ def test_premerge_opinion_waits_for_the_walkthrough(repo: Path, monkeypatch, ove
 
 
 @pytest.mark.parametrize("profile", ["fast", "balanced", "strict", "security"])
-def test_review_profile_reaches_stages_with_cli_overrides(repo: Path, monkeypatch, profile: str):
-    from roborak.core.models import ReviewResult
+def test_review_profile_reaches_stages_with_cli_overrides(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, profile: str
+) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ChangeSet, ReviewResult
     from roborak.core.severity import Severity
 
     seen = {}
 
-    def fake_review(self, changeset):
+    def fake_review(self: Reviewer, changeset: ChangeSet) -> ReviewResult:
         seen["config"] = self.config
         return ReviewResult(changeset=changeset)
 
@@ -2174,14 +2177,14 @@ def test_review_profile_reaches_stages_with_cli_overrides(repo: Path, monkeypatc
 
 
 @pytest.mark.parametrize("command", [["review"], ["config", "show"]])
-def test_profile_cli_rejects_unknown_names(command: list[str]):
+def test_profile_cli_rejects_unknown_names(command: list[str]) -> None:
     result = runner.invoke(app, [*command, "--profile", "typo"])
     assert result.exit_code == EXIT_ERROR
     assert "typo" in result.output
     assert "balanced" in result.output
 
 
-def test_config_show_reports_resolved_and_trusted_profiles(repo: Path):
+def test_config_show_reports_resolved_and_trusted_profiles(repo: Path) -> None:
     path = repo / ".roborak.yaml"
     path.write_text("profile: strict\n")
     subprocess.run(["git", "add", ".roborak.yaml"], cwd=repo, check=True)
@@ -2207,12 +2210,13 @@ def test_config_show_reports_resolved_and_trusted_profiles(repo: Path):
     "fail_on, expected", [(None, EXIT_OK), ("critical", EXIT_OK), ("major", EXIT_FINDINGS)]
 )
 def test_strict_profile_changes_verdict_but_only_fail_on_changes_exit(
-    repo: Path, monkeypatch, fail_on, expected
-):
-    from roborak.core.models import Finding, ReviewResult
+    repo: Path, monkeypatch: pytest.MonkeyPatch, fail_on: str | None, expected: int
+) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ChangeSet, Finding, ReviewResult
     from roborak.core.severity import Category, Severity
 
-    def fake_review(self, changeset):
+    def fake_review(self: Reviewer, changeset: ChangeSet) -> ReviewResult:
         return ReviewResult(
             changeset=changeset,
             findings=[
