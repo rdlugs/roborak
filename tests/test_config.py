@@ -413,3 +413,122 @@ def test_a_typo_under_pre_merge_is_rejected(tmp_path: Path):
     (tmp_path / ".roborak.yaml").write_text("pre_merge:\n  titel:\n    level: error\n")
     with pytest.raises(ValidationError):
         load_config(tmp_path)
+
+
+@pytest.mark.parametrize("profile", ["balanced", "fast", "strict", "security"])
+def test_profiles_resolve_without_granting_execution(profile: str) -> None:
+    from roborak.core.config import Execution
+
+    config = Config.model_validate({"profile": profile})
+    assert config.profile == profile
+    assert config.review.require_evidence
+    assert config.static.enabled
+    assert config.static.execution is Execution.AUTO
+    assert config.verification.execution is Execution.AUTO
+    assert config.verification.commands == []
+    assert config.verification.fallback == []
+    if profile == "balanced":
+        assert config == Config()
+    elif profile == "fast":
+        assert not config.output.walkthrough
+        assert not config.verification.enabled
+        assert not config.impact.enabled
+        assert config.impact.forge_checkout is ForgeCheckout.OFF
+        assert not config.review.investigate.enabled
+        assert config.supply_chain.enabled
+    elif profile == "strict":
+        assert config.review.block_on is Severity.MAJOR
+        assert config.review.investigate.max_candidates == 10
+        assert config.review.investigate.max_rounds == 3
+        assert config.review.investigate.max_files == 20
+        assert config.review.investigate.token_budget == 40000
+        assert config.impact.max_nodes == 24
+        assert config.impact.max_consumers_per_node == 10
+        assert config.impact.token_budget == 3000
+        assert config.verification.max_commands == 8
+        assert config.verification.timeout_seconds == 600
+    else:
+        assert config.review.categories == [Category.SECURITY, Category.RELIABILITY]
+        assert config.review.block_on is Severity.MAJOR
+        assert config.supply_chain.max_changes == 80
+        assert config.supply_chain.max_assets == 40
+        assert config.supply_chain.token_budget == 2400
+        assert config.static.max_findings_in_prompt == 80
+
+
+def test_profile_selection_does_not_merge_presets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from roborak.core.config import ReviewProfile
+
+    user = tmp_path / "user.yaml"
+    user.write_text("profile: strict\nreview:\n  investigate:\n    max_rounds: 2\n")
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    assert load_config(tmp_path).profile is ReviewProfile.STRICT
+    project = tmp_path / ".roborak.yaml"
+    project.write_text("profile: fast\noutput:\n  walkthrough: true\n")
+    selected = load_config(tmp_path)
+    assert selected.profile is ReviewProfile.FAST
+    assert selected.output.walkthrough  # Explicit default-valued settings still win.
+    assert selected.review.investigate.max_candidates == 5
+    monkeypatch.setenv("ROBORAK_PROFILE", "security")
+    monkeypatch.setenv("ROBORAK_NO_STATIC", "1")
+    assert load_config(tmp_path).profile is ReviewProfile.SECURITY
+    selected = load_config(tmp_path, profile=ReviewProfile.STRICT)
+    assert selected.profile is ReviewProfile.STRICT
+    assert selected.review.investigate.max_rounds == 2
+    assert selected.review.investigate.max_candidates == 10
+    assert not selected.static.enabled
+    assert selected.review.categories == Config().review.categories
+    selected = load_config(tmp_path, profile=ReviewProfile.BALANCED)
+    assert selected.review.block_on is Severity.CRITICAL
+    assert selected.impact.max_nodes == 12
+
+
+def test_explicit_profile_fields_merge_recursively_and_replace_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = tmp_path / "user.yaml"
+    user.write_text("profile: strict\nreview:\n  investigate:\n    max_candidates: 7\n")
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    (tmp_path / ".roborak.yaml").write_text(
+        "profile: security\nreview:\n  categories: [bug]\n  severity_floor: major\n"
+        "  investigate:\n    max_candidates: 5\n"
+    )
+    monkeypatch.setenv("ROBORAK_SEVERITY_FLOOR", "critical")
+    config = load_config(tmp_path)
+    assert config.review.categories == [Category.BUG]
+    assert config.review.investigate.max_candidates == 5
+    assert config.review.severity_floor is Severity.CRITICAL
+
+
+@pytest.mark.parametrize("layer", ["config", "environment", "cli"])
+def test_invalid_profiles_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layer: str) -> None:
+    kwargs = {}
+    if layer == "config":
+        (tmp_path / ".roborak.yaml").write_text("profile: typo\n")
+    elif layer == "environment":
+        monkeypatch.setenv("ROBORAK_PROFILE", "typo")
+    else:
+        kwargs["profile"] = "typo"
+    with pytest.raises(ValueError, match="typo"):
+        load_config(tmp_path, **kwargs)
+
+
+def test_profile_defaults_are_not_shared_between_instances() -> None:
+    first = Config.model_validate({"profile": "strict"})
+    first.verification.broaden_paths.append("extra")
+    first.review.investigate.max_candidates = 99
+    second = Config.model_validate({"profile": "strict"})
+    assert second.verification.broaden_paths == ["**"]
+    assert second.review.investigate.max_candidates == 10
+
+
+def test_ci_ignores_the_working_tree_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "true")
+    project = tmp_path / ".roborak.yaml"
+    project.write_text("profile: fast\n")
+    assert load_config(tmp_path).profile == "balanced"
+    assert load_config(tmp_path, project).profile == "fast"

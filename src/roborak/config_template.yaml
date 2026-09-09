@@ -2,9 +2,24 @@
 # Project files: .roborak.yaml (canonical generated default) / .roborak.yml.
 # If both exist, only .roborak.yaml is loaded; they are not merged.
 # Precedence: CLI flags > ROBORAK_* env vars > project config >
-# ~/.config/roborak/.roborak.yaml > built-in defaults.
+# ~/.config/roborak/.roborak.yaml > selected profile > built-in defaults.
 # In CI, project files are ignored unless explicitly selected with --config.
 version: 1
+# Select with CLI --profile > ROBORAK_PROFILE > project > user > balanced.
+# Explicit fields below override profile defaults, even when --profile is used.
+# Remove/comment out fields you want the preset to control.
+# balanced: current defaults.
+# fast: no walkthrough, verification, impact, investigation or forge checkout;
+#       retains static analysis, supply-chain summaries and evidence requirements.
+# strict: major blocking floor; larger investigation/impact budgets; verification
+#         prefers the configured broad fallback (broaden_paths: ["**"]), up to
+#         8 commands and 600 seconds. Investigation: 10 candidates, 3 rounds,
+#         20 files, 40000 tokens. Impact: 24 nodes, 10 consumers, 3000 tokens.
+# security: security/reliability categories, major blocking floor, larger supply
+#           evidence budgets: 80 changes, 40 assets, 2400 tokens; up to 80 static
+#           findings in the prompt. Tools still use normal autodetection.
+# Profiles never grant execution trust or invent verification commands.
+profile: balanced
 
 llm:
   model: anthropic/claude-sonnet-5

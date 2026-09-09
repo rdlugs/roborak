@@ -519,7 +519,7 @@ reconcile your settings before replacing either file.
 Project config is `.roborak.yaml` / `.roborak.yml` in the repo root. `.roborak.yaml`
 is the canonical generated default and wins if both exist; the files are not merged.
 Precedence: CLI flags > `ROBORAK_*` env vars > project config >
-`~/.config/roborak/.roborak.yaml` > defaults. `config init` writes `.roborak.yaml`,
+`~/.config/roborak/.roborak.yaml` > selected profile > defaults. `config init` writes `.roborak.yaml`,
 `config init --global` writes the user-wide file; both get the same commented template,
 which ships inside the package rather than being read out of a source checkout.
 
@@ -528,6 +528,42 @@ credential for it, and optional forge tokens, then writes *only* those keys - a
 sparse file, so every other default stays live across upgrades. It chmods 600
 whatever it writes that holds secrets, wherever it wrote it. `config init` remains
 the manual path, and the full annotated file to edit.
+
+### Review profiles
+
+Start with a preset, then override only the settings you need:
+
+```yaml
+profile: balanced
+```
+
+```bash
+rk review --profile strict
+ROBORAK_PROFILE=fast rk review
+rk config show --profile security
+```
+
+| Profile | When to use it and what changes |
+| --- | --- |
+| `balanced` | Current defaults, unchanged; selected when no profile is given. |
+| `fast` | Local iteration: disables walkthrough, verification, impact mapping, investigation, and temporary forge checkout. Keeps static analysis, supply-chain summaries, and evidence requirements. |
+| `strict` | More thorough review: blocks the verdict on major findings; investigates up to 10 candidates over 3 rounds, 20 files, and 40,000 tokens; maps 24 nodes with 10 consumers each and 3,000 tokens. Verification defaults to `broaden_paths: ["**"]`, 8 commands, and a 600-second timeout. |
+| `security` | Security and infrastructure review: categories `[security, reliability]`, major blocking floor, supply-chain limits of 80 changes / 40 assets / 2,400 tokens, and up to 80 static findings in the prompt. Scanner autodetection stays enabled. |
+
+One profile is selected by `--profile` > `ROBORAK_PROFILE` > project config > user config >
+`balanced`. Profiles never combine. Explicit fields follow the normal precedence chain and
+always override preset defaults, even when the profile comes from the CLI. This includes values
+copied from `config init`: remove or comment out fields you want a profile to control.
+All unlisted settings retain built-in defaults. No profile grants trusted execution, installs
+scanners, or supplies verification commands. Only `--fail-on` changes the exit-code threshold.
+
+Verification selects its profile and explicit settings from the trusted base revision instead
+of the working tree; CLI/environment/user settings and explicit `--config` still apply.
+`strict` prefers the configured broad fallback when available, otherwise normal targeted
+selection applies. With no configured commands, nothing runs.
+`config show` displays expanded settings, with verification resolved against `HEAD`, and labels
+its source and profile. A review against another base revision can resolve verification differently.
+
 
 In a terminal the closed questions - where the file goes, which model - are
 arrow-key lists rather than strings to type. Every list ends with

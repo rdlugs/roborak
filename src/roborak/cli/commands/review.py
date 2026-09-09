@@ -16,7 +16,7 @@ from roborak.cli import shared
 from roborak.cli.shared import fail
 from roborak.cli.shared import is_interactive as _is_interactive
 from roborak.core.buckets import Bucket, group
-from roborak.core.config import Execution, VerificationConfig, load_verification
+from roborak.core.config import Execution, ReviewProfile, VerificationConfig, load_verification
 from roborak.core.models import (
     Finding,
     ReviewResult,
@@ -47,6 +47,10 @@ log = logging.getLogger(__name__)
 
 
 def review(
+    profile: Annotated[
+        ReviewProfile | None,
+        typer.Option("--profile", help="Review preset; explicit settings override its defaults."),
+    ] = None,
     repo: Annotated[
         Path | None,
         typer.Option(
@@ -214,6 +218,7 @@ def review(
         include_untracked=include_untracked,
         no_discussions=no_discussions,
         config_path=config_path,
+        profile=profile,
         model=model,
         no_llm=no_llm,
         quiet_status=as_json or agent or prompt_only,
@@ -282,6 +287,7 @@ def review(
         console,
         session,
         config_path=config_path,
+        profile=profile,
         trusted=trust_verify,
         disabled=no_verify,
     )
@@ -386,6 +392,7 @@ def _verify(
     config_path: Path | None,
     trusted: bool,
     disabled: bool,
+    profile: ReviewProfile | None = None,
 ) -> VerificationReport | None:
     """Run the project's own checks, from configuration the change did not write.
 
@@ -393,8 +400,9 @@ def _verify(
     revision -- see ``core.config.load_verification`` for why. The resolved
     section then *replaces* the layered one on ``session.config``, so that
     everything downstream, ``feed_to_llm`` included, reads the trusted values and
-    the working tree's copy influences nothing at all. Only two switches here are
-    a person's: ``--no-verify`` and ``--trust-verify``.
+    the working tree's copy influences nothing at all. CLI ``--profile`` supplies
+    preset defaults here too;
+    ``--no-verify`` and ``--trust-verify`` remain explicit overrides.
     """
     if disabled:
         return None
@@ -405,6 +413,7 @@ def _verify(
             session.repo,
             ref=changeset.base_sha or changeset.base_ref or "HEAD",
             explicit_path=config_path,
+            profile=profile,
         )
     except (FileNotFoundError, ValidationError, ValueError) as exc:
         log.warning("could not resolve verification commands: %s", exc)

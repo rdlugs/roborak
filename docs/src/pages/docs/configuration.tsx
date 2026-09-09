@@ -10,7 +10,8 @@ const PRECEDENCE = [
   ["2", "ROBORAK_* environment variables", "Set per shell or per CI job."],
   ["3", "Project .roborak.yaml / .roborak.yml", "The repository root. Ignored in CI see the warning below."],
   ["4", "~/.config/roborak/.roborak.yaml", "User-wide. Where secrets belong."],
-  ["5", "Built-in defaults", "Everything you did not set."],
+  ["5", "Selected profile", "Defaults for fields you did not explicitly set."],
+  ["6", "Built-in defaults", "Everything you did not set."],
 ];
 
 export default function Configuration() {
@@ -42,6 +43,46 @@ export default function Configuration() {
       <P>
         <Code>roborak config show</Code> prints the result after every layer has merged, with
         secrets redacted. It is the fastest way to answer &quot;where did this value come from?&quot;
+      </P>
+
+      <H2>Review profiles</H2>
+      <P>
+        Set <Code>profile: balanced</Code> in YAML, <Code>ROBORAK_PROFILE</Code> in the environment,
+        or choose a preset for one review. All presets expand into the existing settings below.
+      </P>
+      <CodeBlock shell code={[
+        "rk review --profile strict",
+        "ROBORAK_PROFILE=fast rk review",
+        "rk config show --profile security",
+      ].join("\n")} />
+      <Table columns={[
+        { key: "profile", header: "Profile", mono: true, width: 1 },
+        { key: "behavior", header: "Use and defaults", width: 5 },
+      ]} rows={[
+        { profile: "balanced", behavior: "Current defaults, unchanged. Used when no profile is selected." },
+        { profile: "fast", behavior: "Local iteration: disables walkthrough, verification, impact mapping, investigation, and temporary forge checkout. Retains static analysis, supply-chain summaries, and evidence requirements." },
+        { profile: "strict", behavior: "Major blocking floor. Investigation: 10 candidates, 3 rounds, 20 files, 40,000 tokens. Impact: 24 nodes, 10 consumers per node, 3,000 tokens. Verification: broaden_paths [\"**\"], 8 commands, 600-second timeout." },
+        { profile: "security", behavior: "Security and infrastructure review: categories [security, reliability], major blocking floor. Supply-chain limits: 80 changes, 40 assets, 2,400 tokens. Static evidence: 80 prompt findings; normal scanner autodetection." },
+      ]} />
+      <P>
+        Select one profile by CLI &gt; environment &gt; project &gt; user &gt; balanced.
+        Profiles never combine. Explicit fields always override preset defaults, even when
+        the profile is selected with <Code>--profile</Code>. Fields populated by{" "}
+        <Code>config init</Code> count as explicit: remove or comment out the fields you want
+        a preset to control. Unlisted fields retain their built-in defaults.
+      </P>
+      <P>
+        Profiles never grant execution trust, install scanners, or invent verification commands.
+        Only <Code>--fail-on</Code> changes the exit-code threshold. Strict prefers the configured
+        broad fallback if available; otherwise targeted selection applies. Without commands,
+        verification runs nothing.
+      </P>
+      <P>
+        Verification resolves its profile and settings from the trusted base revision, with
+        CLI, environment, user configuration, and explicit <Code>--config</Code> overrides.
+        Working-tree profile edits cannot change it. <Code>config show</Code> displays expanded
+        settings and labels verification with its source and profile, using <Code>HEAD</Code>.
+        Reviews against another base revision may resolve verification differently.
       </P>
 
       <H2>Writing the file</H2>

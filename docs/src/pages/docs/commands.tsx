@@ -138,7 +138,8 @@ export default function Commands() {
           "rk config init                    # write a commented .roborak.yaml with every default",
           "rk config init --global           # …or ~/.config/roborak/.roborak.yaml, mode 600",
           "rk config init --force            # overwrite an existing file",
-          "rk config show                    # the effective config, all layers merged",
+          "rk config show                    # effective config; verification uses HEAD",
+          "rk config show --profile strict   # preview a preset with explicit overrides",
         ].join("\n")}
       />
       <Callout kind="note">

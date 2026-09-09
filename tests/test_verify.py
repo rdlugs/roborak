@@ -349,7 +349,7 @@ def test_an_explicit_config_path_is_trusted(repo: Path, tmp_path: Path):
     explicit.write_text(TRUSTED_YAML)
     config_, source, _ = load_verification(repo, ref="HEAD", explicit_path=explicit)
     assert config_.fallback == ["true", "trusted"]
-    assert source == str(explicit)
+    assert source == f"{explicit} (profile: balanced)"
 
 
 def test_uncommitted_work_is_verified_against_the_commit_behind_it(repo: Path):
@@ -361,7 +361,7 @@ def test_uncommitted_work_is_verified_against_the_commit_behind_it(repo: Path):
 
     config_, source, notes = load_verification(repo)
     assert config_.fallback == ["true", "trusted"]
-    assert source == "base revision HEAD"
+    assert source == "base revision HEAD (profile: balanced)"
     assert notes == []
 
 
@@ -369,7 +369,7 @@ def test_a_directory_with_no_history_has_no_trusted_project_layer(tmp_path: Path
     """With no commits there is no base revision, so there is no project layer to trust."""
     config_, source, notes = load_verification(tmp_path)
     assert config_.fallback == []
-    assert source == "user and environment configuration"
+    assert source == "user and environment configuration (profile: balanced)"
     assert any("No project configuration could be read" in note for note in notes)
 
 
@@ -581,3 +581,86 @@ def test_a_review_that_filtered_every_file_keeps_its_verification_record():
     ).review(changeset("node_modules/vendor.js"))
     assert result.changeset is not None and result.changeset.is_empty
     assert result.verification is report
+
+
+@pytest.mark.parametrize("working_profile", ["strict", "fast", "security", "typo", None])
+@pytest.mark.parametrize("verification_yaml", ["", TRUSTED_YAML])
+def test_verification_profile_comes_from_the_base(
+    repo: Path, working_profile: str | None, verification_yaml: str
+) -> None:
+    path = repo / ".roborak.yaml"
+    path.write_text("profile: strict\n" + verification_yaml)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "add strict profile")
+    trusted, _, notes = load_verification(repo)
+    assert notes == []
+    profile_yaml = f"profile: {working_profile}\n" if working_profile is not None else ""
+    path.write_text(profile_yaml + verification_yaml)
+    resolved, source, notes = load_verification(repo)
+    assert resolved == trusted
+    assert resolved.enabled
+    assert resolved.broaden_paths == ["**"]
+    assert resolved.max_commands == 8
+    assert resolved.fallback == (["true", "trusted"] if verification_yaml else [])
+    assert resolved.execution is Execution.AUTO
+    assert "profile: strict" in source
+    if working_profile == "strict":
+        assert notes == []
+    else:
+        assert any("working tree" in note and "profile" in note for note in notes)
+
+
+def test_verification_profiles_respect_trusted_overrides(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from roborak.core.config import ReviewProfile
+
+    user = repo / "user.yaml"
+    user.write_text("profile: security\nverification:\n  max_commands: 4\n")
+    monkeypatch.setattr("roborak.core.config.USER_CONFIG_PATH", user)
+    path = repo / ".roborak.yaml"
+    path.write_text("profile: strict\nverification:\n  timeout_seconds: 300\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "add strict profile")
+    resolved, _, _ = load_verification(repo)
+    assert resolved.max_commands == 4
+    assert resolved.timeout_seconds == 300
+    assert resolved.broaden_paths == ["**"]
+    monkeypatch.setenv("ROBORAK_PROFILE", "fast")
+    resolved, _, _ = load_verification(repo)
+    assert not resolved.enabled
+    monkeypatch.setenv("ROBORAK_NO_VERIFY", "1")
+    resolved, source, _ = load_verification(repo, profile=ReviewProfile.STRICT)
+    assert not resolved.enabled
+    assert resolved.max_commands == 4
+    assert "profile: strict" in source
+    path.write_text("profile: fast\nverification:\n  enabled: true\n")
+    monkeypatch.delenv("ROBORAK_NO_VERIFY")
+    monkeypatch.delenv("ROBORAK_PROFILE")
+    resolved, source, _ = load_verification(repo, explicit_path=path)
+    assert resolved.enabled
+    assert "profile: fast" in source
+
+
+@pytest.mark.parametrize("fallback", [[], ["true", "all"]])
+def test_strict_selects_the_broad_fallback_when_available(fallback: list[str]) -> None:
+    resolved = Config.model_validate(
+        {
+            "profile": "strict",
+            "verification": {
+                "commands": [{"paths": ["**"], "command": ["true", "targeted"]}],
+                "fallback": fallback,
+            },
+        }
+    ).verification
+    for path in ("app.py", "src/app.py"):
+        runs = select(resolved, changeset(path))
+        assert [run.command for run in runs] == [fallback or ["true", "targeted"]]
+    resolved.broaden_paths = []
+    assert select(resolved, changeset("app.py"))[0].command == ["true", "targeted"]
+
+
+def test_a_strict_profile_without_commands_does_not_invent_verification() -> None:
+    assert (
+        select(Config.model_validate({"profile": "strict"}).verification, changeset("x.py")) == []
+    )
