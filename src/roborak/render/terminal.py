@@ -513,7 +513,7 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
         console.print(f"[dim]reviewed against issue {label}[/]")
     if result.skipped_files:
         console.print(
-            f"[dim]{len(result.skipped_files)} file(s) not reviewed (context budget): "
+            f"[dim]{len(result.skipped_files)} file(s) not fully reviewed: "
             f"{', '.join(result.skipped_files[:5])}"
             f"{' …' if len(result.skipped_files) > 5 else ''}[/]"
         )
@@ -523,6 +523,8 @@ def _render_footer(result: ReviewResult, console: Console) -> None:
         )
         suffix = f" · omitted by role: {omitted}" if omitted else ""
         console.print(
-            f"[dim]semantic review order: {result.review_plan.chunks} pass(es){suffix}[/]"
+            f"[dim]semantic review progress: {result.review_plan.completed_chunks}/"
+            f"{result.review_plan.chunks} pass(es), "
+            f"{result.review_plan.run_chunks} this run{suffix}[/]"
         )
     console.print(f"[dim]{icons.AGENT} reviewed by roborak[/]")

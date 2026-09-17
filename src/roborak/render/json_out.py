@@ -22,7 +22,7 @@ from roborak.core.models import (
 )
 from roborak.core.verdict import gate_for, verdict_requested
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
@@ -57,6 +57,16 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
         payload["coverage"]["omitted_roles"] = {
             role.value: count for role, count in result.review_plan.omitted_roles.items()
         }
+        payload["coverage"]["range_plan"] = [
+            item.model_dump(mode="json", exclude_none=True) for item in result.review_plan.ranges
+        ]
+        payload["coverage"]["progress"] = {
+            "estimated_passes": result.review_plan.chunks,
+            "completed_passes": result.review_plan.completed_chunks,
+            "passes_this_run": result.review_plan.run_chunks,
+        }
+    if result.review_budget is not None:
+        payload["preflight"] = result.review_budget.model_dump(mode="json")
 
     # Present in both shapes. An agent deciding whether a change is safe needs the
     # blast radius at least as much as a human does, and an absent key would read

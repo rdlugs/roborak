@@ -8,13 +8,14 @@ it as "new".
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from roborak.core.models import Finding
+from roborak.core.models import ChangeSet, Finding
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,74 @@ class ReviewRecord:
 
 
 @dataclass
+class ChunkResult:
+    """The reusable output of one successful primary review unit."""
+
+    findings: list[dict[str, object]] = field(default_factory=list)
+    requirements: list[dict[str, str]] = field(default_factory=list)
+    compatibility: list[dict[str, str]] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "findings": self.findings,
+            "requirements": self.requirements,
+            "compatibility": self.compatibility,
+        }
+
+    @classmethod
+    def from_json(cls, data: object) -> ChunkResult | None:
+        if not isinstance(data, dict):
+            return None
+        findings = data.get("findings")
+        requirements = data.get("requirements")
+        compatibility = data.get("compatibility")
+        if not isinstance(findings, list):
+            return None
+        requirement_items = requirements if isinstance(requirements, list) else []
+        compatibility_items = compatibility if isinstance(compatibility, list) else []
+        return cls(
+            findings=[item for item in findings if isinstance(item, dict)],
+            requirements=[item for item in requirement_items if isinstance(item, dict)],
+            compatibility=[item for item in compatibility_items if isinstance(item, dict)],
+        )
+
+
+@dataclass
+class ReviewCheckpoint:
+    """Progress for one exact review plan, saved after every model pass."""
+
+    signature: str
+    completed: dict[str, ChunkResult] = field(default_factory=dict)
+    failed: dict[str, str] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "signature": self.signature,
+            "completed": {key: value.to_json() for key, value in self.completed.items()},
+            "failed": self.failed,
+        }
+
+    @classmethod
+    def from_json(cls, data: object, signature: str) -> ReviewCheckpoint:
+        if not isinstance(data, dict) or data.get("signature") != signature:
+            return cls(signature=signature)
+        raw_completed = data.get("completed")
+        completed: dict[str, ChunkResult] = {}
+        if isinstance(raw_completed, dict):
+            for key, value in raw_completed.items():
+                parsed = ChunkResult.from_json(value)
+                if isinstance(key, str) and parsed is not None:
+                    completed[key] = parsed
+        raw_failed = data.get("failed")
+        failed = (
+            {str(key): str(value) for key, value in raw_failed.items()}
+            if isinstance(raw_failed, dict)
+            else {}
+        )
+        return cls(signature=signature, completed=completed, failed=failed)
+
+
+@dataclass
 class StateStore:
     repo: Path
 
@@ -82,6 +151,20 @@ class StateStore:
         reviews = self._load_all().get("reviews")
         entry = reviews.get(key) if isinstance(reviews, dict) else None
         return ReviewRecord.from_json(entry) if isinstance(entry, dict) else ReviewRecord()
+
+    def get_checkpoint(self, key: str, signature: str) -> ReviewCheckpoint:
+        checkpoints = self._load_all().get("checkpoints")
+        entry = checkpoints.get(key) if isinstance(checkpoints, dict) else None
+        return ReviewCheckpoint.from_json(entry, signature)
+
+    def save_checkpoint(self, key: str, checkpoint: ReviewCheckpoint) -> None:
+        data = self._load_all()
+        checkpoints = data.setdefault("checkpoints", {})
+        if not isinstance(checkpoints, dict):
+            checkpoints = {}
+            data["checkpoints"] = checkpoints
+        checkpoints[key] = checkpoint.to_json()
+        self._save(data)
 
     def record(
         self,
@@ -115,6 +198,27 @@ class StateStore:
             record.last_walkthrough = walkthrough
         reviews[key] = record.to_json()
 
+        self._save(data)
+
+    def clear(self, key: str | None = None) -> None:
+        data = self._load_all()
+        reviews = data.get("reviews")
+        checkpoints = data.get("checkpoints")
+        if not isinstance(reviews, dict):
+            reviews = {}
+            data["reviews"] = reviews
+        if not isinstance(checkpoints, dict):
+            checkpoints = {}
+            data["checkpoints"] = checkpoints
+        if key is None:
+            data["reviews"] = {}
+            data["checkpoints"] = {}
+        else:
+            reviews.pop(key, None)
+            checkpoints.pop(key, None)
+        self._save(data)
+
+    def _save(self, data: dict[str, object]) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
@@ -123,22 +227,22 @@ class StateStore:
         except OSError as exc:
             log.warning("could not save review state: %s", exc)
 
-    def clear(self, key: str | None = None) -> None:
-        data = self._load_all()
-        reviews = data.get("reviews")
-        if not isinstance(reviews, dict):
-            return
-        if key is None:
-            data["reviews"] = {}
-        else:
-            reviews.pop(key, None)
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError as exc:
-            log.warning("could not clear review state: %s", exc)
-
 
 def review_key(provider: str, host: str, project: str, number: int) -> str:
     """Identify one merge/pull request across runs and machines."""
     return f"{provider}:{host}:{project}#{number}"
+
+
+def checkpoint_key(changeset: ChangeSet) -> str:
+    """Identify a review stream inside this repository's local state file."""
+    if changeset.forge_ref is not None:
+        ref = changeset.forge_ref
+        return review_key(ref.provider, ref.host, ref.project, ref.number)
+    source = "|".join(
+        (
+            changeset.origin,
+            changeset.base_ref or "",
+            changeset.head_ref or "",
+        )
+    )
+    return f"review:{hashlib.sha256(source.encode()).hexdigest()[:24]}"
