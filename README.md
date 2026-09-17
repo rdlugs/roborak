@@ -576,8 +576,10 @@ writes nothing and exits 0 rather than waiting.
 
 Large diffs are split into bounded model review calls. `review.max_chunks` limits those calls,
 and `rk review --max-chunks N` overrides it for one run. A chunk can hold several related files
-or part of one oversized file. If the change still needs more chunks, complete files or portions
-of oversized files beyond the limit are reported as context omissions and the review is partial.
+or part of one oversized file. When more passes are needed, successful ranges are checkpointed in
+`.roborak/state.json` and the review is partial. Run the same review again to continue pending or
+failed ranges automatically. Changed revisions, content, models, or relevant configuration safely
+start a fresh checkpoint.
 
 ```yaml
 version: 1
@@ -591,7 +593,7 @@ review:
   categories: [security, bug, performance, logic, reliability]
   severity_floor: minor
   max_findings: 25
-  max_chunks: 12          # maximum model passes before remaining files are omitted
+  max_chunks: 12          # primary model passes allowed per run; later runs resume
   committable_suggestions: true
   min_confidence: 0.5
   require_evidence: true     # a critical/major model finding must show its evidence

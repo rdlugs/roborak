@@ -10,6 +10,7 @@ import pytest
 from roborak.context import ast_context
 from roborak.context.chunker import (
     MAX_CONTRACT_CONTEXTS,
+    ChunkPlanningError,
     chunk,
     needs_chunking,
     plan_chunks,
@@ -322,14 +323,14 @@ def test_semantic_order_is_deterministic_for_reversed_input():
     ]
 
 
-def test_low_signal_files_are_omitted_before_boundaries_at_the_pass_cap():
+def test_low_signal_files_follow_boundaries_in_the_complete_plan() -> None:
     files = [make_text_file("public/api.py", "def public_call():\n    return 1")]
     files.extend(make_file(f"generated/f{i:02d}.md", 100, "markdown") for i in range(20))
     plan = plan_chunks(ChangeSet(files=files), 25, count, render)
-    assert len(plan.chunks) == DEFAULT_MAX_CHUNKS
+    assert len(plan.chunks) > DEFAULT_MAX_CHUNKS
     assert plan.review.files[0].path == "public/api.py"
     assert plan.review.files[0].reviewed
-    assert plan.review.omitted_roles[ReviewRole.LOW_SIGNAL] > 0
+    assert plan.review.omitted_roles == {}
 
 
 def test_uncertain_classification_falls_back_to_implementation():
@@ -355,28 +356,50 @@ def test_contract_metadata_is_bounded_and_not_added_as_primary_diff():
     assert set(primary).issubset({file.path for file in files})
 
 
-def test_a_single_oversized_file_is_split_into_reviewable_windows():
+def test_a_single_oversized_file_is_split_into_reviewable_windows() -> None:
     changeset = ChangeSet(files=[make_file("huge.py", 5000)])
     chunks = chunk(changeset, 10, count, render)
-    assert len(chunks) == DEFAULT_MAX_CHUNKS
+    assert len(chunks) > DEFAULT_MAX_CHUNKS
     assert all(piece.files[0].path == "huge.py" for piece in chunks)
-    assert chunks[0].omitted_files == ["huge.py"]
+    assert all(not piece.omitted_files for piece in chunks)
 
 
-def test_chunk_count_is_capped_and_omissions_recorded():
+def test_overlapping_windows_count_each_changed_line_as_primary_once() -> None:
+    from collections import Counter
+
+    changeset = ChangeSet(
+        files=[make_text_file("huge.py", "\n".join(f"line {i}" for i in range(100)))]
+    )
+    plan = plan_chunks(changeset, 30, count, render)
+    assignments = Counter(
+        line for piece in plan.chunks for file in piece.files for line in file.added_lines
+    )
+
+    assert set(assignments) == changeset.files[0].added_lines
+    assert set(assignments.values()) == {1}
+    assert all(count(render(piece.files[0])) <= 30 for piece in plan.chunks)
+
+
+def test_a_primary_row_that_cannot_fit_fails_planning() -> None:
+    changeset = ChangeSet(files=[make_text_file("huge.py", "x" * 1000)])
+
+    with pytest.raises(ChunkPlanningError, match=r"one changed row in huge\.py"):
+        plan_chunks(changeset, 30, count, render)
+
+
+def test_chunk_planning_is_not_capped_or_recorded_as_an_omission() -> None:
     files = [make_file(f"f{i:03d}.py", 100) for i in range(40)]
     chunks = chunk(ChangeSet(files=files), 30, count, render)
-    assert len(chunks) == DEFAULT_MAX_CHUNKS
-    assert chunks[0].omitted_files, "dropped files must be reported, not silently lost"
+    assert len(chunks) > DEFAULT_MAX_CHUNKS
+    assert all(not piece.omitted_files for piece in chunks)
 
 
-def test_chunk_count_uses_the_configured_limit(caplog: pytest.LogCaptureFixture) -> None:
+def test_chunk_count_is_estimated_before_the_per_run_limit() -> None:
     files = [make_file(f"f{i:03d}.py", 100) for i in range(10)]
     plan = plan_chunks(ChangeSet(files=files), 30, count, render, max_chunks=3)
 
-    assert len(plan.chunks) == 3
-    assert any(not file.reviewed for file in plan.review.files)
-    assert "change needs more than 3 passes" in caplog.text
+    assert len(plan.chunks) > 3
+    assert all(file.reviewed for file in plan.review.files)
 
 
 def test_reviewer_uses_the_configured_chunk_limit(tmp_path: Path) -> None:
@@ -396,8 +419,209 @@ def test_reviewer_uses_the_configured_chunk_limit(tmp_path: Path) -> None:
 
     assert result.status is ReviewStatus.PARTIAL
     assert result.review_plan is not None
-    assert result.review_plan.chunks == 1
-    assert any(item.reason.value == "context_limit" for item in result.coverage)
+    assert result.review_plan.chunks == 5
+    assert result.review_plan.run_chunks == 1
+    assert result.review_plan.completed_chunks == 1
+    assert any(item.reason.value == "pending_quota" for item in result.coverage)
+
+
+def test_later_run_automatically_resumes_pending_chunks(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewResult, ReviewStatus
+    from roborak.llm.client import LLMResponse
+    from roborak.state.store import StateStore
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 2
+    calls: list[str] = []
+
+    class Recording(StubLLM):
+        def complete(self, system: str, user: str) -> LLMResponse:
+            calls.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    def run() -> ReviewResult:
+        return Reviewer(
+            config=config,
+            repo=tmp_path,
+            llm=Recording(reply="", context_budget=140),
+            checkpoint_store=StateStore(tmp_path),
+            checkpoint_key="local:test",
+        ).review(ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(5)]))
+
+    first = run()
+    second = run()
+    third = run()
+    fourth = run()
+
+    assert first.status is ReviewStatus.PARTIAL
+    assert second.status is ReviewStatus.PARTIAL
+    assert third.status is ReviewStatus.COMPLETE
+    assert third.review_plan is not None
+    assert third.review_plan.completed_chunks == 5
+    assert fourth.status is ReviewStatus.COMPLETE
+    assert len(calls) == 5, "a completed primary unit is never reviewed twice"
+
+
+def test_changed_content_invalidates_an_automatic_resume_checkpoint(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewResult
+    from roborak.llm.client import LLMResponse
+    from roborak.state.store import StateStore
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 1
+    calls = 0
+
+    class Recording(StubLLM):
+        def complete(self, system: str, user: str) -> LLMResponse:
+            nonlocal calls
+            calls += 1
+            return LLMResponse(text="findings: []", model="stub")
+
+    def run(size: int) -> ReviewResult:
+        return Reviewer(
+            config=config,
+            repo=tmp_path,
+            llm=Recording(reply="", context_budget=140),
+            checkpoint_store=StateStore(tmp_path),
+            checkpoint_key="local:test",
+        ).review(ChangeSet(files=[make_file("pkg/f.py", size), make_file("pkg/g.py", 30)]))
+
+    run(30)
+    run(31)
+    assert calls == 2
+
+
+def test_failed_chunk_is_retried_automatically_before_later_work(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewResult, ReviewStatus
+    from roborak.llm.client import LLMError, LLMResponse
+    from roborak.state.store import StateStore
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 1
+    prompts: list[str] = []
+
+    class Recording(StubLLM):
+        failed = False
+
+        def complete(self, system: str, user: str) -> LLMResponse:
+            prompts.append(user)
+            if not Recording.failed:
+                Recording.failed = True
+                raise LLMError("temporary failure")
+            return LLMResponse(text="findings: []", model="stub")
+
+    def run() -> ReviewResult:
+        return Reviewer(
+            config=config,
+            repo=tmp_path,
+            llm=Recording(reply="", context_budget=140),
+            checkpoint_store=StateStore(tmp_path),
+            checkpoint_key="local:test",
+        ).review(ChangeSet(files=[make_file("pkg/a.py", 30), make_file("pkg/b.py", 30)]))
+
+    first = run()
+    second = run()
+    third = run()
+
+    assert first.status is ReviewStatus.FAILED
+    assert second.status is ReviewStatus.PARTIAL
+    assert third.status is ReviewStatus.COMPLETE
+    assert "pkg/a.py" in prompts[0] and "pkg/a.py" in prompts[1]
+    assert "pkg/b.py" in prompts[2]
+
+
+def test_preflight_reports_exact_passes_before_the_first_call(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    events: list[str] = []
+
+    class Recording(StubLLM):
+        def complete(self, system: str, user: str) -> LLMResponse:
+            events.append("call")
+            return LLMResponse(text="findings: []", model="stub")
+
+    config = uninvestigated()
+    config.review.max_chunks = 1
+    result = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=Recording(reply="", context_budget=140),
+        preflight=lambda message: events.append(message),
+    ).review(ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(3)]))
+
+    assert events[0].startswith("change requires 3 review pass(es)")
+    assert events[1] == "call"
+    assert result.review_budget is not None
+    assert result.review_budget.estimated_passes == 3
+
+
+def test_too_little_effective_diff_budget_fails_before_a_model_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.config import Config
+    from roborak.core.models import ReviewStatus
+    from roborak.llm.client import LLMResponse
+    from tests.test_pipeline import StubLLM
+
+    calls = 0
+
+    class Recording(StubLLM):
+        def complete(self, system: str, user: str) -> LLMResponse:
+            nonlocal calls
+            calls += 1
+            return super().complete(system, user)
+
+    reviewer = Reviewer(
+        config=Config(),
+        repo=tmp_path,
+        llm=Recording(reply="findings: []", context_budget=1000),
+    )
+    monkeypatch.setattr(reviewer, "_repo_context", lambda _changeset: "context " * 1000)
+    result = reviewer.review(ChangeSet(files=[make_file("pkg/f.py", 30)]))
+
+    assert result.status is ReviewStatus.FAILED
+    assert calls == 0
+    assert "at least 256 are required" in result.errors[0]
+
+
+def test_chunk_checkpoints_preserve_legacy_finding_state(tmp_path: Path) -> None:
+    import json
+
+    from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore
+
+    state = tmp_path / ".roborak" / "state.json"
+    state.parent.mkdir()
+    state.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reviews": {
+                    "github:github.com:a/b#1": {
+                        "fingerprints": ["abc123"],
+                        "last_head_sha": "head",
+                    }
+                },
+            }
+        )
+    )
+    store = StateStore(tmp_path)
+    store.save_checkpoint(
+        "github:github.com:a/b#1",
+        ReviewCheckpoint(signature="sig", completed={"unit": ChunkResult()}),
+    )
+
+    assert store.get("github:github.com:a/b#1").fingerprints == {"abc123"}
+    assert "unit" in store.get_checkpoint("github:github.com:a/b#1", "sig").completed
+    assert not store.get_checkpoint("github:github.com:a/b#1", "changed").completed
 
 
 def test_an_empty_changeset_yields_no_chunks():
@@ -500,7 +724,7 @@ def test_failed_contract_is_not_carried_into_later_passes(tmp_path):
     assert result.review_plan is not None
     planned = next(file for file in result.review_plan.files if file.path == contract.path)
     assert not planned.reviewed
-    assert planned.chunk is None
+    assert planned.chunk == 1
     assert later_prompts
     section = "## Contracts established in earlier review passes"
     assert all(
@@ -654,7 +878,7 @@ def test_global_reconciliation_can_report_a_cross_chunk_contract_mismatch(tmp_pa
             )
 
     result = Reviewer(
-        config=uninvestigated(), repo=tmp_path, llm=Reconciling(reply="", context_budget=12)
+        config=uninvestigated(), repo=tmp_path, llm=Reconciling(reply="", context_budget=30)
     ).review(ChangeSet(files=[consumer, contract]))
     assert [finding.file for finding in result.findings] == ["public/api.py"]
     assert result.usage[-1].purpose == "reconciliation"

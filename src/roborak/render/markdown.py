@@ -57,6 +57,7 @@ from roborak.core.models import (
     ImpactStatus,
     InvestigationReport,
     InvestigationStatus,
+    ReviewRange,
     ReviewResult,
     SupplyChainReport,
     SupplyChainStatus,
@@ -74,6 +75,13 @@ from roborak.render.prompt_only import (
     agent_instruction,
     agent_instruction_body,
 )
+
+
+def _range_label(item: ReviewRange) -> str:
+    old_end = item.old_start + max(0, item.old_lines - 1)
+    new_end = item.new_start + max(0, item.new_lines - 1)
+    return f"old {item.old_start}-{old_end}, new {item.new_start}-{new_end}"
+
 
 FINGERPRINT_PREFIX = "roborak:v1"
 FINGERPRINT_V2_PREFIX = "roborak:v2"
@@ -1151,9 +1159,16 @@ def _review_info(result: ReviewResult, *, collapsible: bool) -> str:
             listed += "\n* Omitted roles: " + ", ".join(
                 f"{role.value} ({count})" for role, count in omitted.items()
             )
+        if result.review_plan.ranges:
+            listed += "\n" + "\n".join(
+                f"* `{item.path}` {_range_label(item)} - {item.status.value}"
+                + (f": {item.detail}" if item.detail else "")
+                for item in result.review_plan.ranges
+            )
         blocks.append(
             _details(
-                f"{icons.REVIEW_PLAN} Semantic review plan ({result.review_plan.chunks} pass(es))",
+                f"{icons.REVIEW_PLAN} Semantic review plan "
+                f"({result.review_plan.completed_chunks}/{result.review_plan.chunks} pass(es))",
                 listed,
                 level=3,
                 collapsible=collapsible,
@@ -1337,9 +1352,16 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
 
     if result.coverage:
         lines.append(
-            f"**{len(result.coverage)} file(s) not fully reviewed:** "
+            f"**{len(result.coverage)} changed range(s) not fully reviewed:** "
             + _listed(
-                f"`{item.path}` ({item.reason.value.replace('_', ' ')})" for item in result.coverage
+                f"`{item.path}`"
+                + (
+                    f" new {item.new_start}+{item.new_lines}"
+                    if item.new_start is not None and item.new_lines is not None
+                    else ""
+                )
+                + f" ({item.reason.value.replace('_', ' ')})"
+                for item in result.coverage
             )
         )
     elif result.skipped_files:
@@ -1367,7 +1389,11 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
             f"{role.value} {count}" for role, count in result.review_plan.omitted_roles.items()
         )
         suffix = f" · omitted by role: {roles}" if roles else ""
-        lines.append(f"_Semantic review order: {result.review_plan.chunks} pass(es){suffix}_")
+        lines.append(
+            f"_Semantic review progress: {result.review_plan.completed_chunks}/"
+            f"{result.review_plan.chunks} pass(es), {result.review_plan.run_chunks} this run"
+            f"{suffix}_"
+        )
 
     if hid_sections:
         lines.append("_`--full` adds the agent prompts and the review info._")

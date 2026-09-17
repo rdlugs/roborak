@@ -6,8 +6,11 @@ Each step is independently testable and none reaches backwards.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,8 +18,10 @@ from roborak.analysis import validator
 from roborak.analysis.resolution import verify_fixes as _verify_fixes
 from roborak.context import impact
 from roborak.context.chunker import (
+    ChunkPlanningError,
     ChunkStrategy,
     ContractContext,
+    PlannedChunk,
     contract_contexts,
     needs_chunking,
     plan_chunks,
@@ -36,8 +41,10 @@ from roborak.core.models import (
     Issue,
     LLMCallUsage,
     OmissionReason,
+    ReviewBudget,
     ReviewResult,
     ReviewStatus,
+    ReviewUnitStatus,
     SupplyChainReport,
     VerificationReport,
     Walkthrough,
@@ -65,6 +72,7 @@ from roborak.premerge.runner import run_checks, run_opinion
 from roborak.publish.threads import OpenThread
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
+from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore
 from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 
 log = logging.getLogger(__name__)
@@ -73,6 +81,39 @@ MAX_RECONCILIATION_EVIDENCE = 60
 """How many entries of each evidence kind reach the reducer. Evidence repeats across
 passes long before it runs out; past this point the extra entries crowd the prompt
 rather than adding a place to look."""
+
+MIN_DIFF_TOKENS = 256
+PROMPT_SAFETY_TOKENS = 200
+
+
+@dataclass(frozen=True)
+class DiffBudget:
+    input_tokens: int
+    completion_tokens: int
+    safety_tokens: int
+    prompt_overhead: int
+    optional_reserve: int
+    available_diff_tokens: int
+    total_diff_tokens: int = 0
+
+    def to_model(self, *, passes: int, completed: int, quota: int) -> ReviewBudget:
+        return ReviewBudget(
+            **self.__dict__,
+            estimated_passes=passes,
+            completed_passes=completed,
+            run_quota=quota,
+        )
+
+    def message(self, *, passes: int, completed: int, quota: int) -> str:
+        remaining = max(0, passes - completed)
+        return (
+            f"change requires {passes} review pass(es); {completed} already complete, "
+            f"{remaining} remain, this run is limited to {quota}. "
+            f"Token budget: input {self.input_tokens}, completion reserve "
+            f"{self.completion_tokens}, safety {self.safety_tokens}, prompt overhead "
+            f"{self.prompt_overhead}, optional reservations {self.optional_reserve}, "
+            f"diff available {self.available_diff_tokens}, diff total {self.total_diff_tokens}."
+        )
 
 
 def render_for_prompt(file: ChangedFile) -> str:
@@ -117,6 +158,10 @@ class Reviewer:
     _usage: list[LLMCallUsage] = field(default_factory=list, repr=False)
     _contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _impact: ImpactMap | None = field(default=None, repr=False)
+    _trim_optional_context: bool = field(default=False, repr=False)
+    checkpoint_store: StateStore | None = field(default=None, repr=False)
+    checkpoint_key: str = field(default="", repr=False)
+    preflight: Callable[[str], None] | None = field(default=None, repr=False)
 
     def rules_for(self, changeset: ChangeSet) -> list[dict[str, str]]:
         """The team's own rules that apply to this change, ready for the prompt."""
@@ -139,6 +184,7 @@ class Reviewer:
     def review(self, changeset: ChangeSet) -> ReviewResult:
         """One change in, one result out: static findings, the model's, and how to explain both."""
         self._usage.clear()
+        self._trim_optional_context = False
         result = ReviewResult(
             changeset=changeset,
             model=self.config.model if self.llm else None,
@@ -166,7 +212,7 @@ class Reviewer:
         if self.llm is not None:
             try:
                 findings.extend(self._llm_findings(changeset, result))
-            except (LLMError, ParseError) as exc:
+            except (LLMError, ParseError, ChunkPlanningError) as exc:
                 log.error("LLM review failed: %s", exc)
                 result.errors.append(str(exc))
                 result.status = ReviewStatus.FAILED
@@ -472,43 +518,111 @@ class Reviewer:
 
         budget = self._diff_budget(changeset)
         if not needs_chunking(changeset, budget, self.llm.count_tokens, render_for_prompt):
+            total = self.llm.count_tokens(
+                "\n".join(render_for_prompt(file) for file in changeset.files)
+            )
+            details = self._diff_budget_info(changeset, total_diff_tokens=total)
+            result.review_budget = details.to_model(
+                passes=1,
+                completed=0,
+                quota=self.config.review.max_chunks,
+            )
+            self._emit_preflight(
+                details.message(
+                    passes=1,
+                    completed=0,
+                    quota=self.config.review.max_chunks,
+                )
+            )
             single_findings, _, _ = self._review_chunk(changeset, result, chunk_index=1)
             return single_findings
 
+        chunk_budget = self._diff_budget(changeset, carries_contracts=True)
         plan = plan_chunks(
             changeset,
-            self._diff_budget(changeset, carries_contracts=True),
+            chunk_budget,
             self.llm.count_tokens,
             render_for_prompt,
             impact=self._impact,
             strategy=self.chunk_strategy,
-            max_chunks=self.config.review.max_chunks,
         )
-        chunks = plan.chunks
         result.review_plan = plan.review
-        log.info("reviewing in %d passes", len(chunks))
+        signature = self._checkpoint_signature(changeset, plan.units, chunk_budget)
+        checkpoint = (
+            self.checkpoint_store.get_checkpoint(self.checkpoint_key, signature)
+            if self.checkpoint_store is not None and self.checkpoint_key
+            else ReviewCheckpoint(signature=signature)
+        )
+        known_units = {unit.identity for unit in plan.units}
+        checkpoint.completed = {
+            key: value for key, value in checkpoint.completed.items() if key in known_units
+        }
+        checkpoint.failed = {
+            key: value for key, value in checkpoint.failed.items() if key in known_units
+        }
+        for identity, cached in list(checkpoint.completed.items()):
+            try:
+                for raw in cached.findings:
+                    Finding.model_validate(raw)
+            except ValueError:
+                log.warning("cached review unit %s is invalid; reviewing it again", identity)
+                checkpoint.completed.pop(identity)
+                checkpoint.failed.pop(identity, None)
+        pending = [unit for unit in plan.units if unit.identity not in checkpoint.completed]
+        selected = pending[: self.config.review.max_chunks]
+        result.review_plan.run_chunks = len(selected)
+        result.review_plan.completed_chunks = len(checkpoint.completed)
 
-        findings: list[Finding] = []
-        requirement_evidence: list[dict[str, str]] = []
-        compatibility_evidence: list[dict[str, str]] = []
-        successful_passes = 0
+        total_diff_tokens = self.llm.count_tokens(
+            "\n".join(render_for_prompt(file) for file in changeset.files)
+        )
+        details = self._diff_budget_info(
+            changeset,
+            carries_contracts=True,
+            total_diff_tokens=total_diff_tokens,
+        )
+        result.review_budget = details.to_model(
+            passes=len(plan.units),
+            completed=len(checkpoint.completed),
+            quota=self.config.review.max_chunks,
+        )
+        self._emit_preflight(
+            details.message(
+                passes=len(plan.units),
+                completed=len(checkpoint.completed),
+                quota=self.config.review.max_chunks,
+            )
+        )
+        log.info(
+            "reviewing %d of %d pending passes (%d total)",
+            len(selected),
+            len(pending),
+            len(plan.units),
+        )
+
         planned_by_path = {file.path: file for file in plan.review.files}
 
-        def eligible_contracts() -> list[ContractContext]:
-            reviewed_paths = {file.path for file in plan.review.files if file.reviewed}
-            return [contract for contract in plan.contracts if contract.path in reviewed_paths]
+        def path_complete(path: str) -> bool:
+            identities = {
+                unit.identity
+                for unit in plan.units
+                if path in {file.path for file in unit.changeset.files}
+            }
+            return bool(identities) and identities <= checkpoint.completed.keys()
 
-        for index, piece in enumerate(chunks, start=1):
-            changeset.omitted_files.extend(piece.omitted_files)
+        for unit in selected:
+            index = plan.units.index(unit) + 1
+            piece = unit.changeset
             under_review = {file.path for file in piece.files}
             carried_contracts = [
                 contract
-                for contract in eligible_contracts()
+                for contract in plan.contracts
                 # A split file is still primary diff in the pass holding its later
                 # fragments. Carrying it there would hand the model a summary of the
                 # very lines it is reviewing, under an instruction not to report on
                 # them -- so it is carried only once the file is behind us.
                 if contract.path not in under_review
+                and path_complete(contract.path)
                 and (source_chunk := planned_by_path[contract.path].chunk) is not None
                 and source_chunk < index
             ]
@@ -520,28 +634,79 @@ class Reviewer:
                     contract_contexts=carried_contracts,
                     collect_reconciliation_evidence=True,
                 )
-                findings.extend(chunk_findings)
-                requirement_evidence.extend(chunk_requirements)
-                compatibility_evidence.extend(chunk_compatibility)
-                successful_passes += 1
+                omitted = {
+                    item.path
+                    for item in result.coverage
+                    if item.reason is OmissionReason.CONTEXT_LIMIT and item.path in under_review
+                }
+                if omitted:
+                    detail = "context budget omitted " + ", ".join(sorted(omitted))
+                    checkpoint.failed[unit.identity] = detail
+                    self._save_checkpoint(checkpoint)
+                    continue
+                checkpoint.completed[unit.identity] = ChunkResult(
+                    findings=[finding.model_dump(mode="json") for finding in chunk_findings],
+                    requirements=chunk_requirements,
+                    compatibility=chunk_compatibility,
+                )
+                checkpoint.failed.pop(unit.identity, None)
+                self._save_checkpoint(checkpoint)
             except (LLMError, ParseError) as exc:
-                log.error("pass %d of %d failed: %s", index, len(chunks), exc)
+                log.error("pass %d of %d failed: %s", index, len(plan.units), exc)
                 result.status = ReviewStatus.PARTIAL
-                result.errors.append(f"review pass {index} of {len(chunks)} failed: {exc}")
-                for file in piece.files:
-                    result.add_omission(file.path, OmissionReason.CHUNK_FAILED, str(exc))
-                    planned = planned_by_path.get(file.path)
-                    if planned is not None:
-                        planned.reviewed = False
-                        planned.chunk = None
-        for path in changeset.omitted_files:
-            result.add_omission(path, OmissionReason.CONTEXT_LIMIT)
-            message = f"context pass limit omitted {path}"
-            if message not in result.errors:
-                result.errors.append(message)
-        if successful_passes == 0 and result.errors:
+                result.errors.append(f"review pass {index} of {len(plan.units)} failed: {exc}")
+                checkpoint.failed[unit.identity] = str(exc)
+                self._save_checkpoint(checkpoint)
+
+        findings: list[Finding] = []
+        requirement_evidence: list[dict[str, str]] = []
+        compatibility_evidence: list[dict[str, str]] = []
+        for unit in plan.units:
+            cached_result = checkpoint.completed.get(unit.identity)
+            if cached_result is None:
+                continue
+            for raw in cached_result.findings:
+                try:
+                    findings.append(Finding.model_validate(raw))
+                except ValueError:
+                    log.warning("discarding an invalid cached finding from %s", unit.identity)
+            requirement_evidence.extend(cached_result.requirements)
+            compatibility_evidence.extend(cached_result.compatibility)
+
+        completed = set(checkpoint.completed)
+        for item in plan.review.ranges:
+            if item.unit_id in completed:
+                item.status = ReviewUnitStatus.REVIEWED
+                continue
+            failure = checkpoint.failed.get(item.unit_id)
+            item.status = ReviewUnitStatus.FAILED if failure else ReviewUnitStatus.PENDING
+            item.detail = failure
+            result.add_omission(
+                item.path,
+                OmissionReason.CHUNK_FAILED if failure else OmissionReason.PENDING_QUOTA,
+                failure or "pending a later automatic review run",
+                unit_id=item.unit_id,
+                old_start=item.old_start,
+                old_lines=item.old_lines,
+                new_start=item.new_start,
+                new_lines=item.new_lines,
+            )
+
+        for planned in plan.review.files:
+            planned.reviewed = path_complete(planned.path)
+        result.review_plan.completed_chunks = len(completed)
+        remaining = len(plan.units) - len(completed)
+        if remaining:
+            result.status = ReviewStatus.PARTIAL
+            result.errors.append(
+                f"{len(completed)} passes completed, {remaining} remain; "
+                "rerun to continue automatically"
+            )
+        if not completed and checkpoint.failed:
             result.status = ReviewStatus.FAILED
-        reviewed_contracts = eligible_contracts()
+        reviewed_contracts = [
+            contract for contract in plan.contracts if path_complete(contract.path)
+        ]
         should_reconcile = bool(reviewed_contracts) or (
             self.issue is not None and self.config.review.check_requirements
         )
@@ -567,6 +732,55 @@ class Reviewer:
                 result.status = ReviewStatus.PARTIAL
                 result.errors.append(f"reconciliation failed: {exc}")
         return findings
+
+    def _save_checkpoint(self, checkpoint: ReviewCheckpoint) -> None:
+        if self.checkpoint_store is not None and self.checkpoint_key:
+            self.checkpoint_store.save_checkpoint(self.checkpoint_key, checkpoint)
+
+    def _checkpoint_signature(
+        self,
+        changeset: ChangeSet,
+        units: list[PlannedChunk],
+        budget: int,
+    ) -> str:
+        config = self.config.model_dump(mode="json", exclude={"forge", "output"})
+        review_config = config.get("review")
+        if isinstance(review_config, dict):
+            review_config.pop("max_chunks", None)
+        payload = {
+            "base_sha": changeset.base_sha,
+            "head_sha": changeset.head_sha,
+            "base_ref": changeset.base_ref,
+            "head_ref": changeset.head_ref,
+            "origin": changeset.origin,
+            "title": changeset.title,
+            "description": changeset.description,
+            "discussions": [item.model_dump(mode="json") for item in changeset.discussions],
+            "issue": self.issue.model_dump(mode="json") if self.issue is not None else None,
+            "config": config,
+            "strategy": self.chunk_strategy,
+            "budget": budget,
+            "units": [unit.identity for unit in units],
+            "repo_context": self._repo_context(changeset),
+            "rules": self.rules_for(changeset),
+            "impact": self._impact.model_dump(mode="json") if self._impact is not None else None,
+            "verification": (
+                self.verification.model_dump(mode="json") if self.verification is not None else None
+            ),
+            "supply_chain": (
+                self.supply_chain.model_dump(mode="json") if self.supply_chain is not None else None
+            ),
+            "static_findings": [
+                finding.model_dump(mode="json") for finding in self.static_findings
+            ],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _emit_preflight(self, message: str) -> None:
+        log.info(message)
+        if self.preflight is not None:
+            self.preflight(message)
 
     def _reconciliation_prompt(
         self,
@@ -655,13 +869,15 @@ class Reviewer:
             prompt_changeset,
             self.config,
             rules=self.rules_for(prompt_changeset),  # type: ignore[arg-type]
-            static_findings=self._static_for_prompt(prompt_changeset),
+            static_findings=(
+                [] if self._trim_optional_context else self._static_for_prompt(prompt_changeset)
+            ),
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
-            impact=self._impact,
-            verification=self._verification_for_prompt(),
-            supply_chain=self._supply_chain_for_prompt(),
-            contract_contexts=contract_contexts,
+            impact=None if self._trim_optional_context else self._impact,
+            verification=None if self._trim_optional_context else self._verification_for_prompt(),
+            supply_chain=None if self._trim_optional_context else self._supply_chain_for_prompt(),
+            contract_contexts=None if self._trim_optional_context else contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
         total = self.llm.count_tokens(f"{prompt.system}\n{prompt.user}")
@@ -695,13 +911,15 @@ class Reviewer:
             prompt_changeset,
             self.config,
             rules=self.rules_for(prompt_changeset),  # type: ignore[arg-type]
-            static_findings=self._static_for_prompt(prompt_changeset),
+            static_findings=(
+                [] if self._trim_optional_context else self._static_for_prompt(prompt_changeset)
+            ),
             repo_context=self._repo_context(prompt_changeset),
             issue=self.issue,
-            impact=self._impact,
-            verification=self._verification_for_prompt(),
-            supply_chain=self._supply_chain_for_prompt(),
-            contract_contexts=contract_contexts,
+            impact=None if self._trim_optional_context else self._impact,
+            verification=None if self._trim_optional_context else self._verification_for_prompt(),
+            supply_chain=None if self._trim_optional_context else self._supply_chain_for_prompt(),
+            contract_contexts=None if self._trim_optional_context else contract_contexts,
             collect_reconciliation_evidence=collect_reconciliation_evidence,
         )
         response = self._complete("review", prompt.system, prompt.user, chunk_index=chunk_index)
@@ -759,18 +977,55 @@ class Reviewer:
         pass carries no contracts and reserves nothing, so a change that fits whole
         is still reviewed whole.
         """
+        details = self._diff_budget_info(changeset, carries_contracts=carries_contracts)
+        if self.llm is not None and self.llm.context_budget < 1000:
+            return details.available_diff_tokens
+        if details.available_diff_tokens < MIN_DIFF_TOKENS and details.optional_reserve:
+            self._trim_optional_context = True
+            details = self._diff_budget_info(changeset, carries_contracts=carries_contracts)
+        if details.available_diff_tokens < MIN_DIFF_TOKENS:
+            raise LLMError(
+                "the model prompt leaves only "
+                f"{details.available_diff_tokens} tokens for changed code; at least "
+                f"{MIN_DIFF_TOKENS} are required. Choose a larger-context model or reduce "
+                "repository and issue instructions."
+            )
+        return details.available_diff_tokens
+
+    def _diff_budget_info(
+        self,
+        changeset: ChangeSet,
+        *,
+        carries_contracts: bool = False,
+        total_diff_tokens: int = 0,
+    ) -> DiffBudget:
+        """Calculate and expose every reservation used by the chunk planner."""
+        empty = changeset.model_copy(update={"files": []})
         assert self.llm is not None
         if self.llm.context_budget < 1000:
-            return self.llm.context_budget
-        empty = changeset.model_copy(update={"files": []})
+            return DiffBudget(
+                input_tokens=self.llm.context_budget,
+                completion_tokens=self.config.llm.max_tokens,
+                safety_tokens=0,
+                prompt_overhead=0,
+                optional_reserve=0,
+                available_diff_tokens=self.llm.context_budget,
+                total_diff_tokens=total_diff_tokens,
+            )
         prompt = build_review_prompt(
             empty,
             self.config,
+            rules=self.rules_for(changeset),  # type: ignore[arg-type]
+            static_findings=(
+                [] if self._trim_optional_context else self._static_for_prompt(changeset)
+            ),
             repo_context=self._repo_context(empty),
             issue=self.issue,
-            verification=self._verification_for_prompt(),
+            verification=None if self._trim_optional_context else self._verification_for_prompt(),
             contract_contexts=(
-                contract_contexts(changeset.files, self._impact) if carries_contracts else None
+                contract_contexts(changeset.files, self._impact)
+                if carries_contracts and not self._trim_optional_context
+                else None
             ),
             collect_reconciliation_evidence=True,
         )
@@ -778,7 +1033,11 @@ class Reviewer:
         # The blast-radius section is reserved rather than measured: it is capped
         # before it is ever rendered, and reserving the ceiling up front is what
         # stops a large map from squeezing a changed file out of its own review.
-        reserved = self.config.impact.token_budget if self._impact is not None else 0
+        reserved = (
+            self.config.impact.token_budget
+            if self._impact is not None and not self._trim_optional_context
+            else 0
+        )
         # The dependency delta is reserved on the same terms and, like the map, is
         # deliberately absent from the prompt measured above: it is capped by
         # `max_changes` before it is ever rendered, and measuring it here as well
@@ -787,9 +1046,21 @@ class Reviewer:
         # `nothing_relevant` report entirely -- so asking it, rather than only
         # whether the stage ran, keeps the diff from paying for a section that
         # renders as nothing.
-        if supply_chain_for_prompt(self._supply_chain_for_prompt()) is not None:
+        if (
+            not self._trim_optional_context
+            and supply_chain_for_prompt(self._supply_chain_for_prompt()) is not None
+        ):
             reserved += self.config.supply_chain.token_budget
-        return max(1, self.llm.context_budget - overhead - reserved - 200)
+        available = max(0, self.llm.context_budget - overhead - reserved - PROMPT_SAFETY_TOKENS)
+        return DiffBudget(
+            input_tokens=self.llm.context_budget,
+            completion_tokens=self.config.llm.max_tokens,
+            safety_tokens=PROMPT_SAFETY_TOKENS,
+            prompt_overhead=overhead,
+            optional_reserve=reserved,
+            available_diff_tokens=available,
+            total_diff_tokens=total_diff_tokens,
+        )
 
     def _verification_for_prompt(self) -> VerificationReport | None:
         """The execution record, when the project wants the model to see it."""

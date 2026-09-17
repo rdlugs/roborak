@@ -204,8 +204,8 @@ class ReviewConfig(ConfigModel):
 
     max_findings: int = Field(default=25, ge=1)
     max_chunks: int = Field(default=DEFAULT_MAX_CHUNKS, ge=1)
-    """Maximum model review passes for an oversized change. Files beyond the
-    limit are reported as context omissions rather than silently dropped."""
+    """Primary model review passes allowed per run for an oversized change.
+    Successful ranges are checkpointed and later identical runs resume."""
     committable_suggestions: bool = True
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     require_evidence: bool = True

@@ -37,7 +37,7 @@ from roborak.publish.gitlab import GitLabPublisher
 from roborak.render import markdown
 from roborak.sources.base import SourceError
 from roborak.sources.forge import Target
-from roborak.state.store import StateStore, review_key
+from roborak.state.store import StateStore, checkpoint_key, review_key
 from roborak.static.runner import StaticRunner
 from roborak.supply.analyzer import analyse as analyse_supply_chain
 from roborak.supply.analyzer import attach_scanner_findings, note_skipped_scanners
@@ -174,7 +174,7 @@ def review(
     ] = None,
     max_chunks: Annotated[
         int | None,
-        typer.Option("--max-chunks", min=1, help="Cap model passes for an oversized change."),
+        typer.Option("--max-chunks", min=1, help="Limit primary model passes for this run."),
     ] = None,
     full_file: Annotated[
         bool,
@@ -307,6 +307,9 @@ def review(
         supply_chain=supply_chain,
         issue=session.issue,
         forge_token=session.token,
+        checkpoint_store=StateStore(session.repo),
+        checkpoint_key=checkpoint_key(session.changeset),
+        preflight=lambda message: console.print(f"[dim]{message}[/]", highlight=False),
     )
 
     status = f"reviewing with {config.model}…" if session.llm else "collecting findings…"

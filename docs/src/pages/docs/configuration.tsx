@@ -160,7 +160,7 @@ export default function Configuration() {
           "  categories: [security, bug, performance, logic, reliability]",
           "  severity_floor: minor         # findings below this are not reported",
           "  max_findings: 25",
-          "  max_chunks: 12                # model passes before remaining files are omitted",
+          "  max_chunks: 12                # primary model passes per run; later runs resume",
           "  committable_suggestions: true # emit replacement code you can commit as-is",
           "  min_confidence: 0.5           # drop findings the model was not sure about",
           "  require_evidence: true        # a critical/major model finding must show its evidence",
@@ -172,9 +172,10 @@ export default function Configuration() {
       <P>
         Large diffs are split into bounded model review calls. <Code>max_chunks</Code> limits those
         calls, and <Code>rk review --max-chunks N</Code> overrides it for one run. A chunk can hold
-        several related files or part of one oversized file. Complete files or portions of
-        oversized files beyond the limit are reported as context omissions, so the result is
-        visibly partial.
+        several related files or part of one oversized file. Successful ranges are checkpointed in
+        <Code>.roborak/state.json</Code>. Running the same review again automatically continues its
+        pending or failed ranges; a changed revision, model, content, or relevant configuration
+        starts a fresh checkpoint.
       </P>
       <Callout kind="note" title="What require_evidence buys you">
         <P>

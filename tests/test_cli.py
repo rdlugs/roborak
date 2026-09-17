@@ -301,13 +301,13 @@ def test_cli_flags_beat_the_config_file(repo: Path, monkeypatch):
     assert seen["model"] == "flag/model"
 
 
-def test_json_mode_emits_only_json(repo: Path):
+def test_json_mode_emits_only_json(repo: Path) -> None:
     """Anything else on stdout would break whatever is parsing it."""
     (repo / "app.py").write_text("def f():\n    return 2\n")
     result = runner.invoke(app, ["review", "--no-llm", "--uncommitted", "-C", str(repo), "--json"])
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert "findings" in payload
 
 

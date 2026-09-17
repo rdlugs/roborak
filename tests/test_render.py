@@ -141,7 +141,7 @@ def test_json_keeps_model_usage_metadata():
     assert payload["usage"][0]["total_tokens"] == 15
 
 
-def test_json_coverage_explains_semantic_order_and_omitted_roles():
+def test_json_coverage_explains_semantic_order_and_omitted_roles() -> None:
     result = make_result()
     result.review_plan = ReviewPlan(
         chunks=2,
@@ -156,7 +156,7 @@ def test_json_coverage_explains_semantic_order_and_omitted_roles():
         ],
     )
     payload = json.loads(json_out.render(result))
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert payload["coverage"]["file_plan"][0] == {
         "path": "app/auth.py",
         "role": "contract",
@@ -666,7 +666,7 @@ def render_terminal(result: ReviewResult, width: int = 100) -> str:
     return console.export_text()
 
 
-def test_human_outputs_explain_semantic_review_coverage():
+def test_human_outputs_explain_semantic_review_coverage() -> None:
     result = make_result()
     result.review_plan = ReviewPlan(
         chunks=2,
@@ -681,9 +681,9 @@ def test_human_outputs_explain_semantic_review_coverage():
         ],
     )
     document = markdown.render(result, full=True)
-    assert "Semantic review plan (2 pass(es))" in document
+    assert "Semantic review plan (0/2 pass(es))" in document
     assert "Omitted roles: low_signal (1)" in document
-    assert "semantic review order: 2 pass(es)" in render_terminal(result).lower()
+    assert "semantic review progress: 0/2 pass(es)" in render_terminal(result).lower()
 
 
 def test_terminal_header_says_what_was_reviewed():

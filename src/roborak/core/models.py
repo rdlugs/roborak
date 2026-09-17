@@ -38,6 +38,28 @@ class ReviewRole(StrEnum):
     LOW_SIGNAL = "low_signal"
 
 
+class ReviewUnitStatus(StrEnum):
+    """Whether one primary changed range has been covered."""
+
+    REVIEWED = "reviewed"
+    PENDING = "pending"
+    FAILED = "failed"
+
+
+class ReviewRange(BaseModel):
+    """A primary diff range assigned to exactly one model review unit."""
+
+    unit_id: str
+    path: str
+    old_start: int = Field(ge=0)
+    old_lines: int = Field(ge=0)
+    new_start: int = Field(ge=0)
+    new_lines: int = Field(ge=0)
+    status: ReviewUnitStatus = ReviewUnitStatus.PENDING
+    chunk: int = Field(ge=1)
+    detail: str | None = None
+
+
 class ReviewPlanFile(BaseModel):
     """One file's semantic assignment in the bounded review plan."""
 
@@ -53,6 +75,9 @@ class ReviewPlan(BaseModel):
 
     files: list[ReviewPlanFile] = Field(default_factory=list)
     chunks: int = Field(default=0, ge=0)
+    run_chunks: int = Field(default=0, ge=0)
+    completed_chunks: int = Field(default=0, ge=0)
+    ranges: list[ReviewRange] = Field(default_factory=list)
 
     @property
     def omitted_roles(self) -> dict[ReviewRole, int]:
@@ -63,12 +88,28 @@ class ReviewPlan(BaseModel):
         return counts
 
 
+class ReviewBudget(BaseModel):
+    """The exact token and pass allocation calculated before review calls."""
+
+    input_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    safety_tokens: int = Field(ge=0)
+    prompt_overhead: int = Field(ge=0)
+    optional_reserve: int = Field(ge=0)
+    available_diff_tokens: int = Field(ge=0)
+    total_diff_tokens: int = Field(ge=0)
+    estimated_passes: int = Field(ge=0)
+    completed_passes: int = Field(ge=0)
+    run_quota: int = Field(ge=0)
+
+
 class OmissionReason(StrEnum):
     IGNORED = "ignored"
     BINARY = "binary"
     EMPTY_FILE = "empty_file"
     FORGE_PATCH_UNAVAILABLE = "forge_patch_unavailable"
     CONTEXT_LIMIT = "context_limit"
+    PENDING_QUOTA = "pending_quota"
     CHUNK_FAILED = "chunk_failed"
 
 
@@ -76,6 +117,11 @@ class ReviewOmission(BaseModel):
     path: str
     reason: OmissionReason
     detail: str | None = None
+    unit_id: str | None = None
+    old_start: int | None = Field(default=None, ge=0)
+    old_lines: int | None = Field(default=None, ge=0)
+    new_start: int | None = Field(default=None, ge=0)
+    new_lines: int | None = Field(default=None, ge=0)
 
 
 class LLMCallUsage(BaseModel):
@@ -1033,6 +1079,9 @@ class ReviewResult(BaseModel):
     review_plan: ReviewPlan | None = None
     """Semantic order and pass assignment, present when the diff was chunked."""
 
+    review_budget: ReviewBudget | None = None
+    """Preflight token allocation and exact estimated primary pass count."""
+
     verification: VerificationReport | None = None
     """What the project's own tests said about this change.
 
@@ -1088,7 +1137,18 @@ class ReviewResult(BaseModel):
     Only an explicit floor moves the exit code, so the rendered block says which
     one it is rather than implying CI is gated when it is not."""
 
-    def add_omission(self, path: str, reason: OmissionReason, detail: str | None = None) -> None:
+    def add_omission(
+        self,
+        path: str,
+        reason: OmissionReason,
+        detail: str | None = None,
+        *,
+        unit_id: str | None = None,
+        old_start: int | None = None,
+        old_lines: int | None = None,
+        new_start: int | None = None,
+        new_lines: int | None = None,
+    ) -> None:
         """Record a file the review did not read, and whether that cost it coverage.
 
         Only the reasons below leave the review inconclusive. An ignored, binary
@@ -1096,12 +1156,22 @@ class ReviewResult(BaseModel):
         listing, but the review still saw everything there was to see, so it stays
         ``COMPLETE`` and its verdict still means something.
         """
-        omission = ReviewOmission(path=path, reason=reason, detail=detail)
+        omission = ReviewOmission(
+            path=path,
+            reason=reason,
+            detail=detail,
+            unit_id=unit_id,
+            old_start=old_start,
+            old_lines=old_lines,
+            new_start=new_start,
+            new_lines=new_lines,
+        )
         if omission not in self.coverage:
             self.coverage.append(omission)
         if reason in {
             OmissionReason.FORGE_PATCH_UNAVAILABLE,
             OmissionReason.CONTEXT_LIMIT,
+            OmissionReason.PENDING_QUOTA,
             OmissionReason.CHUNK_FAILED,
         }:
             self.status = ReviewStatus.PARTIAL
