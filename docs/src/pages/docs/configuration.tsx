@@ -172,8 +172,9 @@ export default function Configuration() {
       <P>
         Large diffs are split into bounded model review calls. <Code>max_chunks</Code> limits those
         calls, and <Code>rk review --max-chunks N</Code> overrides it for one run. A chunk can hold
-        several related files or part of one oversized file. Files beyond the limit are reported
-        as context omissions, so the result is visibly partial.
+        several related files or part of one oversized file. Complete files or portions of
+        oversized files beyond the limit are reported as context omissions, so the result is
+        visibly partial.
       </P>
       <Callout kind="note" title="What require_evidence buys you">
         <P>

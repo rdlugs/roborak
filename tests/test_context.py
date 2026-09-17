@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -369,7 +370,7 @@ def test_chunk_count_is_capped_and_omissions_recorded():
     assert chunks[0].omitted_files, "dropped files must be reported, not silently lost"
 
 
-def test_chunk_count_uses_the_configured_limit(caplog):
+def test_chunk_count_uses_the_configured_limit(caplog: pytest.LogCaptureFixture) -> None:
     files = [make_file(f"f{i:03d}.py", 100) for i in range(10)]
     plan = plan_chunks(ChangeSet(files=files), 30, count, render, max_chunks=3)
 
@@ -378,7 +379,7 @@ def test_chunk_count_uses_the_configured_limit(caplog):
     assert "change needs more than 3 passes" in caplog.text
 
 
-def test_reviewer_uses_the_configured_chunk_limit(tmp_path):
+def test_reviewer_uses_the_configured_chunk_limit(tmp_path: Path) -> None:
     from roborak.analysis.reviewer import Reviewer
     from roborak.core.models import ReviewStatus
     from tests.test_pipeline import StubLLM, uninvestigated

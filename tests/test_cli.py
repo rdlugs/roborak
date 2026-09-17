@@ -77,7 +77,7 @@ def test_review_help_documents_the_scope_flags():
         assert flag in help_text
 
 
-def test_review_rejects_a_non_positive_chunk_limit():
+def test_review_rejects_a_non_positive_chunk_limit() -> None:
     result = runner.invoke(app, ["review", "--max-chunks", "0"])
     assert result.exit_code == EXIT_ERROR
     assert "not in the range x>=1" in flatten(result.output)

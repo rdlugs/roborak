@@ -576,8 +576,8 @@ writes nothing and exits 0 rather than waiting.
 
 Large diffs are split into bounded model review calls. `review.max_chunks` limits those calls,
 and `rk review --max-chunks N` overrides it for one run. A chunk can hold several related files
-or part of one oversized file. If the change still needs more chunks, the remaining files are
-reported as context omissions and the review is partial.
+or part of one oversized file. If the change still needs more chunks, complete files or portions
+of oversized files beyond the limit are reported as context omissions and the review is partial.
 
 ```yaml
 version: 1
