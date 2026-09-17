@@ -70,6 +70,9 @@ review:
   # severity_floor decides what is reported at all; this decides what blocks.
   block_on: critical
   max_findings: 25
+  # Maximum model review passes for a diff that does not fit in one prompt.
+  # Files beyond the limit are reported as context omissions.
+  max_chunks: 12
   # Emit exact replacement code the reviewer can commit as-is.
   committable_suggestions: true
   # Drop findings the model was not reasonably sure about.

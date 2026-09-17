@@ -160,6 +160,7 @@ export default function Configuration() {
           "  categories: [security, bug, performance, logic, reliability]",
           "  severity_floor: minor         # findings below this are not reported",
           "  max_findings: 25",
+          "  max_chunks: 12                # model passes before remaining files are omitted",
           "  committable_suggestions: true # emit replacement code you can commit as-is",
           "  min_confidence: 0.5           # drop findings the model was not sure about",
           "  require_evidence: true        # a critical/major model finding must show its evidence",
@@ -168,6 +169,13 @@ export default function Configuration() {
           "  include_discussions: true     # unresolved MR/PR comments as bounded context",
         ].join("\n")}
       />
+      <P>
+        Large diffs are split into bounded model review calls. <Code>max_chunks</Code> limits those
+        calls, and <Code>rk review --max-chunks N</Code> overrides it for one run. A chunk can hold
+        several related files or part of one oversized file. Complete files or portions of
+        oversized files beyond the limit are reported as context omissions, so the result is
+        visibly partial.
+      </P>
       <Callout kind="note" title="What require_evidence buys you">
         <P>
           A <Code>critical</Code> or <Code>major</Code> model finding has to say what makes it true

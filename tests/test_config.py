@@ -56,6 +56,7 @@ def test_defaults_when_nothing_is_configured(tmp_path: Path, monkeypatch):
     config = load_config(tmp_path)
     assert config.model == "anthropic/claude-sonnet-5"
     assert config.review.severity_floor is Severity.MINOR
+    assert config.review.max_chunks == 12
     assert config.review.require_evidence
     assert config.static.enabled
     assert "**/node_modules/**" in config.ignore_paths
@@ -68,6 +69,9 @@ def test_invalid_numeric_ranges_and_unknown_keys_fail():
         Config.model_validate({"review": {"min_confidence": 1.1}})
     with pytest.raises(ValidationError):
         Config.model_validate({"review": {"max_fidings": 10}})
+    with pytest.raises(ValidationError):
+        Config.model_validate({"review": {"max_chunks": 0}})
+    assert Config.model_validate({"review": {"max_chunks": 100}}).review.max_chunks == 100
 
 
 def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
@@ -77,12 +81,14 @@ def test_project_config_overrides_defaults(tmp_path: Path, monkeypatch):
         "  model: openai/gpt-5\n"
         "review:\n"
         "  severity_floor: major\n"
+        "  max_chunks: 27\n"
         "  categories: [security]\n"
         "ignore_paths: ['**/*.generated.ts']\n"
     )
     config = load_config(tmp_path)
     assert config.model == "openai/gpt-5"
     assert config.review.severity_floor is Severity.MAJOR
+    assert config.review.max_chunks == 27
     assert config.review.categories == [Category.SECURITY]
     assert config.ignore_paths == ["**/*.generated.ts"]
 

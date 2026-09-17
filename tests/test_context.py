@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from roborak.context import ast_context
 from roborak.context.chunker import (
-    MAX_CHUNKS,
     MAX_CONTRACT_CONTEXTS,
     chunk,
     needs_chunking,
@@ -16,6 +16,7 @@ from roborak.context.chunker import (
 )
 from roborak.context.diff import parse_diff
 from roborak.context.operational import operational_signals
+from roborak.core.config import DEFAULT_MAX_CHUNKS
 from roborak.core.models import (
     ChangedFile,
     ChangeSet,
@@ -325,7 +326,7 @@ def test_low_signal_files_are_omitted_before_boundaries_at_the_pass_cap():
     files = [make_text_file("public/api.py", "def public_call():\n    return 1")]
     files.extend(make_file(f"generated/f{i:02d}.md", 100, "markdown") for i in range(20))
     plan = plan_chunks(ChangeSet(files=files), 25, count, render)
-    assert len(plan.chunks) == MAX_CHUNKS
+    assert len(plan.chunks) == DEFAULT_MAX_CHUNKS
     assert plan.review.files[0].path == "public/api.py"
     assert plan.review.files[0].reviewed
     assert plan.review.omitted_roles[ReviewRole.LOW_SIGNAL] > 0
@@ -357,7 +358,7 @@ def test_contract_metadata_is_bounded_and_not_added_as_primary_diff():
 def test_a_single_oversized_file_is_split_into_reviewable_windows():
     changeset = ChangeSet(files=[make_file("huge.py", 5000)])
     chunks = chunk(changeset, 10, count, render)
-    assert len(chunks) == MAX_CHUNKS
+    assert len(chunks) == DEFAULT_MAX_CHUNKS
     assert all(piece.files[0].path == "huge.py" for piece in chunks)
     assert chunks[0].omitted_files == ["huge.py"]
 
@@ -365,8 +366,38 @@ def test_a_single_oversized_file_is_split_into_reviewable_windows():
 def test_chunk_count_is_capped_and_omissions_recorded():
     files = [make_file(f"f{i:03d}.py", 100) for i in range(40)]
     chunks = chunk(ChangeSet(files=files), 30, count, render)
-    assert len(chunks) == MAX_CHUNKS
+    assert len(chunks) == DEFAULT_MAX_CHUNKS
     assert chunks[0].omitted_files, "dropped files must be reported, not silently lost"
+
+
+def test_chunk_count_uses_the_configured_limit(caplog: pytest.LogCaptureFixture) -> None:
+    files = [make_file(f"f{i:03d}.py", 100) for i in range(10)]
+    plan = plan_chunks(ChangeSet(files=files), 30, count, render, max_chunks=3)
+
+    assert len(plan.chunks) == 3
+    assert any(not file.reviewed for file in plan.review.files)
+    assert "change needs more than 3 passes" in caplog.text
+
+
+def test_reviewer_uses_the_configured_chunk_limit(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewStatus
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 1
+    changeset = ChangeSet(files=[make_file(f"pkg{i}/f.py", 30) for i in range(5)])
+
+    result = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="findings: []", context_budget=140),
+    ).review(changeset)
+
+    assert result.status is ReviewStatus.PARTIAL
+    assert result.review_plan is not None
+    assert result.review_plan.chunks == 1
+    assert any(item.reason.value == "context_limit" for item in result.coverage)
 
 
 def test_an_empty_changeset_yields_no_chunks():

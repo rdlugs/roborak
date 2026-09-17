@@ -66,8 +66,21 @@ def test_review_help_documents_the_scope_flags():
     result = runner.invoke(app, ["review", "--help"])
     assert result.exit_code == EXIT_OK
     help_text = flatten(result.output)
-    for flag in ("--base", "--uncommitted", "--committed", "--no-llm", "--fail-on"):
+    for flag in (
+        "--base",
+        "--uncommitted",
+        "--committed",
+        "--no-llm",
+        "--fail-on",
+        "--max-chunks",
+    ):
         assert flag in help_text
+
+
+def test_review_rejects_a_non_positive_chunk_limit() -> None:
+    result = runner.invoke(app, ["review", "--max-chunks", "0"])
+    assert result.exit_code == EXIT_ERROR
+    assert "not in the range x>=1" in flatten(result.output)
 
 
 def test_no_llm_on_a_clean_tree_reports_nothing(repo: Path):
@@ -2162,12 +2175,15 @@ def test_review_profile_reaches_stages_with_cli_overrides(
             "--no-walkthrough",
             "--severity",
             "info",
+            "--max-chunks",
+            "31",
         ],
     )
     assert result.exit_code == EXIT_OK, result.output
     config = seen["config"]
     assert config.profile == profile
     assert config.review.severity_floor is Severity.INFO
+    assert config.review.max_chunks == 31
     assert not config.static.enabled
     assert not config.impact.enabled
     assert not config.review.investigate.enabled

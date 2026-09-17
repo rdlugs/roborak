@@ -482,6 +482,7 @@ class Reviewer:
             render_for_prompt,
             impact=self._impact,
             strategy=self.chunk_strategy,
+            max_chunks=self.config.review.max_chunks,
         )
         chunks = plan.chunks
         result.review_plan = plan.review

@@ -172,6 +172,10 @@ def review(
     max_findings: Annotated[
         int | None, typer.Option("--max-findings", help="Cap the number of findings.")
     ] = None,
+    max_chunks: Annotated[
+        int | None,
+        typer.Option("--max-chunks", min=1, help="Cap model passes for an oversized change."),
+    ] = None,
     full_file: Annotated[
         bool,
         typer.Option("--full-file", help="Allow findings on lines the change did not touch."),
@@ -235,6 +239,8 @@ def review(
         config.review.severity_floor = severity_floor
     if max_findings:
         config.review.max_findings = max_findings
+    if max_chunks is not None:
+        config.review.max_chunks = max_chunks
     if full_file:
         config.review.full_file = True
     if no_static:

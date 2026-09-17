@@ -65,6 +65,9 @@ class ConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+DEFAULT_MAX_CHUNKS = 12
+
+
 class ReviewProfile(StrEnum):
     FAST = "fast"
     BALANCED = "balanced"
@@ -200,6 +203,9 @@ class ReviewConfig(ConfigModel):
     all: a finding below that never reaches a renderer, let alone a verdict."""
 
     max_findings: int = Field(default=25, ge=1)
+    max_chunks: int = Field(default=DEFAULT_MAX_CHUNKS, ge=1)
+    """Maximum model review passes for an oversized change. Files beyond the
+    limit are reported as context omissions rather than silently dropped."""
     committable_suggestions: bool = True
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     require_evidence: bool = True
