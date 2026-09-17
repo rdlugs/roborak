@@ -70,6 +70,11 @@ const FILTERING: FlagGroup = {
       help: "Lowest severity to report.",
     },
     { name: "--max-findings", arg: "int", help: "Cap the number of findings." },
+    {
+      name: "--max-chunks",
+      arg: "int",
+      help: "Cap model review passes for an oversized change. Must be positive.",
+    },
     { name: "--full-file", help: "Allow findings on lines the change did not touch." },
     {
       name: "--fail-on",

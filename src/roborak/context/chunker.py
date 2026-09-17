@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
 
+from roborak.core.config import DEFAULT_MAX_CHUNKS
 from roborak.core.models import (
     BoundaryKind,
     ChangedFile,
@@ -31,9 +32,6 @@ from roborak.core.models import (
 )
 
 log = logging.getLogger(__name__)
-
-MAX_CHUNKS = 8
-"""Beyond this the review costs more than it is worth; the rest is omitted."""
 
 MAX_CONTRACT_CONTEXTS = 12
 MAX_CONTRACT_SUMMARY_CHARS = 320
@@ -117,6 +115,7 @@ def chunk(
     *,
     impact: ImpactMap | None = None,
     strategy: ChunkStrategy = "semantic",
+    max_chunks: int = DEFAULT_MAX_CHUNKS,
 ) -> list[ChangeSet]:
     """Compatibility wrapper returning only the planned changesets."""
     return plan_chunks(
@@ -126,6 +125,7 @@ def chunk(
         render,
         impact=impact,
         strategy=strategy,
+        max_chunks=max_chunks,
     ).chunks
 
 
@@ -137,6 +137,7 @@ def plan_chunks(
     *,
     impact: ImpactMap | None = None,
     strategy: ChunkStrategy = "semantic",
+    max_chunks: int = DEFAULT_MAX_CHUNKS,
 ) -> ChunkPlan:
     """Divide ``changeset`` into bounded, explainable review passes.
 
@@ -175,12 +176,12 @@ def plan_chunks(
         chunks.append(current)
 
     omitted: list[str] = []
-    if len(chunks) > MAX_CHUNKS:
-        for extra in chunks[MAX_CHUNKS:]:
+    if len(chunks) > max_chunks:
+        for extra in chunks[max_chunks:]:
             omitted.extend(f.path for f in extra if f.path not in omitted)
-        chunks = chunks[:MAX_CHUNKS]
+        chunks = chunks[:max_chunks]
         log.warning(
-            "change needs more than %d passes; %d file(s) omitted", MAX_CHUNKS, len(omitted)
+            "change needs more than %d passes; %d file(s) omitted", max_chunks, len(omitted)
         )
 
     pieces = [
