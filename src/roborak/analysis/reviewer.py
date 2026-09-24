@@ -541,7 +541,7 @@ class Reviewer:
                     quota=self.config.review.max_chunks,
                 )
             )
-            single_findings, _, _ = self._review_chunk(changeset, result, chunk_index=1)
+            single_findings, _, _, _ = self._review_chunk(changeset, result, chunk_index=1)
             return single_findings
 
         chunk_budget = self._diff_budget(changeset, carries_contracts=True)
@@ -635,18 +635,18 @@ class Reviewer:
                 and source_chunk < index
             ]
             try:
-                chunk_findings, chunk_requirements, chunk_compatibility = self._review_chunk(
+                (
+                    chunk_findings,
+                    chunk_requirements,
+                    chunk_compatibility,
+                    omitted,
+                ) = self._review_chunk(
                     piece,
                     result,
                     chunk_index=index,
                     contract_contexts=carried_contracts,
                     collect_reconciliation_evidence=True,
                 )
-                omitted = {
-                    item.path
-                    for item in result.coverage
-                    if item.reason is OmissionReason.CONTEXT_LIMIT and item.path in under_review
-                }
                 if omitted:
                     detail = "context budget omitted " + ", ".join(sorted(omitted))
                     checkpoint.failed[unit.identity] = detail
@@ -891,9 +891,10 @@ class Reviewer:
         chunk_index: int,
         contract_contexts: list[ContractContext] | None = None,
         collect_reconciliation_evidence: bool = False,
-    ) -> tuple[list[Finding], list[dict[str, str]], list[dict[str, str]]]:
+    ) -> tuple[list[Finding], list[dict[str, str]], list[dict[str, str]], list[str]]:
         """One model pass over one chunk: the findings, and the evidence to reconcile them."""
         assert self.llm is not None
+        omitted_paths: list[str] = []
         prompt_changeset = changeset.model_copy(deep=True)
         prompt = build_review_prompt(
             prompt_changeset,
@@ -926,6 +927,7 @@ class Reviewer:
                 render=render_for_prompt,
             )
             for path in prompt_changeset.omitted_files:
+                omitted_paths.append(path)
                 result.add_omission(path, OmissionReason.CONTEXT_LIMIT)
                 if result.review_plan is not None:
                     for planned in result.review_plan.files:
@@ -964,6 +966,7 @@ class Reviewer:
             findings,
             parse_requirement_evidence(response.text) if collect_reconciliation_evidence else [],
             parse_compatibility_evidence(response.text) if collect_reconciliation_evidence else [],
+            omitted_paths,
         )
 
     def _complete(

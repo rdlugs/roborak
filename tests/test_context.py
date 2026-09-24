@@ -507,12 +507,11 @@ def test_changed_content_invalidates_an_automatic_resume_checkpoint(tmp_path: Pa
 
     config = uninvestigated()
     config.review.max_chunks = 1
-    calls = 0
+    calls: list[str] = []
 
     class Recording(StubLLM):
         def complete(self, system: str, user: str) -> LLMResponse:
-            nonlocal calls
-            calls += 1
+            calls.append(user)
             return LLMResponse(text="findings: []", model="stub")
 
     def run(size: int) -> ReviewResult:
@@ -526,7 +525,44 @@ def test_changed_content_invalidates_an_automatic_resume_checkpoint(tmp_path: Pa
 
     run(30)
     run(31)
+    assert len(calls) == 2
+    assert all("### pkg/f.py" in prompt for prompt in calls)
+
+
+def test_a_prior_omission_does_not_fail_a_later_unit_for_the_same_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import OmissionReason, ReviewUnitStatus
+    from roborak.state.store import StateStore
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 2
+    reviewer = Reviewer(
+        config=config,
+        repo=tmp_path,
+        llm=StubLLM(reply="", context_budget=140),
+        checkpoint_store=StateStore(tmp_path),
+        checkpoint_key="local:test",
+    )
+    calls = 0
+
+    def review_chunk(changeset, result, **_kwargs):
+        nonlocal calls
+        calls += 1
+        omitted = ["pkg/f.py"] if calls == 1 else []
+        for path in omitted:
+            result.add_omission(path, OmissionReason.CONTEXT_LIMIT)
+        return [], [], [], omitted
+
+    monkeypatch.setattr(reviewer, "_review_chunk", review_chunk)
+    result = reviewer.review(ChangeSet(files=[make_file("pkg/f.py", 100)]))
+
     assert calls == 2
+    assert result.review_plan is not None
+    statuses = [item.status for item in result.review_plan.ranges[:2]]
+    assert statuses == [ReviewUnitStatus.FAILED, ReviewUnitStatus.REVIEWED]
 
 
 def test_failed_chunk_is_retried_automatically_before_later_work(tmp_path: Path) -> None:

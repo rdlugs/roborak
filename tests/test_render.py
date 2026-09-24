@@ -33,6 +33,7 @@ from roborak.core.models import (
     ReviewComment,
     ReviewPlan,
     ReviewPlanFile,
+    ReviewRange,
     ReviewResult,
     ReviewRole,
     Walkthrough,
@@ -684,6 +685,39 @@ def test_human_outputs_explain_semantic_review_coverage() -> None:
     assert "Semantic review plan (0/2 pass(es))" in document
     assert "Omitted roles: low_signal (1)" in document
     assert "semantic review progress: 0/2 pass(es)" in render_terminal(result).lower()
+
+
+def test_review_ranges_render_zero_length_sides_explicitly() -> None:
+    deletion = ReviewRange(
+        unit_id="delete",
+        path="app/auth.py",
+        chunk=1,
+        old_start=4,
+        old_lines=2,
+        new_start=4,
+        new_lines=0,
+    )
+    addition = ReviewRange(
+        unit_id="add",
+        path="app/auth.py",
+        chunk=1,
+        old_start=9,
+        old_lines=0,
+        new_start=9,
+        new_lines=3,
+    )
+
+    assert markdown._range_label(deletion) == "old 4-5, new 4+0"
+    assert markdown._range_label(addition) == "old 9+0, new 9-11"
+
+
+def test_terminal_coverage_summary_counts_omissions() -> None:
+    from roborak.core.models import OmissionReason
+
+    result = make_result()
+    result.add_omission("generated/big.ts", OmissionReason.CONTEXT_LIMIT)
+
+    assert "1 coverage omission(s)" in markdown._terminal_footer(result, hid_sections=False)
 
 
 def test_terminal_header_says_what_was_reviewed():

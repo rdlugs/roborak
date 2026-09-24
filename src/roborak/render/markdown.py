@@ -78,9 +78,17 @@ from roborak.render.prompt_only import (
 
 
 def _range_label(item: ReviewRange) -> str:
-    old_end = item.old_start + max(0, item.old_lines - 1)
-    new_end = item.new_start + max(0, item.new_lines - 1)
-    return f"old {item.old_start}-{old_end}, new {item.new_start}-{new_end}"
+    old_range = (
+        f"{item.old_start}+0"
+        if item.old_lines == 0
+        else f"{item.old_start}-{item.old_start + item.old_lines - 1}"
+    )
+    new_range = (
+        f"{item.new_start}+0"
+        if item.new_lines == 0
+        else f"{item.new_start}-{item.new_start + item.new_lines - 1}"
+    )
+    return f"old {old_range}, new {new_range}"
 
 
 FINGERPRINT_PREFIX = "roborak:v1"
@@ -1352,7 +1360,7 @@ def _terminal_footer(result: ReviewResult, *, hid_sections: bool) -> str:
 
     if result.coverage:
         lines.append(
-            f"**{len(result.coverage)} changed range(s) not fully reviewed:** "
+            f"**{len(result.coverage)} coverage omission(s):** "
             + _listed(
                 f"`{item.path}`"
                 + (
