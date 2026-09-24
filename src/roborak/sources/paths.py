@@ -128,6 +128,8 @@ class PathsSource:
                 if path.is_symlink() or not path.is_file():
                     continue
                 relative = path.relative_to(self.root).as_posix()
+                if relative == ".roborak/state.json":
+                    continue
                 if matches_any(relative, self.ignore_paths):
                     if self.keep is not None and self.keep(relative):
                         # Kept for the supply-chain stage alone, so it is held

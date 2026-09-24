@@ -12,10 +12,13 @@ as the baseline the semantic planner replaces.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -28,6 +31,7 @@ from roborak.core.models import (
     ImpactMap,
     ReviewPlan,
     ReviewPlanFile,
+    ReviewRange,
     ReviewRole,
 )
 
@@ -37,6 +41,10 @@ MAX_CONTRACT_CONTEXTS = 12
 MAX_CONTRACT_SUMMARY_CHARS = 320
 
 ChunkStrategy = Literal["semantic", "directory"]
+
+
+class ChunkPlanningError(RuntimeError):
+    """A primary changed row cannot fit within the calculated diff budget."""
 
 
 @dataclass(frozen=True)
@@ -54,9 +62,29 @@ class ContractContext:
 class ChunkPlan:
     """Internal plan consumed by the reviewer and surfaced as coverage metadata."""
 
-    chunks: list[ChangeSet]
+    units: list[PlannedChunk]
     review: ReviewPlan
     contracts: list[ContractContext]
+
+    @property
+    def chunks(self) -> list[ChangeSet]:
+        """Compatibility view for callers that only need the changesets."""
+        return [unit.changeset for unit in self.units]
+
+
+@dataclass
+class PlannedChunk:
+    """One stable primary review unit and the context rendered around it."""
+
+    identity: str
+    changeset: ChangeSet
+    ranges: list[ReviewRange]
+
+
+@dataclass
+class _Fragment:
+    file: ChangedFile
+    spans: list[tuple[int, int, int, int]]
 
 
 _ROLE_RANK: dict[ReviewRole, int] = {
@@ -145,7 +173,7 @@ def plan_chunks(
     description and forge refs and can produce properly anchored findings.
     """
     if not changeset.files:
-        return ChunkPlan(chunks=[], review=ReviewPlan(), contracts=[])
+        return ChunkPlan(units=[], review=ReviewPlan(), contracts=[])
 
     roles = _classify(changeset.files, impact)
     groups = (
@@ -154,8 +182,8 @@ def plan_chunks(
         else _relationship_groups(changeset.files, roles, impact)
     )
     ordered_paths = [file.path for group in groups for file in group]
-    chunks: list[list[ChangedFile]] = []
-    current: list[ChangedFile] = []
+    chunks: list[list[_Fragment]] = []
+    current: list[_Fragment] = []
 
     for group in groups:
         fragments = [
@@ -163,55 +191,79 @@ def plan_chunks(
             for file in group
             for fragment in _fragments(file, budget, count_tokens, render)
         ]
-        if current and count_tokens(_joined([*current, *fragments], render)) > budget:
+        if (
+            current
+            and count_tokens(_joined([item.file for item in [*current, *fragments]], render))
+            > budget
+        ):
             chunks.append(current)
             current = []
-        for file in fragments:
-            if current and count_tokens(_joined([*current, file], render)) > budget:
+        for fragment in fragments:
+            if (
+                current
+                and count_tokens(_joined([item.file for item in [*current, fragment]], render))
+                > budget
+            ):
                 chunks.append(current)
                 current = []
-            current.append(file)
+            current.append(fragment)
 
     if current:
         chunks.append(current)
 
-    omitted: list[str] = []
-    if len(chunks) > max_chunks:
-        for extra in chunks[max_chunks:]:
-            omitted.extend(f.path for f in extra if f.path not in omitted)
-        chunks = chunks[:max_chunks]
-        log.warning(
-            "change needs more than %d passes; %d file(s) omitted", max_chunks, len(omitted)
+    del max_chunks  # The caller applies this as a per-run quota after planning all units.
+    units: list[PlannedChunk] = []
+    all_ranges: list[ReviewRange] = []
+    for index, fragments in enumerate(chunks, start=1):
+        files = [fragment.file for fragment in fragments]
+        spans = [span for fragment in fragments for span in fragment.spans]
+        identity = _chunk_identity(files, spans, render)
+        ranges = [
+            ReviewRange(
+                unit_id=identity,
+                path=path,
+                old_start=old_start,
+                old_lines=old_lines,
+                new_start=new_start,
+                new_lines=new_lines,
+                chunk=index,
+            )
+            for path, old_start, old_lines, new_start, new_lines in (
+                (fragment.file.path, *span) for fragment in fragments for span in fragment.spans
+            )
+        ]
+        all_ranges.extend(ranges)
+        units.append(
+            PlannedChunk(
+                identity=identity,
+                changeset=_sub_changeset(changeset, files, []),
+                ranges=ranges,
+            )
         )
-
-    pieces = [
-        _sub_changeset(changeset, files, omitted if i == 0 else [])
-        for i, files in enumerate(chunks)
-    ]
     # An oversized file is split into fragments that can straddle a boundary, so a
     # path may appear in several chunks. The pass that reviewed it *first* is the
     # one to report, and the only one later passes may treat as established.
     first_chunk: dict[str, int] = {}
-    for index, files in enumerate(chunks, start=1):
-        for file in files:
-            if file.path not in omitted:
-                first_chunk.setdefault(file.path, index)
+    for index, fragments in enumerate(chunks, start=1):
+        for fragment in fragments:
+            first_chunk.setdefault(fragment.file.path, index)
     review = ReviewPlan(
         chunks=len(chunks),
+        ranges=all_ranges,
         files=[
             ReviewPlanFile(
                 path=path,
                 role=roles[path],
                 order=index,
                 chunk=first_chunk.get(path),
-                reviewed=path not in omitted,
+                reviewed=True,
             )
             for index, path in enumerate(ordered_paths, start=1)
         ],
     )
     log.debug("split %d files into %d semantic chunk(s)", len(changeset.files), len(chunks))
     return ChunkPlan(
-        chunks=pieces,
+        units=units,
         review=review,
         contracts=_contract_contexts(changeset.files, roles, impact),
     )
@@ -220,6 +272,19 @@ def plan_chunks(
 def _joined(files: list[ChangedFile], render: Callable[[ChangedFile], str]) -> str:
     """Exactly how the prompt template joins a chunk's files."""
     return "\n".join(render(f) for f in files)
+
+
+def _chunk_identity(
+    files: list[ChangedFile],
+    spans: list[tuple[int, int, int, int]],
+    render: Callable[[ChangedFile], str],
+) -> str:
+    payload = {
+        "files": [{"path": file.path, "diff": render(file)} for file in files],
+        "spans": spans,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:24]
 
 
 def _sub_changeset(parent: ChangeSet, files: list[ChangedFile], omitted: list[str]) -> ChangeSet:
@@ -471,15 +536,15 @@ def _fragments(
     budget: int,
     count_tokens: Callable[[str], int],
     render: Callable[[ChangedFile], str],
-) -> list[ChangedFile]:
+) -> list[_Fragment]:
     """Split a lone oversized file by hunk and then by line windows."""
     if count_tokens(render(file)) <= budget or not file.hunks:
-        return [file]
+        return [_Fragment(file=file, spans=[_hunk_span(hunk) for hunk in file.hunks])]
 
-    fragments: list[ChangedFile] = []
+    fragments: list[_Fragment] = []
     for hunk in file.hunks:
         fragments.extend(_hunk_fragments(file, hunk, budget, count_tokens, render))
-    return fragments or [file]
+    return fragments or [_Fragment(file=file.model_copy(update={"hunks": []}), spans=[])]
 
 
 def _hunk_fragments(
@@ -488,23 +553,121 @@ def _hunk_fragments(
     budget: int,
     count_tokens: Callable[[str], int],
     render: Callable[[ChangedFile], str],
-) -> list[ChangedFile]:
+) -> list[_Fragment]:
     candidate = file.model_copy(update={"hunks": [hunk]})
     lines = hunk.content.splitlines()
-    if count_tokens(render(candidate)) <= budget or len(lines) <= 1:
-        return [candidate]
+    if count_tokens(render(candidate)) <= budget:
+        return [_Fragment(file=candidate, spans=[_hunk_span(hunk)])]
+    changed = [index for index, line in enumerate(lines) if line.startswith(("+", "-"))]
+    if not changed:
+        return []
 
-    midpoint = len(lines) // 2
-    overlap = min(3, max(0, len(lines) // 4))
-    left = _slice_hunk(hunk, 0, midpoint + overlap)
-    right = _slice_hunk(hunk, midpoint - overlap, len(lines))
-    return [
-        *_hunk_fragments(file, left, budget, count_tokens, render),
-        *_hunk_fragments(file, right, budget, count_tokens, render),
-    ]
+    fragments: list[_Fragment] = []
+    primary_start = 0
+    previous_size = 1
+    while primary_start < len(changed):
+        candidates: dict[int, Hunk] = {}
+        measure = partial(
+            _measure_window,
+            candidates,
+            file,
+            hunk,
+            changed,
+            primary_start,
+            budget=budget,
+            count_tokens=count_tokens,
+            render=render,
+        )
+
+        initial = min(len(changed), primary_start + previous_size)
+        if measure(initial):
+            best = initial
+            step = previous_size
+            while best < len(changed):
+                probe = min(len(changed), best + step)
+                if measure(probe):
+                    best = probe
+                    step *= 2
+                    continue
+                low, high = best + 1, probe - 1
+                while low <= high:
+                    middle = (low + high) // 2
+                    if measure(middle):
+                        best = middle
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                break
+        else:
+            low, high = primary_start + 1, initial - 1
+            best = low
+            while low <= high:
+                middle = (low + high) // 2
+                if measure(middle):
+                    best = middle
+                    low = middle + 1
+                else:
+                    high = middle - 1
+
+        if not measure(best):
+            raise ChunkPlanningError(
+                f"one changed row in {file.path} exceeds the {budget}-token diff budget"
+            )
+        sliced = candidates[best]
+        fragments.append(
+            _Fragment(
+                file=file.model_copy(update={"hunks": [sliced]}),
+                spans=[_slice_span(hunk, changed[primary_start], changed[best - 1] + 1)],
+            )
+        )
+        previous_size = max(1, best - primary_start)
+        primary_start = best
+    return fragments
 
 
-def _slice_hunk(hunk: Hunk, start: int, end: int) -> Hunk:
+def _measure_window(
+    candidates: dict[int, Hunk],
+    file: ChangedFile,
+    hunk: Hunk,
+    changed: list[int],
+    primary_start: int,
+    primary_end: int,
+    budget: int,
+    count_tokens: Callable[[str], int],
+    render: Callable[[ChangedFile], str],
+) -> bool:
+    start, end = changed[primary_start], changed[primary_end - 1] + 1
+    primary = (start, end)
+
+    def fits(window_start: int, window_end: int) -> bool:
+        sliced = _slice_hunk(hunk, window_start, window_end, primary=primary)
+        if count_tokens(render(file.model_copy(update={"hunks": [sliced]}))) > budget:
+            return False
+        candidates[primary_end] = sliced
+        return True
+
+    if not fits(start, end):
+        return False
+
+    lines = hunk.content.splitlines()
+    for _ in range(3):
+        if start == 0 or lines[start - 1].startswith(("+", "-")) or not fits(start - 1, end):
+            break
+        start -= 1
+    for _ in range(3):
+        if end == len(lines) or lines[end].startswith(("+", "-")) or not fits(start, end + 1):
+            break
+        end += 1
+    return True
+
+
+def _slice_hunk(
+    hunk: Hunk,
+    start: int,
+    end: int,
+    *,
+    primary: tuple[int, int] | None = None,
+) -> Hunk:
     lines = hunk.content.splitlines()
     old_line, new_line = hunk.old_start, hunk.new_start
     for line in lines[:start]:
@@ -518,7 +681,9 @@ def _slice_hunk(hunk: Hunk, start: int, end: int) -> Hunk:
     selected = lines[start:end]
     old_count = sum(1 for line in selected if not line.startswith(("+", "\\")))
     new_count = sum(1 for line in selected if not line.startswith(("-", "\\")))
-    new_end = new_line + new_count
+    primary_start, primary_end = primary or (start, end)
+    primary_new_start = _line_position(hunk, primary_start)[1]
+    primary_new_end = _line_position(hunk, primary_end)[1]
     return Hunk(
         old_start=old_line,
         old_lines=old_count,
@@ -526,8 +691,34 @@ def _slice_hunk(hunk: Hunk, start: int, end: int) -> Hunk:
         new_lines=new_count,
         header=f"@@ -{old_line},{old_count} +{new_line},{new_count} @@",
         content="\n".join(selected),
-        added_lines={line for line in hunk.added_lines if new_line <= line < new_end},
+        added_lines={
+            line for line in hunk.added_lines if primary_new_start <= line < primary_new_end
+        },
         line_map={
-            line: position for line, position in hunk.line_map.items() if new_line <= line < new_end
+            line: position
+            for line, position in hunk.line_map.items()
+            if primary_new_start <= line < primary_new_end
         },
     )
+
+
+def _line_position(hunk: Hunk, offset: int) -> tuple[int, int]:
+    old_line, new_line = hunk.old_start, hunk.new_start
+    for line in hunk.content.splitlines()[:offset]:
+        if line.startswith("\\"):
+            continue
+        if not line.startswith("+"):
+            old_line += 1
+        if not line.startswith("-"):
+            new_line += 1
+    return old_line, new_line
+
+
+def _slice_span(hunk: Hunk, start: int, end: int) -> tuple[int, int, int, int]:
+    old_start, new_start = _line_position(hunk, start)
+    old_end, new_end = _line_position(hunk, end)
+    return old_start, old_end - old_start, new_start, new_end - new_start
+
+
+def _hunk_span(hunk: Hunk) -> tuple[int, int, int, int]:
+    return hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines

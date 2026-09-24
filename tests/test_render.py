@@ -33,6 +33,7 @@ from roborak.core.models import (
     ReviewComment,
     ReviewPlan,
     ReviewPlanFile,
+    ReviewRange,
     ReviewResult,
     ReviewRole,
     Walkthrough,
@@ -141,7 +142,7 @@ def test_json_keeps_model_usage_metadata():
     assert payload["usage"][0]["total_tokens"] == 15
 
 
-def test_json_coverage_explains_semantic_order_and_omitted_roles():
+def test_json_coverage_explains_semantic_order_and_omitted_roles() -> None:
     result = make_result()
     result.review_plan = ReviewPlan(
         chunks=2,
@@ -156,7 +157,7 @@ def test_json_coverage_explains_semantic_order_and_omitted_roles():
         ],
     )
     payload = json.loads(json_out.render(result))
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert payload["coverage"]["file_plan"][0] == {
         "path": "app/auth.py",
         "role": "contract",
@@ -666,7 +667,7 @@ def render_terminal(result: ReviewResult, width: int = 100) -> str:
     return console.export_text()
 
 
-def test_human_outputs_explain_semantic_review_coverage():
+def test_human_outputs_explain_semantic_review_coverage() -> None:
     result = make_result()
     result.review_plan = ReviewPlan(
         chunks=2,
@@ -681,9 +682,42 @@ def test_human_outputs_explain_semantic_review_coverage():
         ],
     )
     document = markdown.render(result, full=True)
-    assert "Semantic review plan (2 pass(es))" in document
+    assert "Semantic review plan (0/2 pass(es))" in document
     assert "Omitted roles: low_signal (1)" in document
-    assert "semantic review order: 2 pass(es)" in render_terminal(result).lower()
+    assert "semantic review progress: 0/2 pass(es)" in render_terminal(result).lower()
+
+
+def test_review_ranges_render_zero_length_sides_explicitly() -> None:
+    deletion = ReviewRange(
+        unit_id="delete",
+        path="app/auth.py",
+        chunk=1,
+        old_start=4,
+        old_lines=2,
+        new_start=4,
+        new_lines=0,
+    )
+    addition = ReviewRange(
+        unit_id="add",
+        path="app/auth.py",
+        chunk=1,
+        old_start=9,
+        old_lines=0,
+        new_start=9,
+        new_lines=3,
+    )
+
+    assert markdown._range_label(deletion) == "old 4-5, new 4+0"
+    assert markdown._range_label(addition) == "old 9+0, new 9-11"
+
+
+def test_terminal_coverage_summary_counts_omissions() -> None:
+    from roborak.core.models import OmissionReason
+
+    result = make_result()
+    result.add_omission("generated/big.ts", OmissionReason.CONTEXT_LIMIT)
+
+    assert "1 coverage omission(s)" in markdown._terminal_footer(result, hid_sections=False)
 
 
 def test_terminal_header_says_what_was_reviewed():

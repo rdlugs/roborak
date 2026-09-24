@@ -23,6 +23,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
+    "filelock>=3.20",
     "typer>=0.15",
     "rich>=13.9",
     "pydantic>=2.10",
