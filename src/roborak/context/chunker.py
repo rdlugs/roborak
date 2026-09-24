@@ -544,7 +544,7 @@ def _fragments(
     fragments: list[_Fragment] = []
     for hunk in file.hunks:
         fragments.extend(_hunk_fragments(file, hunk, budget, count_tokens, render))
-    return fragments or [_Fragment(file=file, spans=[_hunk_span(hunk) for hunk in file.hunks])]
+    return fragments or [_Fragment(file=file.model_copy(update={"hunks": []}), spans=[])]
 
 
 def _hunk_fragments(
@@ -558,34 +558,33 @@ def _hunk_fragments(
     lines = hunk.content.splitlines()
     if count_tokens(render(candidate)) <= budget:
         return [_Fragment(file=candidate, spans=[_hunk_span(hunk)])]
-    if len(lines) <= 1:
-        raise ChunkPlanningError(
-            f"one changed row in {file.path} exceeds the {budget}-token diff budget"
-        )
+    changed = [index for index, line in enumerate(lines) if line.startswith(("+", "-"))]
+    if not changed:
+        return []
 
     fragments: list[_Fragment] = []
     primary_start = 0
     previous_size = 1
-    while primary_start < len(lines):
+    while primary_start < len(changed):
         candidates: dict[int, Hunk] = {}
         measure = partial(
             _measure_window,
             candidates,
             file,
             hunk,
-            len(lines),
+            changed,
             primary_start,
             budget=budget,
             count_tokens=count_tokens,
             render=render,
         )
 
-        initial = min(len(lines), primary_start + previous_size)
+        initial = min(len(changed), primary_start + previous_size)
         if measure(initial):
             best = initial
             step = previous_size
-            while best < len(lines):
-                probe = min(len(lines), best + step)
+            while best < len(changed):
+                probe = min(len(changed), best + step)
                 if measure(probe):
                     best = probe
                     step *= 2
@@ -610,31 +609,15 @@ def _hunk_fragments(
                 else:
                     high = middle - 1
 
-        if best not in candidates:
-            measure(best)
-        sliced = candidates[best]
-        sized = file.model_copy(update={"hunks": [sliced]})
-        if count_tokens(render(sized)) > budget:
-            sliced = _slice_hunk(
-                hunk,
-                primary_start,
-                best,
-                primary=(primary_start, best),
+        if not measure(best):
+            raise ChunkPlanningError(
+                f"one changed row in {file.path} exceeds the {budget}-token diff budget"
             )
-            sized = file.model_copy(update={"hunks": [sliced]})
-            if count_tokens(render(sized)) > budget:
-                raise ChunkPlanningError(
-                    f"one changed row in {file.path} exceeds the {budget}-token diff budget"
-                )
-        if best <= primary_start:
-            best = primary_start + 1
-            if best not in candidates:
-                measure(best)
-            sliced = candidates[best]
+        sliced = candidates[best]
         fragments.append(
             _Fragment(
                 file=file.model_copy(update={"hunks": [sliced]}),
-                spans=[_slice_span(hunk, primary_start, best)],
+                spans=[_slice_span(hunk, changed[primary_start], changed[best - 1] + 1)],
             )
         )
         previous_size = max(1, best - primary_start)
@@ -646,24 +629,36 @@ def _measure_window(
     candidates: dict[int, Hunk],
     file: ChangedFile,
     hunk: Hunk,
-    line_count: int,
+    changed: list[int],
     primary_start: int,
     primary_end: int,
     budget: int,
     count_tokens: Callable[[str], int],
     render: Callable[[ChangedFile], str],
 ) -> bool:
-    window_start = max(0, primary_start - 3)
-    window_end = min(line_count, primary_end + 3)
-    sliced = _slice_hunk(
-        hunk,
-        window_start,
-        window_end,
-        primary=(primary_start, primary_end),
-    )
-    candidates[primary_end] = sliced
-    sized = file.model_copy(update={"hunks": [sliced]})
-    return count_tokens(render(sized)) <= budget
+    start, end = changed[primary_start], changed[primary_end - 1] + 1
+    primary = (start, end)
+
+    def fits(window_start: int, window_end: int) -> bool:
+        sliced = _slice_hunk(hunk, window_start, window_end, primary=primary)
+        if count_tokens(render(file.model_copy(update={"hunks": [sliced]}))) > budget:
+            return False
+        candidates[primary_end] = sliced
+        return True
+
+    if not fits(start, end):
+        return False
+
+    lines = hunk.content.splitlines()
+    for _ in range(3):
+        if start == 0 or lines[start - 1].startswith(("+", "-")) or not fits(start - 1, end):
+            break
+        start -= 1
+    for _ in range(3):
+        if end == len(lines) or lines[end].startswith(("+", "-")) or not fits(start, end + 1):
+            break
+        end += 1
+    return True
 
 
 def _slice_hunk(

@@ -72,7 +72,14 @@ from roborak.premerge.runner import run_checks, run_opinion
 from roborak.publish.threads import OpenThread
 from roborak.rules.loader import load_rules, load_rules_at_ref
 from roborak.rules.matcher import matching_rules, rules_for_prompt
-from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore
+from roborak.state.store import (
+    ChunkResult,
+    CompatibilityEvidence,
+    RequirementEvidence,
+    ReviewCheckpoint,
+    StateStore,
+    StateWriteError,
+)
 from roborak.supply.prompt import for_prompt as supply_chain_for_prompt
 
 log = logging.getLogger(__name__)
@@ -610,6 +617,7 @@ class Reviewer:
             }
             return bool(identities) and identities <= checkpoint.completed.keys()
 
+        checkpoint_write_error: str | None = None
         for unit in selected:
             index = plan.units.index(unit) + 1
             piece = unit.changeset
@@ -642,21 +650,25 @@ class Reviewer:
                 if omitted:
                     detail = "context budget omitted " + ", ".join(sorted(omitted))
                     checkpoint.failed[unit.identity] = detail
-                    self._save_checkpoint(checkpoint)
+                    checkpoint_write_error = self._save_checkpoint(checkpoint)
                     continue
                 checkpoint.completed[unit.identity] = ChunkResult(
-                    findings=[finding.model_dump(mode="json") for finding in chunk_findings],
-                    requirements=chunk_requirements,
-                    compatibility=chunk_compatibility,
+                    findings=chunk_findings,
+                    requirements=[
+                        RequirementEvidence.model_validate(item) for item in chunk_requirements
+                    ],
+                    compatibility=[
+                        CompatibilityEvidence.model_validate(item) for item in chunk_compatibility
+                    ],
                 )
                 checkpoint.failed.pop(unit.identity, None)
-                self._save_checkpoint(checkpoint)
+                checkpoint_write_error = self._save_checkpoint(checkpoint)
             except (LLMError, ParseError) as exc:
                 log.error("pass %d of %d failed: %s", index, len(plan.units), exc)
                 result.status = ReviewStatus.PARTIAL
                 result.errors.append(f"review pass {index} of {len(plan.units)} failed: {exc}")
                 checkpoint.failed[unit.identity] = str(exc)
-                self._save_checkpoint(checkpoint)
+                checkpoint_write_error = self._save_checkpoint(checkpoint)
 
         findings: list[Finding] = []
         requirement_evidence: list[dict[str, str]] = []
@@ -665,13 +677,13 @@ class Reviewer:
             cached_result = checkpoint.completed.get(unit.identity)
             if cached_result is None:
                 continue
-            for raw in cached_result.findings:
-                try:
-                    findings.append(Finding.model_validate(raw))
-                except ValueError:
-                    log.warning("discarding an invalid cached finding from %s", unit.identity)
-            requirement_evidence.extend(cached_result.requirements)
-            compatibility_evidence.extend(cached_result.compatibility)
+            findings.extend(cached_result.findings)
+            requirement_evidence.extend(
+                item.model_dump(mode="json") for item in cached_result.requirements
+            )
+            compatibility_evidence.extend(
+                item.model_dump(mode="json") for item in cached_result.compatibility
+            )
 
         completed = set(checkpoint.completed)
         for item in plan.review.ranges:
@@ -698,12 +710,25 @@ class Reviewer:
         remaining = len(plan.units) - len(completed)
         if remaining:
             result.status = ReviewStatus.PARTIAL
-            result.errors.append(
-                f"{len(completed)} passes completed, {remaining} remain; "
-                "rerun to continue automatically"
-            )
+            if checkpoint_write_error is None:
+                result.errors.append(
+                    f"{len(completed)} passes completed, {remaining} remain; "
+                    "rerun to continue automatically"
+                )
+            else:
+                result.errors.append(
+                    f"{len(completed)} passes completed, {remaining} remain; "
+                    "rerun may repeat completed passes because the checkpoint was not saved"
+                )
         if not completed and checkpoint.failed:
             result.status = ReviewStatus.FAILED
+        if checkpoint_write_error is not None:
+            if result.status is ReviewStatus.COMPLETE:
+                result.status = ReviewStatus.PARTIAL
+            result.errors.append(
+                f"checkpoint persistence failed: {checkpoint_write_error}; "
+                "this run's completed passes may be repeated"
+            )
         reviewed_contracts = [
             contract for contract in plan.contracts if path_complete(contract.path)
         ]
@@ -733,9 +758,14 @@ class Reviewer:
                 result.errors.append(f"reconciliation failed: {exc}")
         return findings
 
-    def _save_checkpoint(self, checkpoint: ReviewCheckpoint) -> None:
+    def _save_checkpoint(self, checkpoint: ReviewCheckpoint) -> str | None:
         if self.checkpoint_store is not None and self.checkpoint_key:
-            self.checkpoint_store.save_checkpoint(self.checkpoint_key, checkpoint)
+            try:
+                self.checkpoint_store.save_checkpoint(self.checkpoint_key, checkpoint)
+            except StateWriteError as exc:
+                log.error("%s", exc)
+                return str(exc)
+        return None
 
     def _checkpoint_signature(
         self,

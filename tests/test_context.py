@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from difflib import unified_diff
 from pathlib import Path
 
 import pytest
@@ -380,6 +381,39 @@ def test_overlapping_windows_count_each_changed_line_as_primary_once() -> None:
     assert all(count(render(piece.files[0])) <= 30 for piece in plan.chunks)
 
 
+def test_oversized_context_rows_are_omitted_from_changed_windows(tmp_path: Path) -> None:
+    old = tmp_path / "old.py"
+    new = tmp_path / "new.py"
+    context = "x" * 1000
+    old.write_text(f"{context}\nold_one\nkeep\n{context}\nold_two\n{context}\n")
+    new.write_text(f"{context}\nnew_one\nkeep\n{context}\nnew_two\n{context}\n")
+    diff = "diff --git a/huge.py b/huge.py\n" + "".join(
+        unified_diff(
+            old.read_text().splitlines(keepends=True),
+            new.read_text().splitlines(keepends=True),
+            fromfile="a/huge.py",
+            tofile="b/huge.py",
+            n=10,
+        )
+    )
+    original = parse_diff(diff)[0]
+
+    plan = plan_chunks(ChangeSet(files=[original]), 10, count, render)
+    windows = [file for piece in plan.chunks for file in piece.files]
+
+    assert windows
+    assert all(count(render(file)) <= 10 for file in windows)
+    assert all(context not in render(file) for file in windows)
+    assert any(" keep" in render(file) for file in windows)
+    assert {line for file in windows for line in file.added_lines} == original.added_lines
+    assert sum(len(file.added_lines) for file in windows) == len(original.added_lines)
+    assert all(
+        file.diff_position(line) == original.diff_position(line)
+        for file in windows
+        for line in file.added_lines
+    )
+
+
 def test_a_primary_row_that_cannot_fit_fails_planning() -> None:
     changeset = ChangeSet(files=[make_text_file("huge.py", "x" * 1000)])
 
@@ -622,6 +656,143 @@ def test_chunk_checkpoints_preserve_legacy_finding_state(tmp_path: Path) -> None
     assert store.get("github:github.com:a/b#1").fingerprints == {"abc123"}
     assert "unit" in store.get_checkpoint("github:github.com:a/b#1", "sig").completed
     assert not store.get_checkpoint("github:github.com:a/b#1", "changed").completed
+
+
+def test_stale_checkpoint_writers_merge_units_and_completed_wins(tmp_path: Path) -> None:
+    from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore
+
+    store = StateStore(tmp_path)
+    first = ReviewCheckpoint(
+        signature="sig",
+        completed={"unit-a": ChunkResult()},
+        failed={"unit-b": "first failure"},
+    )
+    stale = ReviewCheckpoint(
+        signature="sig",
+        completed={"unit-b": ChunkResult()},
+        failed={"unit-a": "stale failure", "unit-c": "current failure"},
+    )
+
+    store.save_checkpoint("local:test", first)
+    store.save_checkpoint("local:test", stale)
+
+    merged = store.get_checkpoint("local:test", "sig")
+    assert set(merged.completed) == {"unit-a", "unit-b"}
+    assert merged.failed == {"unit-c": "current failure"}
+    assert set(stale.completed) == {"unit-a", "unit-b"}
+
+
+def test_checkpoint_with_a_new_signature_replaces_old_units(tmp_path: Path) -> None:
+    from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore
+
+    store = StateStore(tmp_path)
+    store.save_checkpoint(
+        "local:test",
+        ReviewCheckpoint(signature="old", completed={"old-unit": ChunkResult()}),
+    )
+    store.save_checkpoint(
+        "local:test",
+        ReviewCheckpoint(signature="new", completed={"new-unit": ChunkResult()}),
+    )
+
+    checkpoint = store.get_checkpoint("local:test", "new")
+    assert set(checkpoint.completed) == {"new-unit"}
+
+
+def test_chunk_checkpoints_reject_invalid_cached_evidence(tmp_path: Path) -> None:
+    import json
+
+    from roborak.state.store import StateStore
+
+    state = tmp_path / ".roborak" / "state.json"
+    state.parent.mkdir()
+    state.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "checkpoints": {
+                    "local:test": {
+                        "signature": "sig",
+                        "completed": {
+                            "unit": {
+                                "findings": [],
+                                "requirements": [
+                                    {
+                                        "requirement": "Rate limit requests",
+                                        "file": "api.py",
+                                        "evidence": {"untrusted": "nested value"},
+                                    }
+                                ],
+                                "compatibility": [],
+                            }
+                        },
+                        "failed": {},
+                    }
+                },
+            }
+        )
+    )
+
+    checkpoint = StateStore(tmp_path).get_checkpoint("local:test", "sig")
+
+    assert checkpoint.signature == "sig"
+    assert checkpoint.completed == {}
+
+
+def test_checkpoint_write_errors_are_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from roborak.state.store import ChunkResult, ReviewCheckpoint, StateStore, StateWriteError
+
+    def fail_replace(*_args: object, **_kwargs: object) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(StateWriteError, match="disk full"):
+        StateStore(tmp_path).save_checkpoint(
+            "local:test",
+            ReviewCheckpoint(signature="sig", completed={"unit": ChunkResult()}),
+        )
+
+
+def test_checkpoint_write_failure_reports_that_completed_work_will_repeat(tmp_path: Path) -> None:
+    from roborak.analysis.reviewer import Reviewer
+    from roborak.core.models import ReviewResult, ReviewStatus
+    from roborak.llm.client import LLMResponse
+    from roborak.state.store import ReviewCheckpoint, StateStore, StateWriteError
+    from tests.test_pipeline import StubLLM, uninvestigated
+
+    config = uninvestigated()
+    config.review.max_chunks = 1
+    prompts: list[str] = []
+
+    class Recording(StubLLM):
+        def complete(self, system: str, user: str) -> LLMResponse:
+            prompts.append(user)
+            return LLMResponse(text="findings: []", model="stub")
+
+    class FailingStore(StateStore):
+        def save_checkpoint(self, key: str, checkpoint: ReviewCheckpoint) -> None:
+            raise StateWriteError("disk full")
+
+    def run() -> ReviewResult:
+        return Reviewer(
+            config=config,
+            repo=tmp_path,
+            llm=Recording(reply="", context_budget=140),
+            checkpoint_store=FailingStore(tmp_path),
+            checkpoint_key="local:test",
+        ).review(ChangeSet(files=[make_file("pkg/a.py", 30), make_file("pkg/b.py", 30)]))
+
+    first = run()
+    run()
+
+    assert first.status is ReviewStatus.PARTIAL
+    assert any("checkpoint persistence failed" in error for error in first.errors)
+    assert any("may repeat completed passes" in error for error in first.errors)
+    assert not any("continue automatically" in error for error in first.errors)
+    assert "pkg/a.py" in prompts[0] and "pkg/a.py" in prompts[1]
 
 
 def test_an_empty_changeset_yields_no_chunks():

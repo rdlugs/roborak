@@ -11,9 +11,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+from filelock import FileLock
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from roborak.core.models import ChangeSet, Finding
 
@@ -21,7 +27,12 @@ log = logging.getLogger(__name__)
 
 STATE_DIR = ".roborak"
 STATE_FILE = "state.json"
+STATE_LOCK_FILE = "state.lock"
 SCHEMA_VERSION = 1
+
+
+class StateWriteError(RuntimeError):
+    """The local review state could not be persisted atomically."""
 
 
 @dataclass
@@ -59,72 +70,57 @@ class ReviewRecord:
         )
 
 
-@dataclass
-class ChunkResult:
+class RequirementEvidence(BaseModel):
+    """Validated requirement evidence persisted between review runs."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    requirement: str = Field(min_length=1, max_length=300)
+    file: str = Field(max_length=1024)
+    evidence: str = Field(min_length=1, max_length=300)
+
+
+class CompatibilityEvidence(BaseModel):
+    """Validated compatibility evidence persisted between review runs."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    contract: str = Field(min_length=1, max_length=300)
+    contract_file: str
+    file: str = Field(max_length=1024)
+    status: str = Field(min_length=1, max_length=300)
+    evidence: str = Field(min_length=1, max_length=300)
+
+
+class ChunkResult(BaseModel):
     """The reusable output of one successful primary review unit."""
 
-    findings: list[dict[str, object]] = field(default_factory=list)
-    requirements: list[dict[str, str]] = field(default_factory=list)
-    compatibility: list[dict[str, str]] = field(default_factory=list)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    def to_json(self) -> dict[str, object]:
-        return {
-            "findings": self.findings,
-            "requirements": self.requirements,
-            "compatibility": self.compatibility,
-        }
-
-    @classmethod
-    def from_json(cls, data: object) -> ChunkResult | None:
-        if not isinstance(data, dict):
-            return None
-        findings = data.get("findings")
-        requirements = data.get("requirements")
-        compatibility = data.get("compatibility")
-        if not isinstance(findings, list):
-            return None
-        requirement_items = requirements if isinstance(requirements, list) else []
-        compatibility_items = compatibility if isinstance(compatibility, list) else []
-        return cls(
-            findings=[item for item in findings if isinstance(item, dict)],
-            requirements=[item for item in requirement_items if isinstance(item, dict)],
-            compatibility=[item for item in compatibility_items if isinstance(item, dict)],
-        )
+    findings: list[Finding] = Field(default_factory=list)
+    requirements: list[RequirementEvidence] = Field(default_factory=list)
+    compatibility: list[CompatibilityEvidence] = Field(default_factory=list)
 
 
-@dataclass
-class ReviewCheckpoint:
+class ReviewCheckpoint(BaseModel):
     """Progress for one exact review plan, saved after every model pass."""
 
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     signature: str
-    completed: dict[str, ChunkResult] = field(default_factory=dict)
-    failed: dict[str, str] = field(default_factory=dict)
+    completed: dict[str, ChunkResult] = Field(default_factory=dict)
+    failed: dict[str, str] = Field(default_factory=dict)
 
     def to_json(self) -> dict[str, object]:
-        return {
-            "signature": self.signature,
-            "completed": {key: value.to_json() for key, value in self.completed.items()},
-            "failed": self.failed,
-        }
+        return self.model_dump(mode="json")
 
     @classmethod
     def from_json(cls, data: object, signature: str) -> ReviewCheckpoint:
-        if not isinstance(data, dict) or data.get("signature") != signature:
+        try:
+            checkpoint = cls.model_validate(data)
+        except ValidationError:
             return cls(signature=signature)
-        raw_completed = data.get("completed")
-        completed: dict[str, ChunkResult] = {}
-        if isinstance(raw_completed, dict):
-            for key, value in raw_completed.items():
-                parsed = ChunkResult.from_json(value)
-                if isinstance(key, str) and parsed is not None:
-                    completed[key] = parsed
-        raw_failed = data.get("failed")
-        failed = (
-            {str(key): str(value) for key, value in raw_failed.items()}
-            if isinstance(raw_failed, dict)
-            else {}
-        )
-        return cls(signature=signature, completed=completed, failed=failed)
+        return checkpoint if checkpoint.signature == signature else cls(signature=signature)
 
 
 @dataclass
@@ -134,6 +130,10 @@ class StateStore:
     @property
     def path(self) -> Path:
         return self.repo / STATE_DIR / STATE_FILE
+
+    @property
+    def lock_path(self) -> Path:
+        return self.repo / STATE_DIR / STATE_LOCK_FILE
 
     def _load_all(self) -> dict[str, object]:
         if not self.path.is_file():
@@ -158,13 +158,21 @@ class StateStore:
         return ReviewCheckpoint.from_json(entry, signature)
 
     def save_checkpoint(self, key: str, checkpoint: ReviewCheckpoint) -> None:
-        data = self._load_all()
-        checkpoints = data.setdefault("checkpoints", {})
-        if not isinstance(checkpoints, dict):
-            checkpoints = {}
-            data["checkpoints"] = checkpoints
-        checkpoints[key] = checkpoint.to_json()
-        self._save(data)
+        with self._lock():
+            data = self._load_all()
+            checkpoints = data.setdefault("checkpoints", {})
+            if not isinstance(checkpoints, dict):
+                checkpoints = {}
+                data["checkpoints"] = checkpoints
+            stored = checkpoints.get(key)
+            if isinstance(stored, dict) and stored.get("signature") == checkpoint.signature:
+                previous = ReviewCheckpoint.from_json(stored, checkpoint.signature)
+                checkpoint.completed = {**previous.completed, **checkpoint.completed}
+                checkpoint.failed = {**previous.failed, **checkpoint.failed}
+            for identity in checkpoint.completed:
+                checkpoint.failed.pop(identity, None)
+            checkpoints[key] = checkpoint.to_json()
+            self._save(data)
 
     def record(
         self,
@@ -176,56 +184,85 @@ class StateStore:
         walkthrough: dict[str, object] | None = None,
     ) -> None:
         """Add this run's findings to what we have already said about ``key``."""
-        data = self._load_all()
-        reviews = data.setdefault("reviews", {})
-        if not isinstance(reviews, dict):
-            reviews = {}
-            data["reviews"] = reviews
+        with self._lock():
+            data = self._load_all()
+            reviews = data.setdefault("reviews", {})
+            if not isinstance(reviews, dict):
+                reviews = {}
+                data["reviews"] = reviews
 
-        record = self.get(key)
-        record.fingerprints |= {
-            identity
-            for finding in findings
-            for identity in (finding.fingerprint, finding.fingerprint_v2)
-        }
-        record.last_head_sha = head_sha
-        record.last_reviewed_at = datetime.now(UTC).isoformat(timespec="seconds")
-        if flow_digest and flow_digest != record.last_flow_digest:
-            # The cached overview narrates the old shape; it is not reusable now.
-            record.last_flow_digest = flow_digest
-            record.last_walkthrough = None
-        if walkthrough is not None:
-            record.last_walkthrough = walkthrough
-        reviews[key] = record.to_json()
+            stored = reviews.get(key)
+            record = ReviewRecord.from_json(stored) if isinstance(stored, dict) else ReviewRecord()
+            record.fingerprints |= {
+                identity
+                for finding in findings
+                for identity in (finding.fingerprint, finding.fingerprint_v2)
+            }
+            record.last_head_sha = head_sha
+            record.last_reviewed_at = datetime.now(UTC).isoformat(timespec="seconds")
+            if flow_digest and flow_digest != record.last_flow_digest:
+                # The cached overview narrates the old shape; it is not reusable now.
+                record.last_flow_digest = flow_digest
+                record.last_walkthrough = None
+            if walkthrough is not None:
+                record.last_walkthrough = walkthrough
+            reviews[key] = record.to_json()
 
-        self._save(data)
+            self._save(data)
 
     def clear(self, key: str | None = None) -> None:
-        data = self._load_all()
-        reviews = data.get("reviews")
-        checkpoints = data.get("checkpoints")
-        if not isinstance(reviews, dict):
-            reviews = {}
-            data["reviews"] = reviews
-        if not isinstance(checkpoints, dict):
-            checkpoints = {}
-            data["checkpoints"] = checkpoints
-        if key is None:
-            data["reviews"] = {}
-            data["checkpoints"] = {}
-        else:
-            reviews.pop(key, None)
-            checkpoints.pop(key, None)
-        self._save(data)
+        with self._lock():
+            data = self._load_all()
+            reviews = data.get("reviews")
+            checkpoints = data.get("checkpoints")
+            if not isinstance(reviews, dict):
+                reviews = {}
+                data["reviews"] = reviews
+            if not isinstance(checkpoints, dict):
+                checkpoints = {}
+                data["checkpoints"] = checkpoints
+            if key is None:
+                data["reviews"] = {}
+                data["checkpoints"] = {}
+            else:
+                reviews.pop(key, None)
+                checkpoints.pop(key, None)
+            self._save(data)
 
-    def _save(self, data: dict[str, object]) -> None:
+    @contextmanager
+    def _lock(self) -> Iterator[None]:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            with FileLock(self.lock_path):
+                yield
+        except OSError as exc:
+            raise StateWriteError(
+                f"could not lock review state at {self.lock_path}: {exc}"
+            ) from exc
+
+    def _save(self, data: dict[str, object]) -> None:
+        temporary: Path | None = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as output:
+                temporary = Path(output.name)
+                json.dump(data, output, indent=2)
             temporary.replace(self.path)
         except OSError as exc:
-            log.warning("could not save review state: %s", exc)
+            raise StateWriteError(f"could not save review state to {self.path}: {exc}") from exc
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    log.warning("could not remove temporary state file %s", temporary)
 
 
 def review_key(provider: str, host: str, project: str, number: int) -> str:
