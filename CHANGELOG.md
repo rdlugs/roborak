@@ -31,6 +31,14 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   an inconclusive or partial one. A clean, complete run stays compact: the
   run-status line appears only when a run was partial or failed.
 
+### Fixed
+
+- **`--prompt-only` now includes dependency scanner findings.** Scanner-only
+  reviews no longer incorrectly report `No findings.` Supply-chain findings are
+  rendered alongside line-anchored findings without inventing a source line or a
+  committable replacement, and prompt agents to confirm that each dependency issue
+  still applies before acting.
+
 ## [0.9.0] - 2026-09-09
 
 ### Added
