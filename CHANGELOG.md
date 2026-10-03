@@ -12,6 +12,16 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- **The verdict now states how much of the review happened.** Beside the
+  pre-merge verdict, the report says whether the scope was complete or partial
+  (files reviewed out of those changed, with omissions counted by reason and
+  deliberate exclusions named separately), whether verification passed, failed,
+  was skipped, or was never configured, and whether investigation completed,
+  left candidates unresolved, was unavailable, or did not run. The states are
+  decided once in `roborak.core.coverage` from `ReviewResult` and phrased the same
+  way in the terminal report, `--panels`, `--markdown`, and the published summary
+  comment, so a clean review and a partial one cannot be mistaken for each other.
+
 - **Review findings now state the trigger, consequence, and fix.** The review and
   improve prompts ask each finding's body to name the concrete trigger (the input
   or condition that provokes it), the observable consequence, and a practical fix

@@ -113,6 +113,18 @@ class OmissionReason(StrEnum):
     CHUNK_FAILED = "chunk_failed"
 
 
+COVERAGE_LOSS_REASONS = frozenset(
+    {
+        OmissionReason.FORGE_PATCH_UNAVAILABLE,
+        OmissionReason.CONTEXT_LIMIT,
+        OmissionReason.PENDING_QUOTA,
+        OmissionReason.CHUNK_FAILED,
+    }
+)
+"""Omissions that leave the review inconclusive. The rest -- ignored, binary, empty --
+are deliberate or empty-handed, and the review still saw everything there was to see."""
+
+
 class ReviewOmission(BaseModel):
     path: str
     reason: OmissionReason
@@ -1168,12 +1180,7 @@ class ReviewResult(BaseModel):
         )
         if omission not in self.coverage:
             self.coverage.append(omission)
-        if reason in {
-            OmissionReason.FORGE_PATCH_UNAVAILABLE,
-            OmissionReason.CONTEXT_LIMIT,
-            OmissionReason.PENDING_QUOTA,
-            OmissionReason.CHUNK_FAILED,
-        }:
+        if reason in COVERAGE_LOSS_REASONS:
             self.status = ReviewStatus.PARTIAL
             if path not in self.skipped_files:
                 self.skipped_files.append(path)

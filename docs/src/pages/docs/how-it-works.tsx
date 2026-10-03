@@ -127,7 +127,9 @@ export default function HowItWorks() {
       <H2>Two independent reasons a change is blocked</H2>
       <P>
         Every review leads with its verdict, blocking floor, finding counts, completion status,
-        and exit gating, before the walkthrough and findings. The terminal, Markdown report,
+        and exit gating, before the walkthrough and findings. Beside the verdict it states the
+        reviewed and omitted scope, whether verification passed, failed, was skipped, or never ran,
+        and whether investigation completed, left candidates unresolved, or was unavailable. The terminal, Markdown report,
         and published comment carry the same decision. Partial or failed reviews are inconclusive
         and exit with code 2 independently of <Code>--fail-on</Code>.
       </P>
