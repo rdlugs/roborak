@@ -28,8 +28,12 @@ from roborak.core.models import (
     ImpactMap,
     ImpactNode,
     ImpactStatus,
+    InvestigationDecision,
+    InvestigationReport,
+    InvestigationStatus,
     Issue,
     LLMCallUsage,
+    OmissionReason,
     ReviewComment,
     ReviewPlan,
     ReviewPlanFile,
@@ -37,6 +41,9 @@ from roborak.core.models import (
     ReviewResult,
     ReviewRole,
     ReviewStatus,
+    VerificationReport,
+    VerificationRun,
+    VerificationStatus,
     Walkthrough,
 )
 from roborak.core.severity import Category, Effort, Enforcement, Evidence, Kind, Severity
@@ -2086,3 +2093,219 @@ def test_empty_panel_review_still_leads_with_decision() -> None:
     result = ReviewResult(changeset=ChangeSet(), block_on=Severity.CRITICAL)
     text = render_terminal(result)
     assert text.index("pre-merge check: pass") < text.index("No changes to review")
+
+
+# --- coverage beside the verdict --------------------------------------------
+
+
+def _five_file_review() -> ReviewResult:
+    return ReviewResult(
+        block_on=Severity.CRITICAL,
+        changeset=ChangeSet(files=[ChangedFile(path=f"app/{name}.py") for name in "abcde"]),
+    )
+
+
+def _drop(result: ReviewResult, path: str, reason: OmissionReason) -> None:
+    """Omit ``path`` the way `Reviewer._prepare` and `compress` do: out of the files first."""
+    assert result.changeset is not None
+    result.changeset.files = [f for f in result.changeset.files if f.path != path]
+    result.add_omission(path, reason)
+
+
+def _lead(document: str) -> str:
+    """The verdict block: everything before the first folded or opened-out section."""
+    for marker in ("<details", "_`--full`", "_Reviewed by"):
+        if marker in document:
+            document = document[: document.index(marker)]
+    return document
+
+
+@pytest.mark.parametrize("form", list(markdown.Form))
+def test_clean_and_partial_reviews_cannot_be_mistaken_for_each_other(form):
+    from roborak.core.models import OmissionReason
+
+    clean = _lead(markdown.render(_five_file_review(), form=form))
+    partial_result = _five_file_review()
+    _drop(partial_result, "app/d.py", OmissionReason.CONTEXT_LIMIT)
+    partial_result.add_omission("app/e.py", OmissionReason.CHUNK_FAILED)
+    partial = _lead(markdown.render(partial_result, form=form))
+
+    assert "**Scope complete.** 5 changed file(s) reviewed." in clean
+    assert "partial" not in clean.lower()
+    assert "**Scope partial.** 3 of 5 changed file(s) reviewed; 2 omitted" in partial
+    assert "(context limit 1, chunk failed 1)" in partial
+    assert "Scope complete" not in partial
+
+
+def test_coverage_sits_inside_the_published_callout():
+    document = markdown.render(_five_file_review())
+    lead = document[: document.index("<details")] if "<details" in document else document
+    assert "> **Scope complete.**" in lead
+    assert "> **Verification not run.**" in lead
+    assert "> **Investigation not run.**" in lead
+
+
+def test_deliberate_exclusions_are_named_without_making_the_scope_partial():
+    from roborak.core.models import OmissionReason
+
+    result = _five_file_review()
+    _drop(result, "app/a.py", OmissionReason.BINARY)
+    lead = _lead(markdown.render(result)).replace("> ", "")
+    assert "**Scope complete.** 4 of 5 changed file(s) reviewed. 1 excluded by design" in lead
+    assert "(binary 1)." in lead
+
+
+def _verification(status: VerificationStatus | None) -> VerificationReport | None:
+    if status is None:
+        return None
+    return VerificationReport(
+        runs=[VerificationRun(name="tests", command=["pytest"], status=status)]
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "sentence"),
+    [
+        (VerificationStatus.PASSED, "**Verification passed.** 1 check(s) ran."),
+        (VerificationStatus.FAILED, "**Verification failed.**"),
+        (VerificationStatus.SKIPPED, "**Verification skipped.** Nothing ran"),
+        (None, "**Verification not run.** Not configured or switched off"),
+    ],
+)
+def test_verification_states_are_distinct_beside_the_verdict(status, sentence):
+    result = _five_file_review()
+    result.verification = _verification(status)
+    lead = _lead(markdown.render(result, form=markdown.Form.TERMINAL))
+    assert sentence in lead
+    others = {"passed", "failed", "skipped", "not run"} - {
+        "not run" if status is None else status.value
+    }
+    for other in others:
+        assert f"**Verification {other}.**" not in lead
+
+
+@pytest.mark.parametrize(
+    ("report", "sentence"),
+    [
+        (
+            InvestigationReport(status=InvestigationStatus.UNAVAILABLE, candidates=2),
+            "**Investigation unavailable.** The checkout is not the reviewed change",
+        ),
+        (
+            InvestigationReport(
+                status=InvestigationStatus.COMPLETED,
+                candidates=2,
+                decisions=[
+                    InvestigationDecision(candidate="1", disposition="confirm"),
+                    InvestigationDecision(candidate="2"),
+                ],
+            ),
+            "**Investigation completed with unresolved candidates.** 1 of 2 candidate(s) "
+            "left unverified",
+        ),
+        (
+            InvestigationReport(
+                status=InvestigationStatus.COMPLETED,
+                candidates=1,
+                decisions=[InvestigationDecision(candidate="1", disposition="drop")],
+            ),
+            "**Investigation completed.** 1 candidate(s) settled.",
+        ),
+        (
+            InvestigationReport(status=InvestigationStatus.SKIPPED),
+            "**Investigation had nothing to settle.**",
+        ),
+        (None, "**Investigation not run.**"),
+    ],
+)
+def test_investigation_states_are_distinct_beside_the_verdict(report, sentence):
+    result = _five_file_review()
+    result.investigation = report
+    lead = _lead(markdown.render(result, form=markdown.Form.TERMINAL))
+    assert sentence in lead
+
+
+def test_pointers_only_name_sections_that_render():
+    result = _five_file_review()
+    result.verification = VerificationReport()
+    lead = _lead(markdown.render(result, form=markdown.Form.TERMINAL))
+    assert (
+        "**Verification skipped.** Nothing ran, so nothing here was checked by execution." in lead
+    )
+    assert "execution. Details below." not in lead
+
+
+def test_the_terminal_coverage_carries_no_markup_rich_would_drop():
+    from roborak.core.models import OmissionReason
+
+    result = _five_file_review()
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
+    section = markdown._pre_merge_check(result, form=markdown.Form.TERMINAL)
+    assert "<" not in section
+    assert "Scope partial." in section
+
+
+def test_the_panel_view_states_the_same_coverage():
+    from roborak.core.models import OmissionReason
+
+    result = _five_file_review()
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
+    result.verification = _verification(VerificationStatus.FAILED)
+    result.investigation = InvestigationReport(status=InvestigationStatus.UNAVAILABLE)
+    text = render_terminal(result, width=200)
+    assert "Scope partial. 4 of 5 changed file(s) reviewed; 1 omitted" in text
+    assert "Verification failed." in text
+    assert "Investigation unavailable." in text
+    assert "**" not in text
+    assert text.index("Scope partial.") < text.index("reviewed by roborak")
+
+
+def test_the_panel_view_promises_no_detail_it_does_not_render():
+    """Its footer lists a few paths and no reasons, so nothing may point below."""
+    result = _five_file_review()
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
+    result.verification = _verification(VerificationStatus.FAILED)
+    result.investigation = InvestigationReport(status=InvestigationStatus.UNAVAILABLE)
+    text = render_terminal(result, width=200)
+    assert "listed below" not in text
+    assert "Details below" not in text
+
+    document = markdown.render(result, form=markdown.Form.TERMINAL)
+    assert "Paths and reasons are listed below." in document
+    assert "Details below." in document
+
+
+@pytest.mark.parametrize("form", list(markdown.Form))
+def test_a_file_removed_before_the_prompt_stays_in_the_denominator(form):
+    result = ReviewResult(
+        block_on=Severity.CRITICAL,
+        changeset=ChangeSet(files=[ChangedFile(path=f"app/{name}.py") for name in "abc"]),
+    )
+    _drop(result, "app/c.py", OmissionReason.CONTEXT_LIMIT)
+    lead = _lead(markdown.render(result, form=form))
+    assert "2 of 3 changed file(s) reviewed; 1 omitted (context limit 1)" in lead
+
+
+@pytest.mark.parametrize(
+    ("status", "errors"),
+    [(ReviewStatus.FAILED, []), (ReviewStatus.COMPLETE, ["the model timed out"])],
+)
+def test_a_failed_review_never_claims_complete_scope(status, errors):
+    result = _five_file_review()
+    result.status = status
+    result.errors = errors
+    lead = _lead(markdown.render(result, form=markdown.Form.TERMINAL))
+    assert "Scope complete" not in lead
+    assert "**Scope incomplete.** The review failed before it finished" in lead
+    assert "Run: failed." in lead
+
+
+def test_a_change_whose_every_file_was_filtered_still_states_its_scope():
+    result = ReviewResult(
+        block_on=Severity.CRITICAL,
+        changeset=ChangeSet(files=[ChangedFile(path=f"app/{name}.png") for name in "ab"]),
+    )
+    _drop(result, "app/a.png", OmissionReason.BINARY)
+    _drop(result, "app/b.png", OmissionReason.BINARY)
+    section = markdown._pre_merge_check(result, form=markdown.Form.TERMINAL)
+    assert "**Scope complete.** 0 of 2 changed file(s) reviewed. 2 excluded by design" in section

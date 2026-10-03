@@ -44,6 +44,7 @@ from roborak.core.buckets import (
     by_file,
     group,
 )
+from roborak.core.coverage import Coverage, coverage_for
 from roborak.core.icons import CATEGORY_LABEL, EFFORT_LABEL, SEVERITY_ICON, SEVERITY_LABEL
 from roborak.core.models import (
     CheckId,
@@ -57,6 +58,7 @@ from roborak.core.models import (
     ImpactStatus,
     InvestigationReport,
     InvestigationStatus,
+    OmissionReason,
     ReviewRange,
     ReviewResult,
     ReviewStatus,
@@ -1259,11 +1261,10 @@ def _pre_merge_check(result: ReviewResult, *, form: Form) -> str:
     floor_source = "`--fail-on`" if gate.explicit else "`review.block_on`"
     lines.append(f"Judged against **{gate.floor}** and above, from {floor_source}.")
     lines.append(f"Findings: {gate.counts_line()}.")
+    lines += _coverage_notes(result, strong=_bold)
     if note := _completion_note(result, tt=_as_code):
         lines.append(note)
     lines.append(_exit_gate_note(gate, tt=_as_code))
-    if note := _verification_verdict_note(result.verification):
-        lines.append(note)
     if note := _checks_verdict_note(gate, result.checks):
         lines.append(note)
     body = "\n\n".join(lines)
@@ -1333,28 +1334,154 @@ def _checks_verdict_note(gate: Gate, report: ChecksReport | None) -> str:
     return "\n\n".join(notes)
 
 
-def _verification_verdict_note(report: VerificationReport | None) -> str:
-    """One line beside the verdict when the tests disagree with it.
+def _coverage_notes(
+    result: ReviewResult, *, strong: Callable[[str], str] = str, pointers: bool = True
+) -> list[str]:
+    """How much of the review happened, one sentence per stage, beside the verdict.
 
-    The verdict is a statement about findings and stays one -- a failing suite
-    does not move it, and does not move the exit code either. But "pass" printed
-    directly above a red test run is a sentence a reader will take as covering
-    both, so the block says which of the two it is not talking about.
+    A finding count reads as a clean bill of health unless the block that states it
+    also says what was not read, not run, or not settled. ``core.coverage`` decides
+    each state; this only phrases it. Detailed sections fold on the forge and have
+    no stable anchors, so the sentences point below rather than link, and only when
+    the section they point at is actually rendered. ``strong`` bolds the stage label
+    for Markdown and is identity for the terminal. ``pointers=False`` is for the panel
+    view, which has no section below listing the paths, reasons or stage details.
     """
-    if report is None:
-        return ""
-    if report.status is VerificationStatus.FAILED:
-        return "**Verification failed.** This verdict counts findings, not test results."
-    if report.status is VerificationStatus.TIMED_OUT:
-        return "**Verification timed out.** This verdict counts findings, not test results."
-    if report.status is VerificationStatus.ERRORED:
-        return (
-            "**Verification could not complete.** The selected checks never ran, so nothing "
-            "here was checked by execution."
+    coverage = coverage_for(result)
+    notes = []
+    if note := _scope_note(coverage, strong, pointers=pointers):
+        notes.append(note)
+    report = result.verification
+    notes.append(
+        _verification_note(
+            coverage,
+            strong,
+            detailed=pointers and report is not None and bool(report.runs or report.notes),
         )
-    if report.status is VerificationStatus.PASSED:
+    )
+    notes.append(_investigation_note(coverage, strong, detailed=pointers))
+    return notes
+
+
+def _reason_counts(counts: Iterable[tuple[OmissionReason | None, int]]) -> str:
+    """``skipped_files`` carries no reason; the compressor's context budget is what fills it."""
+    return ", ".join(
+        f"{reason.value.replace('_', ' ') if reason else 'context budget'} {count}"
+        for reason, count in counts
+    )
+
+
+def _scope_note(coverage: Coverage, strong: Callable[[str], str], *, pointers: bool) -> str:
+    if not coverage.has_changeset:
         return ""
-    return "_Verification did not run, so nothing here was checked by execution._"
+    excluded = ""
+    if coverage.excluded:
+        reasons = _reason_counts(coverage.excluded.items())
+        excluded = f" {coverage.excluded_files} excluded by design ({reasons})."
+    reviewed = (
+        f"{coverage.reviewed_files} changed file(s) reviewed"
+        if coverage.reviewed_files == coverage.changed_files
+        else f"{coverage.reviewed_files} of {coverage.changed_files} changed file(s) reviewed"
+    )
+    if not coverage.incomplete:
+        return f"{strong('Scope complete.')} {reviewed}.{excluded}"
+    if not coverage.omitted:
+        if coverage.failed:
+            return (
+                f"{strong('Scope incomplete.')} The review failed before it finished, "
+                "so its silence on the changed files means nothing."
+            )
+        return (
+            f"{strong('Scope partial.')} The run stopped before every pass finished, "
+            "so its silence on the rest means nothing."
+        )
+    see = " Paths and reasons are listed below." if pointers else ""
+    return (
+        f"{strong('Scope partial.')} {reviewed}; {coverage.omitted_files} omitted "
+        f"({_reason_counts(coverage.omitted.items())}).{excluded}{see}"
+    )
+
+
+def _verification_note(coverage: Coverage, strong: Callable[[str], str], *, detailed: bool) -> str:
+    """Whether the tests ran, and what they said, beside a verdict that does not count them.
+
+    The verdict is a statement about findings and stays one -- a failing suite does
+    not move it, and does not move the exit code either. But "pass" printed directly
+    above a red test run is a sentence a reader will take as covering both, so the
+    block says which of the two it is not talking about. ``None`` and ``skipped``
+    are different answers: nobody asked, against asked and nothing ran.
+    """
+    status = coverage.verification
+    see = " Details below." if detailed else ""
+    if status is None:
+        return f"{strong('Verification not run.')} Not configured or switched off for this review."
+    if status is VerificationStatus.PASSED:
+        return f"{strong('Verification passed.')} {coverage.verification_checks} check(s) ran.{see}"
+    if status is VerificationStatus.FAILED:
+        return (
+            f"{strong('Verification failed.')} This verdict counts findings, not test results.{see}"
+        )
+    if status is VerificationStatus.TIMED_OUT:
+        return (
+            f"{strong('Verification timed out.')} This verdict counts findings, "
+            f"not test results.{see}"
+        )
+    if status is VerificationStatus.ERRORED:
+        return (
+            f"{strong('Verification could not complete.')} The selected checks never ran, so "
+            f"nothing here was checked by execution.{see}"
+        )
+    return (
+        f"{strong('Verification skipped.')} Nothing ran, so nothing here was checked by "
+        f"execution.{see}"
+    )
+
+
+def _investigation_note(coverage: Coverage, strong: Callable[[str], str], *, detailed: bool) -> str:
+    """Whether the candidates were checked, kept apart from whether they could be.
+
+    An unavailable investigation and one that ran and left candidates unresolved both
+    leave findings unverified, but only the second looked; a reader deciding how much
+    a finding is worth acts differently on each.
+    """
+    status = coverage.investigation
+    if status is None:
+        return (
+            f"{strong('Investigation not run.')} No candidate was checked against the repository."
+        )
+    if status is InvestigationStatus.SKIPPED:
+        return f"{strong('Investigation had nothing to settle.')} No candidate needed another read."
+    see = " Details below." if detailed else ""
+    if status is InvestigationStatus.UNAVAILABLE:
+        return (
+            f"{strong('Investigation unavailable.')} The checkout is not the reviewed change, "
+            f"so no candidate was checked.{see}"
+        )
+    if status is InvestigationStatus.ERRORED:
+        return (
+            f"{strong('Investigation could not run.')} Candidates stand as reported, "
+            f"unverified.{see}"
+        )
+    label = (
+        "Investigation partial."
+        if status is InvestigationStatus.PARTIAL
+        else (
+            "Investigation completed with unresolved candidates."
+            if coverage.unresolved
+            else "Investigation completed."
+        )
+    )
+    if coverage.unresolved:
+        return (
+            f"{strong(label)} {coverage.unresolved} of {coverage.candidates} candidate(s) "
+            f"left unverified; they stand as reported.{see}"
+        )
+    return f"{strong(label)} {coverage.candidates} candidate(s) settled.{see}"
+
+
+def _bold(text: str) -> str:
+    """Bold a stage label in Markdown. The terminal passes ``str``."""
+    return f"**{text}**"
 
 
 def _signature(*, form: Form) -> str:

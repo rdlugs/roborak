@@ -185,7 +185,10 @@ uv run roborak -q review         # errors only: no stage lines
 ### The pre-merge check
 
 Every review leads with a pre-merge check: the verdict, the severity floor it was judged
-against, finding counts, completion status, and exit gating. It appears before the walkthrough
+against, finding counts, completion status, and exit gating. Beside it, one line each says
+how much of the change was reviewed (and what was omitted, and why), whether verification
+passed, failed, was skipped, or was never configured, and whether investigation completed,
+left candidates unresolved, or could not look. It appears before the walkthrough
 and detailed findings in the terminal, in `--markdown` output, and - because the summary
 comment *is* the report - on the merge request too, on every re-run.
 
