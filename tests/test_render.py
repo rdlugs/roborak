@@ -229,7 +229,7 @@ def test_empty_result_is_still_valid_json():
 
 def test_prompt_only_is_actionable_text():
     text = prompt_only.render(make_result())
-    assert text.startswith("Fix each finding below, starting with the critical ones.")
+    assert text.startswith(prompt_only.AGENT_PREAMBLE)
     assert "Found 1 critical, 1 minor." in text
     assert "1. app/auth.py:11-13" in text
     assert "2. app/util.py:4" in text
@@ -246,10 +246,41 @@ def test_prompt_only_when_clean():
     assert prompt_only.render(ReviewResult()) == "No findings."
 
 
-def test_prompt_only_without_criticals_has_a_calmer_instruction():
+def test_prompt_only_leads_with_the_verify_first_preamble():
     result = make_result()
     result.findings = [result.findings[1]]
-    assert prompt_only.render(result).startswith("Fix each finding below. Line numbers")
+    text = prompt_only.render(result)
+    assert text.startswith(prompt_only.AGENT_PREAMBLE)
+    assert "ordered most severe first" in text
+
+
+def test_prompt_only_surfaces_scanner_only_findings():
+    result = make_result()
+    result.findings = []
+    result.changeset = ChangeSet(files=[])
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+    result.block_on = Severity.MAJOR
+
+    text = prompt_only.render(result)
+    assert text != "No findings."
+    assert text.startswith(prompt_only.AGENT_PREAMBLE)
+    assert "Found 1 major." in text
+    assert "OSV-1 in lodash" in text
+    assert "osv/OSV-1" in text
+    # No invented inline anchor and no committable line-level fix.
+    assert "package-lock.json:1" not in text
+    assert "replace those lines" not in text
+
+
+def test_prompt_only_renders_inline_and_scanner_findings_together():
+    result = make_result()
+    result.supply_chain = _supply_report(scanner_findings=[_osv_finding()])
+
+    text = prompt_only.render(result)
+    assert "1. app/auth.py:11-13" in text
+    assert "fix: replace those lines with:" in text
+    assert "OSV-1 in lodash" in text
+    assert "name a whole asset" in text
 
 
 def test_markdown_structure():

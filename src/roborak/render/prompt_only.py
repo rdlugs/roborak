@@ -12,11 +12,13 @@ from roborak.core.severity import Severity
 
 
 def render(result: ReviewResult) -> str:
-    if not result.findings:
+    inline = result.sorted_findings()
+    scanner = result.supply_chain.scanner_findings if result.supply_chain else []
+    if not inline and not scanner:
         return "No findings."
 
     blocks: list[str] = []
-    for index, finding in enumerate(result.sorted_findings(), start=1):
+    for index, finding in enumerate(inline, start=1):
         lines = [
             f"{index}. {finding.file}:{finding.start_line}"
             + (f"-{finding.end_line}" if finding.end_line != finding.start_line else ""),
@@ -31,13 +33,38 @@ def render(result: ReviewResult) -> str:
 
     counts = result.counts_by_severity
     header = ", ".join(f"{n} {s.value}" for s, n in counts.items() if n)
-    instruction = (
-        "Fix each finding below. Line numbers refer to the current file contents."
-        if not result.has_blocking
-        else "Fix each finding below, starting with the critical ones. "
-        "Line numbers refer to the current file contents."
-    )
-    return f"{instruction}\n\nFound {header}.\n\n" + "\n\n".join(blocks)
+    found = f"Found {header}."
+    if inline:
+        found += " The findings below are ordered most severe first."
+
+    sections = [AGENT_PREAMBLE, found]
+    if blocks:
+        sections.append("\n\n".join(blocks))
+    if scanner:
+        sections.append(_scanner_block(scanner))
+    return "\n\n".join(sections)
+
+
+def _scanner_block(findings: list[Finding]) -> str:
+    """Scanner facts have a file but deliberately no invented line anchor.
+
+    They name a whole asset, not a line, so there is nothing to "replace"; the
+    agent confirms each against the current dependencies rather than editing a
+    reported span.
+    """
+    lines = [
+        "Scanner findings below name a whole asset, not a line, and have no "
+        "committable line-level fix. Confirm each still applies to the current "
+        "dependencies before acting."
+    ]
+    for finding in findings:
+        identifier = f" [{finding.rule_id}]" if finding.rule_id else ""
+        lines.append(
+            f"- {finding.file}: {finding.severity.value} "
+            f"({finding.category.value}) {finding.title}{identifier}"
+        )
+        lines.append(f"  detail: {_flatten(finding.body)}")
+    return "\n".join(lines)
 
 
 AGENT_PREAMBLE = (
