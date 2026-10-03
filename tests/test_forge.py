@@ -215,6 +215,8 @@ def test_review_progress_is_created_then_reused_and_completed(monkeypatch, provi
     assert writes[0][0] == "POST"
     initial_body = (
         "### 🔎 Review in progress\n\n"
+        f'<img src="{progress.LOADING_GIF_URL}" width="220" height="220" '
+        'alt="Animated loading indicator: the roborak review is still running">\n\n'
         "roborak is reviewing this change. "
         "This comment will be updated when the review is complete.\n\n"
         f'<sub><img src="{LOGO_URL}" width="14" align="top"> <b>roborak</b></sub>'
@@ -227,6 +229,7 @@ def test_review_progress_is_created_then_reused_and_completed(monkeypatch, provi
     assert "review is complete" in writes[1][1]
     assert "https://example.test/summary" in writes[1][1]
     assert "reviewing this change" not in writes[1][1]
+    assert progress.LOADING_GIF_URL not in writes[1][1]
 
     progress.finish(target, "tok", ref, result)
     assert "No findings" in writes[2][1]
@@ -237,6 +240,8 @@ def test_review_progress_is_created_then_reused_and_completed(monkeypatch, provi
     assert writes[-1][1] == initial_body
     progress.finish(target, "tok", ref, None)
     assert "did not complete" in writes[-1][1]
+    assert progress.LOADING_GIF_URL not in writes[-1][1]
+    assert all(body.endswith(progress.MARKER) for _, body in writes)
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab"])

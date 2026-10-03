@@ -14,10 +14,16 @@ from roborak.sources.forge import ForgeClient, Target
 
 MARKER = "<!-- roborak:review-progress -->"
 
+LOADING_GIF_URL = "https://raw.githubusercontent.com/rdlugs/roborak/main/assets/roborak_loading.gif"
+"""Pinned to ``main`` and absolute for the same reasons as ``LOGO_URL``. Only the
+transient body carries it, so ``finish`` replacing the body is what removes it."""
+
 
 def _initial_body() -> str:
     return (
         "### 🔎 Review in progress\n\n"
+        f'<img src="{LOADING_GIF_URL}" width="220" height="220" '
+        'alt="Animated loading indicator: the roborak review is still running">\n\n'
         "roborak is reviewing this change. "
         "This comment will be updated when the review is complete.\n\n"
         f'<sub><img src="{LOGO_URL}" width="14" align="top"> <b>roborak</b></sub>'

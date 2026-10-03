@@ -30,6 +30,11 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
   `--fail-on` or the verdict is advisory, and distinguishes a blocked review from
   an inconclusive or partial one. A clean, complete run stays compact: the
   run-status line appears only when a run was partial or failed.
+- **The review progress comment shows a loading animation.** While a published
+  review runs, the "Review in progress" comment on the pull or merge request
+  carries an animated indicator with descriptive alternative text, so it still
+  reads correctly when images do not load. Reusing the comment for a new review
+  restores it, and the completed or failed outcome replaces it.
 
 ## [0.9.0] - 2026-09-09
 
