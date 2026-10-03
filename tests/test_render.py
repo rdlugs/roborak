@@ -33,6 +33,7 @@ from roborak.core.models import (
     InvestigationStatus,
     Issue,
     LLMCallUsage,
+    OmissionReason,
     ReviewComment,
     ReviewPlan,
     ReviewPlanFile,
@@ -2104,6 +2105,13 @@ def _five_file_review() -> ReviewResult:
     )
 
 
+def _drop(result: ReviewResult, path: str, reason: OmissionReason) -> None:
+    """Omit ``path`` the way `Reviewer._prepare` and `compress` do: out of the files first."""
+    assert result.changeset is not None
+    result.changeset.files = [f for f in result.changeset.files if f.path != path]
+    result.add_omission(path, reason)
+
+
 def _lead(document: str) -> str:
     """The verdict block: everything before the first folded or opened-out section."""
     for marker in ("<details", "_`--full`", "_Reviewed by"):
@@ -2118,7 +2126,7 @@ def test_clean_and_partial_reviews_cannot_be_mistaken_for_each_other(form):
 
     clean = _lead(markdown.render(_five_file_review(), form=form))
     partial_result = _five_file_review()
-    partial_result.add_omission("app/d.py", OmissionReason.CONTEXT_LIMIT)
+    _drop(partial_result, "app/d.py", OmissionReason.CONTEXT_LIMIT)
     partial_result.add_omission("app/e.py", OmissionReason.CHUNK_FAILED)
     partial = _lead(markdown.render(partial_result, form=form))
 
@@ -2141,11 +2149,10 @@ def test_deliberate_exclusions_are_named_without_making_the_scope_partial():
     from roborak.core.models import OmissionReason
 
     result = _five_file_review()
-    result.add_omission("app/a.py", OmissionReason.BINARY)
-    lead = _lead(markdown.render(result))
-    assert "**Scope complete.** 4 changed file(s) reviewed. 1 excluded by design (binary 1)." in (
-        lead.replace("> ", "")
-    )
+    _drop(result, "app/a.py", OmissionReason.BINARY)
+    lead = _lead(markdown.render(result)).replace("> ", "")
+    assert "**Scope complete.** 4 of 5 changed file(s) reviewed. 1 excluded by design" in lead
+    assert "(binary 1)." in lead
 
 
 def _verification(status: VerificationStatus | None) -> VerificationReport | None:
@@ -2232,7 +2239,7 @@ def test_the_terminal_coverage_carries_no_markup_rich_would_drop():
     from roborak.core.models import OmissionReason
 
     result = _five_file_review()
-    result.add_omission("app/e.py", OmissionReason.CONTEXT_LIMIT)
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
     section = markdown._pre_merge_check(result, form=markdown.Form.TERMINAL)
     assert "<" not in section
     assert "Scope partial." in section
@@ -2242,7 +2249,7 @@ def test_the_panel_view_states_the_same_coverage():
     from roborak.core.models import OmissionReason
 
     result = _five_file_review()
-    result.add_omission("app/e.py", OmissionReason.CONTEXT_LIMIT)
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
     result.verification = _verification(VerificationStatus.FAILED)
     result.investigation = InvestigationReport(status=InvestigationStatus.UNAVAILABLE)
     text = render_terminal(result, width=200)
@@ -2251,3 +2258,54 @@ def test_the_panel_view_states_the_same_coverage():
     assert "Investigation unavailable." in text
     assert "**" not in text
     assert text.index("Scope partial.") < text.index("reviewed by roborak")
+
+
+def test_the_panel_view_promises_no_detail_it_does_not_render():
+    """Its footer lists a few paths and no reasons, so nothing may point below."""
+    result = _five_file_review()
+    _drop(result, "app/e.py", OmissionReason.CONTEXT_LIMIT)
+    result.verification = _verification(VerificationStatus.FAILED)
+    result.investigation = InvestigationReport(status=InvestigationStatus.UNAVAILABLE)
+    text = render_terminal(result, width=200)
+    assert "listed below" not in text
+    assert "Details below" not in text
+
+    document = markdown.render(result, form=markdown.Form.TERMINAL)
+    assert "Paths and reasons are listed below." in document
+    assert "Details below." in document
+
+
+@pytest.mark.parametrize("form", list(markdown.Form))
+def test_a_file_removed_before_the_prompt_stays_in_the_denominator(form):
+    result = ReviewResult(
+        block_on=Severity.CRITICAL,
+        changeset=ChangeSet(files=[ChangedFile(path=f"app/{name}.py") for name in "abc"]),
+    )
+    _drop(result, "app/c.py", OmissionReason.CONTEXT_LIMIT)
+    lead = _lead(markdown.render(result, form=form))
+    assert "2 of 3 changed file(s) reviewed; 1 omitted (context limit 1)" in lead
+
+
+@pytest.mark.parametrize(
+    ("status", "errors"),
+    [(ReviewStatus.FAILED, []), (ReviewStatus.COMPLETE, ["the model timed out"])],
+)
+def test_a_failed_review_never_claims_complete_scope(status, errors):
+    result = _five_file_review()
+    result.status = status
+    result.errors = errors
+    lead = _lead(markdown.render(result, form=markdown.Form.TERMINAL))
+    assert "Scope complete" not in lead
+    assert "**Scope incomplete.** The review failed before it finished" in lead
+    assert "Run: failed." in lead
+
+
+def test_a_change_whose_every_file_was_filtered_still_states_its_scope():
+    result = ReviewResult(
+        block_on=Severity.CRITICAL,
+        changeset=ChangeSet(files=[ChangedFile(path=f"app/{name}.png") for name in "ab"]),
+    )
+    _drop(result, "app/a.png", OmissionReason.BINARY)
+    _drop(result, "app/b.png", OmissionReason.BINARY)
+    section = markdown._pre_merge_check(result, form=markdown.Form.TERMINAL)
+    assert "**Scope complete.** 0 of 2 changed file(s) reviewed. 2 excluded by design" in section

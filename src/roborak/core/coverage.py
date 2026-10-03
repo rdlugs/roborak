@@ -32,15 +32,23 @@ class Coverage:
     """
 
     changed_files: int = 0
+    """Every changed file roborak knew about, including the ones filtering and the
+    context budget removed from ``changeset.files`` before the prompt was built."""
+
     reviewed_files: int = 0
     omitted: dict[OmissionReason | None, int] = field(default_factory=dict)
     """Files the review did not read, at a cost to coverage, by reason. ``None``
-    counts files only known through ``skipped_files``, which carries no reason."""
+    counts files only known through ``skipped_files`` or ``omitted_files``, which
+    carry no reason."""
 
     excluded: dict[OmissionReason, int] = field(default_factory=dict)
     """Files left out by design -- ignored, binary, empty -- by reason."""
 
-    partial: bool = False
+    incomplete: bool = False
+    """The same condition ``core.verdict.gate_for`` reads as inconclusive, plus any
+    omission that cost coverage, so "complete" never sits beside a failed run."""
+
+    failed: bool = False
     has_changeset: bool = False
 
     verification: VerificationStatus | None = None
@@ -67,7 +75,10 @@ def coverage_for(result: ReviewResult) -> Coverage:
         if item.reason in COVERAGE_LOSS_REASONS and item.path not in omitted_paths:
             omitted_paths.add(item.path)
             omitted[item.reason] = omitted.get(item.reason, 0) + 1
-    for path in result.skipped_files:
+    unreasoned = [*result.skipped_files]
+    if result.changeset is not None:
+        unreasoned += result.changeset.omitted_files
+    for path in unreasoned:
         if path not in omitted_paths:
             omitted_paths.add(path)
             omitted[None] = omitted.get(None, 0) + 1
@@ -80,20 +91,29 @@ def coverage_for(result: ReviewResult) -> Coverage:
         excluded_paths.add(item.path)
         excluded[item.reason] = excluded.get(item.reason, 0) + 1
 
+    # Filtering and compression remove files from `changeset.files` as they record
+    # them, so the denominator is every path any of them mentions, not what is left.
     changeset = result.changeset
-    paths = [file.path for file in changeset.files] if changeset is not None else []
+    present = [file.path for file in changeset.files] if changeset is not None else []
+    known = set(present) | omitted_paths | excluded_paths
     skipped = omitted_paths | excluded_paths
-    reviewed = sum(1 for path in paths if path not in skipped)
+    reviewed = sum(1 for path in present if path not in skipped)
 
     verification = result.verification
     investigation = result.investigation
     return Coverage(
-        changed_files=len(paths),
+        changed_files=len(known),
         reviewed_files=reviewed,
         omitted=omitted,
         excluded=excluded,
-        partial=result.status is ReviewStatus.PARTIAL or bool(omitted),
-        has_changeset=changeset is not None and not changeset.is_empty,
+        incomplete=(
+            result.status is not ReviewStatus.COMPLETE or bool(result.errors) or bool(omitted)
+        ),
+        # Mirrors `render.markdown._completion_note`: partial is its own answer, and
+        # anything else short of a clean run is a failure.
+        failed=result.status is not ReviewStatus.PARTIAL
+        and (bool(result.errors) or result.status is not ReviewStatus.COMPLETE),
+        has_changeset=changeset is not None and bool(known),
         verification=verification.status if verification is not None else None,
         verification_checks=len(verification.runs) if verification is not None else 0,
         investigation=investigation.status if investigation is not None else None,

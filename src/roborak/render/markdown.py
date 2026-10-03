@@ -1334,7 +1334,9 @@ def _checks_verdict_note(gate: Gate, report: ChecksReport | None) -> str:
     return "\n\n".join(notes)
 
 
-def _coverage_notes(result: ReviewResult, *, strong: Callable[[str], str] = str) -> list[str]:
+def _coverage_notes(
+    result: ReviewResult, *, strong: Callable[[str], str] = str, pointers: bool = True
+) -> list[str]:
     """How much of the review happened, one sentence per stage, beside the verdict.
 
     A finding count reads as a clean bill of health unless the block that states it
@@ -1342,19 +1344,22 @@ def _coverage_notes(result: ReviewResult, *, strong: Callable[[str], str] = str)
     each state; this only phrases it. Detailed sections fold on the forge and have
     no stable anchors, so the sentences point below rather than link, and only when
     the section they point at is actually rendered. ``strong`` bolds the stage label
-    for Markdown and is identity for the terminal.
+    for Markdown and is identity for the terminal. ``pointers=False`` is for the panel
+    view, which has no section below listing the paths, reasons or stage details.
     """
     coverage = coverage_for(result)
     notes = []
-    if note := _scope_note(coverage, strong):
+    if note := _scope_note(coverage, strong, pointers=pointers):
         notes.append(note)
     report = result.verification
     notes.append(
         _verification_note(
-            coverage, strong, detailed=report is not None and bool(report.runs or report.notes)
+            coverage,
+            strong,
+            detailed=pointers and report is not None and bool(report.runs or report.notes),
         )
     )
-    notes.append(_investigation_note(coverage, strong))
+    notes.append(_investigation_note(coverage, strong, detailed=pointers))
     return notes
 
 
@@ -1366,28 +1371,34 @@ def _reason_counts(counts: Iterable[tuple[OmissionReason | None, int]]) -> str:
     )
 
 
-def _scope_note(coverage: Coverage, strong: Callable[[str], str]) -> str:
+def _scope_note(coverage: Coverage, strong: Callable[[str], str], *, pointers: bool) -> str:
     if not coverage.has_changeset:
         return ""
     excluded = ""
     if coverage.excluded:
         reasons = _reason_counts(coverage.excluded.items())
         excluded = f" {coverage.excluded_files} excluded by design ({reasons})."
-    if not coverage.partial:
-        return (
-            f"{strong('Scope complete.')} {coverage.reviewed_files} changed file(s) reviewed."
-            + excluded
-        )
+    reviewed = (
+        f"{coverage.reviewed_files} changed file(s) reviewed"
+        if coverage.reviewed_files == coverage.changed_files
+        else f"{coverage.reviewed_files} of {coverage.changed_files} changed file(s) reviewed"
+    )
+    if not coverage.incomplete:
+        return f"{strong('Scope complete.')} {reviewed}.{excluded}"
     if not coverage.omitted:
+        if coverage.failed:
+            return (
+                f"{strong('Scope incomplete.')} The review failed before it finished, "
+                "so its silence on the changed files means nothing."
+            )
         return (
-            f"{strong('Scope partial.')} The run stopped before every pass finished; "
+            f"{strong('Scope partial.')} The run stopped before every pass finished, "
             "so its silence on the rest means nothing."
         )
+    see = " Paths and reasons are listed below." if pointers else ""
     return (
-        f"{strong('Scope partial.')} {coverage.reviewed_files} of {coverage.changed_files} "
-        f"changed file(s) reviewed; {coverage.omitted_files} omitted "
-        f"({_reason_counts(coverage.omitted.items())}).{excluded} "
-        "Paths and reasons are listed below."
+        f"{strong('Scope partial.')} {reviewed}; {coverage.omitted_files} omitted "
+        f"({_reason_counts(coverage.omitted.items())}).{excluded}{see}"
     )
 
 
@@ -1426,7 +1437,7 @@ def _verification_note(coverage: Coverage, strong: Callable[[str], str], *, deta
     )
 
 
-def _investigation_note(coverage: Coverage, strong: Callable[[str], str]) -> str:
+def _investigation_note(coverage: Coverage, strong: Callable[[str], str], *, detailed: bool) -> str:
     """Whether the candidates were checked, kept apart from whether they could be.
 
     An unavailable investigation and one that ran and left candidates unresolved both
@@ -1440,7 +1451,7 @@ def _investigation_note(coverage: Coverage, strong: Callable[[str], str]) -> str
         )
     if status is InvestigationStatus.SKIPPED:
         return f"{strong('Investigation had nothing to settle.')} No candidate needed another read."
-    see = " Details below."
+    see = " Details below." if detailed else ""
     if status is InvestigationStatus.UNAVAILABLE:
         return (
             f"{strong('Investigation unavailable.')} The checkout is not the reviewed change, "

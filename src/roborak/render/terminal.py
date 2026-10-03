@@ -490,7 +490,7 @@ def _render_verdict(result: ReviewResult, console: Console) -> None:
     console.print(f"[{style}]{label}[/] [dim]· {gate.summary_line()}[/]")
     source = "--fail-on" if gate.explicit else "review.block_on"
     console.print(f"[dim]floor: {gate.floor} (from {source}) · {gate.counts_line()}[/]")
-    for note in _coverage_notes(result):
+    for note in _coverage_notes(result, pointers=False):
         console.print(Text(note, style="dim"))
     _render_checks(result.checks, gate, console)
     if note := _completion_note(result):
