@@ -10,7 +10,33 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-04
+
+### Added
+
+- **Reviewer feedback now keeps dismissed findings from coming back.** Reply to
+  one of roborak's inline threads with `roborak: false-positive`, `roborak: ignore`,
+  or `roborak: accept`, and the next published review records that decision in
+  `.roborak/state.json`. Later reviews suppress matching model findings in the
+  same file and list every suppression, its verdict, and who dismissed it.
+  Static-analyser findings remain visible by default, bot replies never count, and
+  the markers, retention limit, and feature itself are configurable under
+  `review.feedback`.
+
 ### Changed
+
+- **Oversized reviews now resume instead of permanently omitting work beyond the
+  per-run limit.** `review.max_chunks`, or `--max-chunks` for one run, bounds the
+  primary model calls. Successful ranges are checkpointed in
+  `.roborak/state.json`, and rerunning the same review continues pending or failed
+  ranges automatically. A changed revision, model, content, or relevant
+  configuration safely starts a fresh checkpoint.
+
+- **Review stages now leave a visible execution record on stderr.** Static
+  analysis, verification, model passes, the overview, and publishing each report
+  their outcome and elapsed time, with per-pass progress for chunked reviews.
+  stdout remains the report alone, `-v` and `-vv` add INFO and DEBUG logging, and
+  `-q` suppresses stage lines except errors.
 
 - **The evals now measure whether findings are worth reading, separately from
   detection.** A new output-quality corpus (`evals/quality_cases.yaml`) of clean
@@ -612,7 +638,8 @@ works without a checkout.
 - **Any LiteLLM model**, with keys from the environment or the config file.
 - `--version` / `-V` on the CLI.
 
-[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/rdlugs/roborak/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/rdlugs/roborak/releases/tag/v0.10.0
 [0.9.0]: https://github.com/rdlugs/roborak/releases/tag/v0.9.0
 [0.8.0]: https://github.com/rdlugs/roborak/releases/tag/v0.8.0
 [0.7.0]: https://github.com/rdlugs/roborak/releases/tag/v0.7.0
