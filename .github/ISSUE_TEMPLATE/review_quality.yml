@@ -8,7 +8,9 @@ body:
         This is for the reviewer's judgement rather than the plumbing: false positives,
         misses, wrong line numbers, findings routed inline that belonged in the summary.
         These become eval cases, so a small reproducible diff is worth more than a long
-        description.
+        description. A finding that was right but hard to act on - no clear trigger,
+        a claim the diff does not support, an unsafe fix - is worth reporting too; it
+        becomes an output-quality case.
 
         Please do not paste proprietary code or credentials - reduce it to a minimal
         snippet you are comfortable publishing.
@@ -24,6 +26,7 @@ body:
         - Routing - inline vs. summary placement was wrong
         - Severity - graded too high or too low
         - Fix suggestion - the suggested patch was wrong or would not apply
+        - Explanation - the finding was unclear, unsupported, or its fix direction was unsafe
         - Something else
     validations:
       required: true

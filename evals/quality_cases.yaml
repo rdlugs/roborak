@@ -1,0 +1,14 @@
+# Output-quality corpus: is what the reviewer *said* worth reading? Report-only; see
+# evals/README.md for the rubric and how to add a case from a review-quality report.
+#
+# kind: clean_control      - correct change; any finding is an unsupported claim.
+#       supported_defect   - the diff alone proves the defect; the matched finding is graded.
+#       unverified_concern - plausible risk the diff cannot prove; silence is fine, a
+#                            finding must stay non-blocking and read as reasoning.
+- {id: q-clean-parameterised-query, kind: clean_control, path: app/db/users.py, before: "def find(db, user_id):\n    return db.execute('SELECT * FROM users WHERE id=' + user_id)", after: "def find(db, user_id):\n    return db.execute('SELECT * FROM users WHERE id=?', (user_id,))"}
+- {id: q-clean-guarded-attribute, kind: clean_control, path: app/profile.py, before: "def display_name(user):\n    return user.name", after: "def display_name(user):\n    return user.name if user is not None else 'anonymous'"}
+- {id: q-off-by-one-index, kind: supported_defect, path: app/stats.py, before: "def last(values):\n    return values[len(values) - 1]", after: "def last(values):\n    return values[len(values)]", expected_category: bug, expected_line: 2}
+- {id: q-zero-default-divisor, kind: supported_defect, path: app/metrics.py, before: "def rate(hits, total=0):\n    return hits", after: "def rate(hits, total=0):\n    return hits / total", expected_category: bug, expected_line: 2}
+- {id: q-cache-key-drops-tenant, kind: supported_defect, path: app/cache/orders.py, before: "def cache_key(user, order):\n    return f'order:{user.tenant}:{order.id}'", after: "def cache_key(user, order):\n    return f'order:{order.id}'", expected_category: reliability, expected_line: 2}
+- {id: q-unverified-handler-input, kind: unverified_concern, path: app/api/hooks.py, before: "def receive(request):\n    pass", after: "def receive(request):\n    return handler(request.json)"}
+- {id: q-unverified-config-token, kind: unverified_concern, path: app/clients/billing.py, before: "def client(settings):\n    pass", after: "def client(settings):\n    token = settings.get('api_token')\n    return Billing(token)"}

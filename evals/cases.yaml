@@ -1,17 +1,17 @@
-- {id: sql-injection, path: a.py, before: "q = 'ok'", after: "q = 'SELECT * FROM users WHERE id=' + user", expected_category: security, expected_line: 1, judge: true}
+- {id: sql-injection, path: a.py, before: "q = 'ok'", after: "q = 'SELECT * FROM users WHERE id=' + user", expected_category: security, expected_line: 1}
 - {id: shell-injection, path: a.py, before: "pass", after: "os.system('ls ' + name)", expected_category: security, expected_line: 1}
 - {id: eval-input, path: a.py, before: "pass", after: "result = eval(request.body)", expected_category: security, expected_line: 1}
 - {id: path-traversal, path: a.py, before: "pass", after: "return open('/data/' + request.args['name']).read()", expected_category: security, expected_line: 1}
 - {id: missing-authz, path: a.py, before: "pass", after: "return db.users.get(request.args['id'])", expected_category: security, expected_line: 1}
-- {id: divide-zero, path: a.py, before: "return total", after: "return total / count", expected_category: bug, expected_line: 1, judge: true}
+- {id: divide-zero, path: a.py, before: "return total", after: "return total / count", expected_category: bug, expected_line: 1}
 - {id: none-deref, path: a.py, before: "return user", after: "return find_user(id).name", expected_category: bug, expected_line: 1}
 - {id: wrong-comparison, path: a.py, before: "return age >= 18", after: "return age > 18", expected_category: logic, expected_line: 1}
 - {id: endless-loop, path: a.py, before: "return items", after: "while items:\n    process(items[0])", expected_category: bug, expected_line: 1}
-- {id: n-plus-one, path: a.py, before: "return users", after: "return [db.orders.for_user(u.id) for u in users]", expected_category: performance, expected_line: 1, judge: true}
+- {id: n-plus-one, path: a.py, before: "return users", after: "return [db.orders.for_user(u.id) for u in users]", expected_category: performance, expected_line: 1}
 - {id: quadratic-membership, path: a.py, before: "return items", after: "return [x for x in items if x in list(other)]", expected_category: performance, expected_line: 1}
 - {id: swallowed-error, path: a.py, before: "return save(x)", after: "try:\n    return save(x)\nexcept Exception:\n    return None", expected_category: bug, expected_line: 1}
 - {id: mutable-default, path: a.py, before: "def f(items): pass", after: "def f(items=[]):\n    items.append(1)", expected_category: bug, expected_line: 1}
-- {id: off-by-one, path: a.py, before: "return values[n - 1]", after: "return values[n]", expected_category: bug, expected_line: 1, judge: true}
+- {id: off-by-one, path: a.py, before: "return values[n - 1]", after: "return values[n]", expected_category: bug, expected_line: 1}
 - {id: missing-await, path: a.py, before: "return await fetch()", after: "return fetch()", expected_category: bug, expected_line: 1}
 - {id: clean-rename, path: a.py, before: "value = 1", after: "count = 1", expected_category: null, expected_line: null}
 - {id: clean-guard, path: a.py, before: "return user.name", after: "return user.name if user else None", expected_category: null, expected_line: null}
@@ -34,13 +34,13 @@
 - {id: unproven-config-read, path: a.py, before: "pass", after: "token = settings.get('api_token')", expected_category: null, expected_line: null, expect_blocker: false}
 - {id: proven-zero-divisor, path: a.py, before: "def rate(hits, total=0):\n    return hits", after: "def rate(hits, total=0):\n    return hits / total", expected_category: bug, expected_line: 2, expect_blocker: true}
 - {id: proven-index-past-end, path: a.py, before: "def last(values):\n    return values[-1]", after: "def last(values):\n    return values[len(values)]", expected_category: bug, expected_line: 2, expect_blocker: true}
-- {id: rolling-deploy-contract-break, path: app/api/orders.py, before: "def serialize(order):\n    return {'id': order.id}", after: "def serialize(order):\n    return {'id': order.id, 'region': order.region}", expected_category: reliability, expected_line: 2, judge: true}
+- {id: rolling-deploy-contract-break, path: app/api/orders.py, before: "def serialize(order):\n    return {'id': order.id}", after: "def serialize(order):\n    return {'id': order.id, 'region': order.region}", expected_category: reliability, expected_line: 2}
 - {id: unsafe-migration-lock, path: migrations/012_add_index.sql, before: "-- no-op", after: "CREATE INDEX idx_events_user ON events (user_id);", expected_category: reliability, expected_line: 1}
 - {id: unsafe-migration-not-null, path: migrations/013_require_email.sql, before: "-- no-op", after: "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT '';", expected_category: reliability, expected_line: 1}
 - {id: non-idempotent-retry, path: app/jobs/billing.py, before: "def run(order):\n    charge(order)", after: "def run(order):\n    for _ in range(3):\n        try:\n            return charge(order)\n        except TimeoutError:\n            continue", expected_category: reliability, expected_line: 2}
 - {id: unsafe-flag-default, path: app/config/flags.py, before: "FLAGS = {}", after: "FLAGS = {'new_checkout': os.getenv('NEW_CHECKOUT', 'true') == 'true'}", expected_category: reliability, expected_line: 1}
 - {id: pool-exceeds-database, path: app/db/pool.py, before: "pool_size = 5\nmax_connections = 20", after: "pool_size = 200\nmax_connections = 20", expected_category: reliability, expected_line: 1}
-- {id: cache-key-drops-tenant, path: app/cache/orders.py, before: "def cache_key(user, order):\n    return f'order:{user.tenant}:{order.id}'", after: "def cache_key(user, order):\n    return f'order:{order.id}'", expected_category: reliability, expected_line: 2, judge: true}
+- {id: cache-key-drops-tenant, path: app/cache/orders.py, before: "def cache_key(user, order):\n    return f'order:{user.tenant}:{order.id}'", after: "def cache_key(user, order):\n    return f'order:{order.id}'", expected_category: reliability, expected_line: 2}
 - {id: cache-write-without-invalidation, path: app/cache/profile.py, before: "def save(profile):\n    db.save(profile)\n    cache.delete(f'profile:{profile.id}')", after: "def save(profile):\n    db.save(profile)", expected_category: reliability, expected_line: 2}
 - {id: clean-api-rename, path: app/api/orders.py, before: "def serialize(order):\n    o = order\n    return {'id': o.id}", after: "def serialize(order):\n    record = order\n    return {'id': record.id}", expected_category: null, expected_line: null}
 - {id: clean-additive-migration, path: migrations/014_add_nickname.sql, before: "-- no-op", after: "ALTER TABLE users ADD COLUMN nickname TEXT NULL;", expected_category: null, expected_line: null}

@@ -123,9 +123,16 @@ uv run python -m evals.run
 30 labeled defect and clean-control cases in `evals/cases.yaml`, with recall,
 false-positive, anchoring and parse-success gates. This costs real model calls and
 is nondeterministic, which is why it is kept out of PR CI and run nightly. Run it
-when you change prompts, the validator, or the parser; a change that improves
-recall while quietly raising false positives is the failure mode it exists to
-catch.
+when you change prompts, the validator, the parser or the renderer; a change that
+improves recall while quietly raising false positives is the failure mode it exists
+to catch.
+
+A separate output-quality corpus, `evals/quality_cases.yaml`, grades whether the
+findings are worth reading: factual support, trigger and consequence, fix
+direction, and suggestion safety. It is report-only. Compare it against a baseline
+run of `main` with `--baseline` instead of reading one run in isolation.
+[`evals/README.md`](evals/README.md) documents the rubric and how to turn a
+review-quality report into a case without publishing private code.
 
 ## Pull requests
 
