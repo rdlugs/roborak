@@ -52,6 +52,7 @@ from roborak.core.models import (
     CheckResult,
     ChecksReport,
     DependencyChangeKind,
+    FeedbackReport,
     Finding,
     FixVerdict,
     ImpactMap,
@@ -69,7 +70,7 @@ from roborak.core.models import (
     VerificationStatus,
     Walkthrough,
 )
-from roborak.core.severity import EVIDENCE_LABEL, Kind, Severity
+from roborak.core.severity import EVIDENCE_LABEL, FeedbackVerdict, Kind, Severity
 from roborak.core.verdict import Gate, Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
@@ -201,6 +202,9 @@ def render(
 
     if investigation := _investigation_section(result.investigation, form=form):
         sections.append(investigation)
+
+    if feedback := _feedback_section(result.feedback, form=form):
+        sections.append(feedback)
 
     if not grouped:
         sections.append(_nothing_to_report(result))
@@ -526,6 +530,53 @@ def _investigation_section(report: InvestigationReport | None, *, form: Form) ->
     summary = f"{icons.INVESTIGATION} Investigation - {INVESTIGATION_LABEL[report.status]}"
     if report.candidates:
         summary += f" ({report.candidates} candidate(s))"
+    return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
+
+
+FEEDBACK_VERDICT_LABEL: dict[FeedbackVerdict, str] = {
+    FeedbackVerdict.FALSE_POSITIVE: "false positive",
+    FeedbackVerdict.IGNORED: "ignored",
+    FeedbackVerdict.ACCEPTED: "accepted",
+}
+
+
+def feedback_headline(report: FeedbackReport) -> str:
+    """The one line every surface opens its feedback note with."""
+    parts: list[str] = []
+    if report.suppressed:
+        parts.append(f"{len(report.suppressed)} finding(s) suppressed by prior reviewer feedback")
+    if report.static_kept:
+        parts.append(f"{report.static_kept} static finding(s) kept despite it")
+    return "; ".join(parts)
+
+
+def _feedback_section(report: FeedbackReport | None, *, form: Form) -> str:
+    """Which findings an earlier dismissal held back, and who dismissed them.
+
+    Never folded into the findings or left out: a suppression a reader cannot see
+    is a finding that vanished, which is the thing this report exists to prevent.
+    """
+    if report is None or report.is_empty:
+        return ""
+    parts: list[str] = []
+    if report.suppressed:
+        rows = ["| Finding | Severity | Verdict | Dismissed by |", "| --- | --- | --- | --- |"]
+        for item in report.suppressed:
+            label = f"`{_escape_cell(item.location)}` {_escape_cell(item.title)}"
+            author = f"@{_escape_cell(item.author)}" if item.author else "-"
+            rows.append(
+                f"| {label} | {item.severity.value} | "
+                f"{FEEDBACK_VERDICT_LABEL[item.verdict]} | {author} |"
+            )
+        parts.append("\n".join(rows))
+    if report.static_kept:
+        parts.append(
+            _wrap(
+                "_Static findings are still reported after a dismissal; set "
+                "`review.feedback.suppress_static` to hold them back too._"
+            )
+        )
+    summary = f"{icons.FEEDBACK} Reviewer feedback - {feedback_headline(report)}"
     return _details(summary, "\n\n".join(parts), level=2, collapsible=form is Form.PUBLISHED)
 
 

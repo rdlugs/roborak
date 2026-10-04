@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,6 +22,7 @@ from filelock import FileLock
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from roborak.core.models import ChangeSet, Finding
+from roborak.core.severity import FeedbackVerdict
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,24 @@ class ReviewRecord:
             last_flow_digest=str(data.get("last_flow_digest") or ""),
             last_walkthrough=cached if isinstance(cached, dict) else None,
         )
+
+
+class FeedbackEntry(BaseModel):
+    """One dismissed finding identity, remembered for this whole repository.
+
+    Kept apart from the per-review records on purpose: a false positive on one
+    merge request is just as false on the next one touching the same file, and the
+    fingerprint already names the file, so the reach stays bounded to it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    verdict: FeedbackVerdict
+    author: str = Field(default="", max_length=100)
+    file: str = Field(default="", max_length=1024)
+    title: str = Field(default="", max_length=200)
+    recorded_at: str = ""
+    """When the dismissal was written; the oldest are evicted first."""
 
 
 class RequirementEvidence(BaseModel):
@@ -210,7 +229,39 @@ class StateStore:
 
             self._save(data)
 
+    def feedback(self) -> dict[str, FeedbackEntry]:
+        """Every remembered dismissal, by fingerprint. A malformed entry is skipped."""
+        raw = self._load_all().get("feedback")
+        if not isinstance(raw, dict):
+            return {}
+        entries: dict[str, FeedbackEntry] = {}
+        for fingerprint, entry in raw.items():
+            try:
+                entries[str(fingerprint)] = FeedbackEntry.model_validate(entry)
+            except ValidationError:
+                log.debug("ignoring malformed feedback entry for %s", fingerprint)
+        return entries
+
+    def record_feedback(self, entries: Iterable[tuple[str, FeedbackEntry]], limit: int) -> None:
+        """Remember dismissals, newest winning per fingerprint, keeping at most ``limit``."""
+        incoming = list(entries)
+        if not incoming:
+            return
+        with self._lock():
+            data = self._load_all()
+            stored = self.feedback() if isinstance(data.get("feedback"), dict) else {}
+            for fingerprint, entry in incoming:
+                current = stored.get(fingerprint)
+                if current is None or entry.recorded_at >= current.recorded_at:
+                    stored[fingerprint] = entry
+            newest = sorted(stored.items(), key=lambda item: item[1].recorded_at, reverse=True)
+            data["feedback"] = {
+                fingerprint: entry.model_dump(mode="json") for fingerprint, entry in newest[:limit]
+            }
+            self._save(data)
+
     def clear(self, key: str | None = None) -> None:
+        """Forget per-review state. Reviewer feedback is repository-wide and survives."""
         with self._lock():
             data = self._load_all()
             reviews = data.get("reviews")

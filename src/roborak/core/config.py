@@ -26,7 +26,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from roborak.core.severity import Category, Enforcement, Severity
+from roborak.core.severity import Category, Enforcement, FeedbackVerdict, Severity
 from roborak.sandbox import in_ci
 
 log = logging.getLogger(__name__)
@@ -186,6 +186,42 @@ class InvestigateConfig(ConfigModel):
     """Wall clock for the repository operations, not for the model calls."""
 
 
+def _default_feedback_markers() -> dict[str, FeedbackVerdict]:
+    return {
+        "roborak: false-positive": FeedbackVerdict.FALSE_POSITIVE,
+        "roborak: ignore": FeedbackVerdict.IGNORED,
+        "roborak: accept": FeedbackVerdict.ACCEPTED,
+    }
+
+
+class FeedbackConfig(ConfigModel):
+    """Reviewer replies that stop a dismissed finding from coming back.
+
+    A human answers one of roborak's inline threads with a marker; the next run
+    that reads the forge records the finding's fingerprints in local state, and
+    later reviews drop a model finding carrying one. Every suppression is listed
+    in the report, so nothing disappears without a reader being able to see why.
+    """
+
+    enabled: bool = True
+    markers: dict[str, FeedbackVerdict] = Field(default_factory=_default_feedback_markers)
+    """Marker text, matched case-insensitively at the start of a reply line."""
+
+    suppress_static: bool = False
+    """Also suppress static-analyser findings. Off by default: a tool ran, and a
+    reply on a pull request is not a reason to hide what it reported."""
+
+    max_entries: int = Field(default=500, ge=1)
+    """Dismissals kept in local state; the oldest go first."""
+
+    @field_validator("markers")
+    @classmethod
+    def _non_empty_markers(cls, value: dict[str, FeedbackVerdict]) -> dict[str, FeedbackVerdict]:
+        if any(not marker.strip() for marker in value):
+            raise ValueError("feedback markers must not be empty")
+        return value
+
+
 class ReviewConfig(ConfigModel):
     categories: list[Category] = Field(
         default_factory=lambda: [
@@ -229,6 +265,9 @@ class ReviewConfig(ConfigModel):
     """Bounded repository reads that settle a candidate before the evidence policy
     judges it. The one section nested inside another: it tunes what ``review``
     already decides rather than naming a stage of its own."""
+
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    """Reviewer dismissals that suppress a repeated finding on later runs."""
 
 
 class StaticConfig(ConfigModel):

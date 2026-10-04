@@ -118,6 +118,18 @@ class Effort(StrEnum):
     HEAVY_LIFT = "heavy_lift"
 
 
+class FeedbackVerdict(StrEnum):
+    """What a human said about a published finding, in a reply roborak can parse.
+
+    All three mean "do not tell us again"; they differ in why, which the report
+    repeats so a reader can tell a disputed finding from an acknowledged one.
+    """
+
+    FALSE_POSITIVE = "false_positive"
+    IGNORED = "ignored"
+    ACCEPTED = "accepted"
+
+
 SEVERITY_STYLE: dict[Severity, str] = {
     Severity.CRITICAL: "bold red",
     Severity.MAJOR: "bold yellow",

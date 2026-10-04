@@ -426,6 +426,35 @@ export default function Configuration() {
         that does not. <Code>--no-investigate</Code> switches it off.
       </P>
 
+      <H3>review.feedback</H3>
+      <CodeBlock
+        label=".roborak.yaml"
+        code={[
+          "review:",
+          "  feedback:",
+          "    enabled: true            # reviewer replies that suppress a repeated finding",
+          "    markers:                 # reply line prefix -> verdict",
+          '      "roborak: false-positive": false_positive',
+          '      "roborak: ignore": ignored',
+          '      "roborak: accept": accepted',
+          "    suppress_static: false   # static findings are kept and counted by default",
+          "    max_entries: 500         # dismissals remembered in .roborak/state.json",
+        ].join("\n")}
+      />
+      <P>
+        Reply to one of roborak&rsquo;s inline threads with a marker on its own line - for example{" "}
+        <Code>roborak: false-positive</Code> - and the next <Code>--post</Code> run records that
+        finding&rsquo;s fingerprints in <Code>.roborak/state.json</Code>, open thread or resolved.
+        Later reviews in the repository hold back a model finding with the same fingerprint. The
+        fingerprint names the file, so a dismissal never reaches past what was dismissed.
+      </P>
+      <P>
+        Nothing disappears silently: the report lists every suppressed finding with its verdict
+        and who dismissed it. Static-analyser findings are kept and counted unless{" "}
+        <Code>suppress_static</Code> is on. Replies from bots and from roborak itself never count,
+        and the reply text never reaches the model.
+      </P>
+
       <H3>supply_chain</H3>
       <CodeBlock
         label=".roborak.yaml"
