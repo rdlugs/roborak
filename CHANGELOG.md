@@ -12,6 +12,20 @@ the GitHub Release body, so the `## [x.y.z] - date` heading format is load-beari
 
 ### Changed
 
+- **The evals now measure whether findings are worth reading, separately from
+  detection.** A new output-quality corpus (`evals/quality_cases.yaml`) of clean
+  controls, supported defects, and unverified concerns has an LLM judge grade each
+  rendered finding on factual support, trigger, consequence, fix direction, and,
+  when a suggestion is offered, whether that suggestion applies safely to the lines
+  it replaces. Findings on clean controls and blockers on unverified concerns are
+  counted as unsupported claims. The results are reported in their own
+  `output_quality` section, repeated across `--quality-runs` passes with mean,
+  min, and max, and compared against an earlier run with `--baseline`. They are
+  report-only, so model variability never fails the run, and they replace the
+  `finding_quality` gate on the detection corpus. `evals/README.md` documents the
+  rubric and how to turn a review-quality report into a case without publishing
+  private code.
+
 - **The verdict now states how much of the review happened.** Beside the
   pre-merge verdict, the report says whether the scope was complete or partial
   (files reviewed out of those changed, with omissions counted by reason and
