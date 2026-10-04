@@ -640,8 +640,12 @@ def _apply_feedback(
     except StateWriteError as exc:
         log.warning("could not remember reviewer feedback: %s", exc)
     known = store.feedback()
+    # Newest wins, as in `record_feedback`, so a failed write still credits the
+    # dismissal just read rather than an older one for the same fingerprint.
     for fingerprint, entry in incoming:
-        known.setdefault(fingerprint, entry)
+        current = known.get(fingerprint)
+        if current is None or entry.recorded_at >= current.recorded_at:
+            known[fingerprint] = entry
     apply_feedback(result, known, feedback)
 
 

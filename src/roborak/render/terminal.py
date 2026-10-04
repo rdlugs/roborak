@@ -183,7 +183,9 @@ def _render_feedback(report: FeedbackReport | None, console: Console) -> None:
         return
     console.print()
     console.print(f"[yellow]feedback:[/] [dim]{feedback_headline(report)}[/]", highlight=False)
-    for item in report.suppressed[:MAX_INVESTIGATION_LINES]:
+    # Every one, unlike the investigation lines: a suppression left off this list
+    # is a finding that vanished from the terminal without a trace.
+    for item in report.suppressed:
         by = f" by @{item.author}" if item.author else ""
         # Titles are model-written and author logins user-chosen; `Text` keeps
         # either from being read as markup.

@@ -430,3 +430,73 @@ def test_a_local_run_with_feedback_disabled_reports_everything(repo: Path, monke
 
     assert outcome.exit_code != EXIT_OK
     assert "suppressed by prior reviewer feedback" not in outcome.output
+
+
+def test_a_failed_state_write_still_credits_the_dismissal_just_read(tmp_path: Path, monkeypatch):
+    from roborak.cli.commands.review import _apply_feedback
+    from roborak.core.config import Config
+    from roborak.state.store import StateWriteError
+
+    dismissed = finding()
+    store = StateStore(tmp_path)
+    store.record_feedback(
+        [(dismissed.fingerprint_v2, entry(FeedbackVerdict.ACCEPTED, author="old"))], 10
+    )
+
+    def refuse(self, entries, limit):
+        raise StateWriteError("read-only")
+
+    monkeypatch.setattr(StateStore, "record_feedback", refuse)
+    remote = RemoteState(
+        dismissals=(
+            Dismissal(
+                frozenset({dismissed.fingerprint_v2}),
+                FeedbackVerdict.FALSE_POSITIVE,
+                "alice",
+                "app/auth.py",
+                "SQL injection",
+                "2026-03-01T00:00:00Z",
+            ),
+        )
+    )
+    result = ReviewResult(findings=[dismissed])
+
+    _apply_feedback(tmp_path, Config(), result, remote)
+
+    assert result.feedback is not None
+    assert [(s.verdict, s.author) for s in result.feedback.suppressed] == [
+        (FeedbackVerdict.FALSE_POSITIVE, "alice")
+    ]
+
+
+def test_a_lowered_limit_is_enforced_even_when_nothing_new_arrives(tmp_path: Path):
+    store = StateStore(tmp_path)
+    store.record_feedback(
+        [(f"fp{day}", entry(recorded_at=f"2026-01-0{day}")) for day in range(1, 6)], 10
+    )
+
+    store.record_feedback([], 2)
+
+    assert sorted(store.feedback()) == ["fp4", "fp5"]
+
+
+def test_nothing_new_within_the_limit_writes_no_state(tmp_path: Path):
+    StateStore(tmp_path).record_feedback([], 10)
+
+    assert not (tmp_path / ".roborak").exists()
+
+
+def test_terminal_panels_list_every_suppressed_finding(tmp_path: Path):
+    from rich.console import Console
+
+    from roborak.render import terminal
+
+    findings = [finding(title=f"Problem {n}", body=f"Body {n}.") for n in range(7)]
+    result = ReviewResult(findings=findings)
+    apply_feedback(result, {f.fingerprint_v2: entry() for f in findings}, FeedbackConfig())
+
+    console = Console(record=True, width=200)
+    terminal.render(result, console, tmp_path)
+
+    text = console.export_text()
+    assert all(f"Problem {n}" in text for n in range(7))

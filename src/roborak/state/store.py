@@ -245,7 +245,9 @@ class StateStore:
     def record_feedback(self, entries: Iterable[tuple[str, FeedbackEntry]], limit: int) -> None:
         """Remember dismissals, newest winning per fingerprint, keeping at most ``limit``."""
         incoming = list(entries)
-        if not incoming:
+        # Nothing new still has to honour a lowered limit, or older entries would
+        # keep suppressing findings past the configured bound indefinitely.
+        if not incoming and len(self.feedback()) <= limit:
             return
         with self._lock():
             data = self._load_all()
