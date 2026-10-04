@@ -34,8 +34,8 @@ Answer each question with true or false:
   verify? A vague "be careful" does not count.
 - faithful: is every concrete claim supported by the diff? A claim about code, callers
   or behaviour the diff does not show is unsupported and fails this check. When the
-  finding is labelled unverified, it must also read as reasoning rather than a
-  reproduction it actually ran.
+  finding is labelled unverified, it must also read as reasoning, not as a
+  reproduction it never ran.
 """
 
 SUGGESTION_QUESTION = """\
