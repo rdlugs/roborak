@@ -50,7 +50,12 @@ from roborak.core.severity import (
 from roborak.core.verdict import Gate, Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
-from roborak.render.markdown import FLOW_SUMMARY, _completion_note, _exit_gate_note
+from roborak.render.markdown import (
+    FLOW_SUMMARY,
+    _completion_note,
+    _coverage_notes,
+    _exit_gate_note,
+)
 
 MAX_SUPPLY_CHAIN_LINES = 5
 """Dependency movements named in the terminal. The delta is already ordered most
@@ -485,6 +490,8 @@ def _render_verdict(result: ReviewResult, console: Console) -> None:
     console.print(f"[{style}]{label}[/] [dim]· {gate.summary_line()}[/]")
     source = "--fail-on" if gate.explicit else "review.block_on"
     console.print(f"[dim]floor: {gate.floor} (from {source}) · {gate.counts_line()}[/]")
+    for note in _coverage_notes(result, pointers=False):
+        console.print(Text(note, style="dim"))
     _render_checks(result.checks, gate, console)
     if note := _completion_note(result):
         console.print(Text(note, style="dim"))
