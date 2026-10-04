@@ -29,6 +29,7 @@ from roborak.core.icons import (
 )
 from roborak.core.models import (
     ChecksReport,
+    FeedbackReport,
     Finding,
     ImpactMap,
     ImpactStatus,
@@ -51,10 +52,12 @@ from roborak.core.verdict import Gate, Verdict, gate_for, verdict_requested
 from roborak.render import snippet
 from roborak.render.lexers import lexer_for
 from roborak.render.markdown import (
+    FEEDBACK_VERDICT_LABEL,
     FLOW_SUMMARY,
     _completion_note,
     _coverage_notes,
     _exit_gate_note,
+    feedback_headline,
 )
 
 MAX_SUPPLY_CHAIN_LINES = 5
@@ -79,6 +82,7 @@ def render(result: ReviewResult, console: Console, repo: Path) -> None:
     _render_impact(result.impact, console)
     _render_supply_chain(result.supply_chain, console)
     _render_investigation(result.investigation, console)
+    _render_feedback(result.feedback, console)
 
     if not result.findings:
         if result.supply_chain and result.supply_chain.scanner_findings:
@@ -171,6 +175,28 @@ def _render_investigation(report: InvestigationReport | None, console: Console) 
 
 
 MAX_INVESTIGATION_LINES = 5
+
+
+def _render_feedback(report: FeedbackReport | None, console: Console) -> None:
+    """Which findings an earlier dismissal held back, so none of them vanish unseen."""
+    if report is None or report.is_empty:
+        return
+    console.print()
+    console.print(f"[yellow]feedback:[/] [dim]{feedback_headline(report)}[/]", highlight=False)
+    # Every one, unlike the investigation lines: a suppression left off this list
+    # is a finding that vanished from the terminal without a trace.
+    for item in report.suppressed:
+        by = f" by @{item.author}" if item.author else ""
+        # Titles are model-written and author logins user-chosen; `Text` keeps
+        # either from being read as markup.
+        console.print(
+            Text(
+                f"  {FEEDBACK_VERDICT_LABEL[item.verdict]}{by}: {item.location} {item.title}",
+                style="dim",
+            ),
+            highlight=False,
+        )
+
 
 _INVESTIGATION_STYLE: dict[InvestigationStatus, str] = {
     InvestigationStatus.COMPLETED: "green",

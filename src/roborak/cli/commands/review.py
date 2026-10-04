@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -11,12 +12,19 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 
+from roborak.analysis.feedback import apply_feedback, entries_from
 from roborak.analysis.reviewer import Reviewer
 from roborak.cli import shared
 from roborak.cli.shared import fail
 from roborak.cli.shared import is_interactive as _is_interactive
 from roborak.core.buckets import Bucket, group
-from roborak.core.config import Execution, ReviewProfile, VerificationConfig, load_verification
+from roborak.core.config import (
+    Config,
+    Execution,
+    ReviewProfile,
+    VerificationConfig,
+    load_verification,
+)
 from roborak.core.models import (
     Finding,
     ReviewResult,
@@ -25,7 +33,7 @@ from roborak.core.models import (
     VerificationStatus,
     Walkthrough,
 )
-from roborak.core.severity import Severity
+from roborak.core.severity import FeedbackVerdict, Severity
 from roborak.publish.base import (
     PublishReport,
     RemoteState,
@@ -40,7 +48,7 @@ from roborak.publish.progress import start as start_progress
 from roborak.render import markdown
 from roborak.sources.base import SourceError
 from roborak.sources.forge import Target
-from roborak.state.store import StateStore, checkpoint_key, review_key
+from roborak.state.store import StateStore, StateWriteError, checkpoint_key, review_key
 from roborak.static.runner import StaticRunner
 from roborak.supply.analyzer import analyse as analyse_supply_chain
 from roborak.supply.analyzer import attach_scanner_findings, note_skipped_scanners
@@ -362,9 +370,20 @@ def review(
         remote: RemoteState | None = None
         if publishing:
             assert session.target is not None and session.token is not None
-            remote = _remote_state(console, session.target, session.token, result, repost=repost)
+            remote = _remote_state(
+                console,
+                session.target,
+                session.token,
+                result,
+                repost=repost,
+                markers=config.review.feedback.markers if config.review.feedback.enabled else None,
+            )
             if remote is None:
                 publishing = False
+
+        # Before anything renders, publishes or judges the verdict, so a dismissed
+        # finding is absent from every surface alike rather than from some of them.
+        _apply_feedback(session.repo, config, result, remote)
 
         overview = _overview_plan(
             session,
@@ -582,6 +601,7 @@ def _remote_state(
     result: ReviewResult,
     *,
     repost: bool,
+    markers: Mapping[str, FeedbackVerdict] | None = None,
 ) -> RemoteState | None:
     """What the merge request already says, or ``None`` if we could not find out.
 
@@ -591,12 +611,42 @@ def _remote_state(
     if repost:
         return RemoteState()
     try:
-        return remote_state(target, token)
+        return remote_state(target, token, markers)
     except SourceError as exc:
         result.status = ReviewStatus.PARTIAL
         result.errors.append(f"could not discover existing review comments: {exc}")
         console.print(f"[bold red]could not post review[/] {exc}")
         return None
+
+
+def _apply_feedback(
+    repo: Path,
+    config: Config,
+    result: ReviewResult,
+    remote: RemoteState | None,
+) -> None:
+    """Remember the dismissals this run read off the forge, then honour every one known.
+
+    A state file that cannot be written costs the next run its memory, not this
+    run its suppressions: what was just read still applies here.
+    """
+    feedback = config.review.feedback
+    if not feedback.enabled:
+        return
+    store = StateStore(repo)
+    incoming = entries_from(remote.dismissals) if remote is not None else []
+    try:
+        store.record_feedback(incoming, feedback.max_entries)
+    except StateWriteError as exc:
+        log.warning("could not remember reviewer feedback: %s", exc)
+    known = store.feedback()
+    # Newest wins, as in `record_feedback`, so a failed write still credits the
+    # dismissal just read rather than an older one for the same fingerprint.
+    for fingerprint, entry in incoming:
+        current = known.get(fingerprint)
+        if current is None or entry.recorded_at >= current.recorded_at:
+            known[fingerprint] = entry
+    apply_feedback(result, known, feedback)
 
 
 def _overview_plan(

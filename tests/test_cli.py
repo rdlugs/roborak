@@ -1405,7 +1405,7 @@ def _mr_session(monkeypatch):
 
     monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
     monkeypatch.setattr(
-        "roborak.cli.commands.review.remote_state", lambda target, token: RemoteState()
+        "roborak.cli.commands.review.remote_state", lambda target, token, *_: RemoteState()
     )
 
     class FakeSource:
@@ -1660,7 +1660,7 @@ def _empty_mr_session(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]
 
     monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
     monkeypatch.setattr(
-        "roborak.cli.commands.review.remote_state", lambda target, token: RemoteState()
+        "roborak.cli.commands.review.remote_state", lambda target, token, *_: RemoteState()
     )
 
     class FakeSource:
@@ -1765,7 +1765,7 @@ def _empty_pr_session(
     monkeypatch.setattr("roborak.cli.shared.get_token", lambda provider, forge=None: "tok")
     monkeypatch.setattr("roborak.cli.shared.load_issue", lambda t, tok: _stub_issue())
     monkeypatch.setattr(
-        "roborak.cli.commands.review.remote_state", lambda target, token: RemoteState()
+        "roborak.cli.commands.review.remote_state", lambda target, token, *_: RemoteState()
     )
 
     class FakeSource:
@@ -1932,7 +1932,7 @@ def test_a_clean_rerun_from_another_machine_still_publishes(repo: Path, monkeypa
     published: list[dict[str, object]] = []
     _install_gitlab_session(monkeypatch, published)
 
-    def already_posted(target, token):
+    def already_posted(target, token, markers=None):
         # The overview rides on the comment, which is all this machine can read.
         return RemoteState(
             summary=SummaryRef(

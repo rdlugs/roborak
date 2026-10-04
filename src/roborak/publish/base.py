@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from roborak.core.buckets import SUMMARY_BUCKETS, Bucket, group
 from roborak.core.models import Finding, FixVerdict, ReviewResult, Walkthrough
-from roborak.core.severity import Kind
+from roborak.core.severity import FeedbackVerdict, Kind
 from roborak.publish import threads as thread_api
-from roborak.publish.threads import OpenThread, open_threads
+from roborak.publish.threads import Dismissal, OpenThread, sweep_threads
 from roborak.render import markdown
 from roborak.sources.base import SourceError
 from roborak.sources.discussion import is_bot
@@ -292,8 +292,15 @@ class RemoteState:
     open_threads: tuple[OpenThread, ...] = ()
     """Actionable threads an earlier run opened and nobody has closed."""
 
+    dismissals: tuple[Dismissal, ...] = ()
+    """Marker replies people left on roborak's threads, open or resolved."""
 
-def remote_state(target: Target, token: str) -> RemoteState:
+
+def remote_state(
+    target: Target,
+    token: str,
+    markers: Mapping[str, FeedbackVerdict] | None = None,
+) -> RemoteState:
     """Read what an earlier run published: inline identities and the overview.
 
     One pass for all three. The payloads that carry the fingerprints are the same
@@ -312,7 +319,7 @@ def remote_state(target: Target, token: str) -> RemoteState:
 
     with ForgeClient(target, token) as client:
         viewer = _viewer(client)
-        threads = open_threads(client, target, viewer)
+        threads = sweep_threads(client, target, viewer, markers)
         if target.provider == "github":
             root = f"/repos/{target.project}"
             surfaces = [
@@ -343,7 +350,8 @@ def remote_state(target: Target, token: str) -> RemoteState:
     return RemoteState(
         fingerprints=frozenset(identity for body in bodies for identity in fingerprints_in(body)),
         summary=max(candidates, key=lambda found: found[:2])[2] if candidates else None,
-        open_threads=tuple(threads),
+        open_threads=tuple(threads.open),
+        dismissals=tuple(threads.dismissals),
     )
 
 

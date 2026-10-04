@@ -15,7 +15,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from roborak.core.severity import Category, Effort, Enforcement, Evidence, Kind, Severity
+from roborak.core.severity import (
+    Category,
+    Effort,
+    Enforcement,
+    Evidence,
+    FeedbackVerdict,
+    Kind,
+    Severity,
+)
 
 ChangeType = Literal["added", "modified", "deleted", "renamed"]
 Origin = Literal["local", "gitlab", "github", "paths"]
@@ -1069,6 +1077,31 @@ class FixVerdict(BaseModel):
         return self.state == "fixed" and bool(self.commits) and bool(self.summary.strip())
 
 
+class SuppressedFinding(BaseModel):
+    """A finding this run held back because a reviewer had already dismissed it."""
+
+    location: str
+    title: str
+    severity: Severity
+    source: Literal["llm", "static", "rule"]
+    fingerprint: str
+    verdict: FeedbackVerdict
+    author: str = ""
+
+
+class FeedbackReport(BaseModel):
+    """What earlier reviewer feedback did to this review, so none of it is silent."""
+
+    suppressed: list[SuppressedFinding] = Field(default_factory=list)
+    static_kept: int = 0
+    """Static findings that matched a dismissal and were reported anyway, because
+    ``review.feedback.suppress_static`` is off."""
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.suppressed and not self.static_kept
+
+
 class ReviewResult(BaseModel):
     """Everything a review produced, ready for any renderer or publisher."""
 
@@ -1118,6 +1151,13 @@ class ReviewResult(BaseModel):
     candidate worth the call -- which is a different statement from a report whose
     status is ``unavailable``. One says nobody looked; the other says we wanted to
     and the checkout in front of us was not the code under review."""
+
+    feedback: FeedbackReport | None = None
+    """Findings held back because a reviewer dismissed them on an earlier run.
+
+    ``None`` means no dismissal matched anything -- or feedback is switched off --
+    and there is nothing to say. A report is present only when it changed, or
+    pointedly did not change, what this review shows."""
 
     checks: ChecksReport | None = None
     """What the configurable pre-merge checks concluded about the change itself.

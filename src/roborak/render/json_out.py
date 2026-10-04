@@ -96,6 +96,11 @@ def to_dict(result: ReviewResult, *, agent: bool = False) -> dict[str, Any]:
     if result.investigation is not None:
         payload["investigation"] = _investigation_dict(result.investigation, agent=agent)
 
+    # Present only when an earlier dismissal changed, or pointedly did not change,
+    # what this review shows; an agent must be able to see what was held back.
+    if result.feedback is not None:
+        payload["feedback"] = result.feedback.model_dump(mode="json")
+
     # Same contract, last time. An absent key means the checks never ran; a present
     # one listing nothing means this project switched every check off. Something
     # gating a merge on this must not read "nobody asked" as "everything passed".

@@ -451,6 +451,16 @@ Source → ChangeSet → Compressor → Static pass → Verification → LLM →
 - **Existing review discussion is context, not instruction.** Forge reviews include
   bounded unresolved human comments by default, while dropping system notes, bots,
   stale positions and roborak's own output. `--no-discussions` disables it.
+- **A dismissed finding does not come back.** Reply to one of roborak's inline
+  threads with `roborak: false-positive`, `roborak: ignore` or `roborak: accept` on
+  its own line, and the next `--post` run records that finding's fingerprints in
+  `.roborak/state.json`. Later reviews in the repository then hold back a model
+  finding with the same fingerprint, which names its file, so a dismissal never
+  reaches past what was dismissed. Nothing disappears silently: the report lists
+  every suppressed finding, its verdict and who dismissed it. Static-analyser
+  findings are kept and counted unless `review.feedback.suppress_static` is on,
+  and bot replies and roborak's own never count. `review.feedback.enabled: false`
+  turns it off.
 - **Deciding to publish comes after reading the review.** `--post` has to be
   chosen before the model has said anything, so an interactive run ends by asking
   instead - post it, save it as markdown, or neither - showing first how many
@@ -627,6 +637,14 @@ review:
     max_output_chars: 4000
     token_budget: 20000
     timeout_seconds: 30
+  feedback:                  # reviewer replies that suppress a repeated finding
+    enabled: true
+    markers:                 # reply line prefix -> verdict
+      "roborak: false-positive": false_positive
+      "roborak: ignore": ignored
+      "roborak: accept": accepted
+    suppress_static: false   # static findings are kept and counted by default
+    max_entries: 500         # dismissals remembered in .roborak/state.json
 
 static:
   enabled: true

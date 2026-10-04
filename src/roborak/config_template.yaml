@@ -114,6 +114,23 @@ review:
     token_budget: 20000
     # Wall clock for the repository operations, not for the model calls.
     timeout_seconds: 30
+  # Reviewer replies that stop a dismissed finding from coming back. Reply to one
+  # of roborak's inline threads with a marker on its own line; the next --post run
+  # records the finding in .roborak/state.json, and later reviews in this
+  # repository suppress a model finding with the same fingerprint. Every
+  # suppression is listed in the report.
+  feedback:
+    enabled: true
+    # Marker text (case-insensitive, at the start of a reply line) to verdict:
+    # false_positive, ignored or accepted.
+    markers:
+      "roborak: false-positive": false_positive
+      "roborak: ignore": ignored
+      "roborak: accept": accepted
+    # Also suppress static-analyser findings. Off: they are kept and counted.
+    suppress_static: false
+    # Dismissals kept in local state; the oldest go first.
+    max_entries: 500
 
 static:
   enabled: true
